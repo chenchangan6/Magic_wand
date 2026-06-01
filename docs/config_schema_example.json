@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "devices": [
+    {
+      "idx": 0,
+      "mac": "58:E6:C5:F0:AD:44",
+      "name": "碎片1",
+      "group_mask": 1,
+      "rssi": -18,
+      "seen_ms": 1200
+    }
+  ],
+  "groups": [
+    {
+      "id": 0,
+      "valid": true,
+      "name": "魔杖组",
+      "note": "独立型测试组",
+      "effect": "10 颗记录灯逐个累加",
+      "silence": "同一目标不重复计数",
+      "target": 1,
+      "mode": 1,
+      "rssi": -70,
+      "hold": 2000
+    },
+    {
+      "id": 1,
+      "valid": true,
+      "name": "宝箱组",
+      "note": "共享型目标组",
+      "effect": "被发现后锁定状态",
+      "silence": "记录后保持静默",
+      "target": 255,
+      "mode": 0,
+      "rssi": -70,
+      "hold": 2000
+    }
+  ],
+  "records": [
+    {
+      "src_group": 0,
+      "target_group": 1,
+      "src_idx": 0,
+      "dst_idx": -1,
+      "first_seen_ms": 10000,
+      "last_seen_ms": 12000
+    }
+  ]
+}

@@ -1,0 +1,7211 @@
+﻿(() => {
+  const MAX_VISIBLE_LOG_LINES = 120;
+  const STORAGE_KEYS = {
+    localState: 'magic_wand_local_state_backup_v1',
+    roomRecords: 'magic_wand_room_records_backup_v1',
+    controllerDraft: 'magic_wand_controller_draft_v1',
+    lastPort: 'magic_wand_last_local_port_v1'
+  };
+
+  const state = {
+    apiBase: '',
+    controllerBase: '',
+    serverStatus: null,
+    controllerOnline: false,
+    controllerState: null,
+    localState: null,
+    roomRecords: [],
+    serverLogText: '',
+    debugLines: [],
+    activeTab: 'overview',
+    deviceFilterMode: 'ungrouped',
+    deviceFilterGroupId: -1,
+    selectedDeviceIds: new Set(),
+    editingMac: null,
+    editingDraftName: '',
+    editingDraftNote: '',
+    editingGroupId: -1,
+    editingGroupName: '',
+    editingGroupNote: '',
+    editingGroupValid: true,
+    groupFormModal: null,
+    groupDeleteModal: null,
+    effectFormModal: null,
+    effectDeleteModal: null,
+    templateFormModal: null,
+    selectedTemplateId: '',
+    currentRoomId: '',
+    selectedEffectId: '',
+    effectPreviewTemplateId: '',
+    previewPlaying: true,
+    previewTick: 0,
+    roomEffectPreviewId: '',
+    roomEffectPreviewKey: '',
+    roomPrepareModal: null,
+    roomStartCountdown: null,
+    roomCountdownTimer: null,
+    wizardRoomDraft: null,
+    busy: {
+      status: false,
+      controller: false,
+      local: false,
+      records: false,
+      log: false,
+      scan: false,
+      identify: false,
+      publish: false,
+      save: false,
+      restore: false
+    }
+  };
+
+  const builtinEffectCatalog = [
+    { id: 'builtin-selftest', name: '自检', note: '点名式状态汇报，适合 NPC 人工检查设备响应。', mode: 'selftest', kind: 'effect', colorA: '#FFD24D', colorB: '#34B3FF', colorC: '#61E09A' },
+    { id: 'builtin-silent', name: '静默', note: '不发光，只保留状态。', mode: 'silent', kind: 'effect', colorA: '#7487a7', colorB: '#7487a7', colorC: '#7487a7' },
+    { id: 'builtin-solid', name: '常亮', note: '固定颜色常亮。', mode: 'solid', kind: 'effect', colorA: '#FFD24D', colorB: '#34B3FF', colorC: '#61E09A' },
+    { id: 'builtin-gradient', name: '渐变常亮', note: '颜色平滑渐变，不发生熄灭。', mode: 'gradient', kind: 'effect', colorA: '#FFD24D', colorB: '#34B3FF', colorC: '#FFD24D' },
+    { id: 'builtin-breath', name: '呼吸', note: '亮度起伏，适合常驻提示。', mode: 'breath', kind: 'effect', colorA: '#FFD24D', colorB: '#34B3FF', colorC: '#61E09A' },
+    { id: 'builtin-blink', name: '闪烁', note: '按周期亮灭。', mode: 'blink', kind: 'effect', colorA: '#FFD24D', colorB: '#34B3FF', colorC: '#FFFFFF' },
+    { id: 'builtin-cycle', name: '多色循环', note: '三色轮换。', mode: 'cycle', kind: 'effect', colorA: '#FFD24D', colorB: '#34B3FF', colorC: '#61E09A' },
+    { id: 'builtin-chase', name: '跑马灯', note: '单灯位移动。', mode: 'chase', kind: 'effect', colorA: '#FFD24D', colorB: '#34B3FF', colorC: '#61E09A' },
+    { id: 'builtin-pulse', name: '脉冲跑马', note: '渐变、起止速度、结束停留。', mode: 'pulse_chase', kind: 'effect', colorA: '#FFD24D', colorB: '#FFFBF0', colorC: '#FFFFFF' }
+  ];
+  const builtinEffects = builtinEffectCatalog.filter((effect) => effect.kind !== 'utility');
+
+  const builtinTemplates = [
+    {
+      id: 'tpl-treasure-duo',
+      name: '多人寻宝混战',
+      note: '一组魔杖寻找一组宝箱，支持并行开局和本地历史记录。',
+      builtIn: true,
+      feature_preset_id: 'fp-treasure',
+      effect_preset_id: 'builtin-breath',
+      source_group_mode: 'multi',
+      target_group_mode: 'single',
+      sense_mode: 'ring',
+      idle_effect_id: 'builtin-breath',
+      trigger_effect_id: 'builtin-pulse',
+      scoring: { mode: 'count_find', max_find: 0 }
+    },
+    {
+      id: 'tpl-solo',
+      name: '魔杖寻宝-单人轮巡',
+      note: '每支魔杖独立记录目标，适合一个人带多个组。',
+      builtIn: true,
+      feature_preset_id: 'fp-treasure',
+      effect_preset_id: 'builtin-blink',
+      source_group_mode: 'single',
+      target_group_mode: 'single',
+      sense_mode: 'ring',
+      idle_effect_id: 'builtin-breath',
+      trigger_effect_id: 'builtin-blink',
+      scoring: { mode: 'count_find', max_find: 1 }
+    },
+    {
+      id: 'tpl-team',
+      name: '魔杖寻宝-双人组共享',
+      note: '同组共享找到记录，适合双人协作。',
+      builtIn: true,
+      feature_preset_id: 'fp-treasure',
+      effect_preset_id: 'builtin-chase',
+      source_group_mode: 'multi',
+      target_group_mode: 'single',
+      sense_mode: 'shared',
+      idle_effect_id: 'builtin-solid',
+      trigger_effect_id: 'builtin-chase',
+      scoring: { mode: 'shared_count', max_find: 0 }
+    },
+    {
+      id: 'tpl-rssi',
+      name: '距离提示测试',
+      note: '只看 RSSI 强弱变化，用于阈值和映射测试。',
+      builtIn: true,
+      feature_preset_id: 'fp-rssi',
+      effect_preset_id: 'builtin-blink',
+      source_group_mode: 'single',
+      target_group_mode: 'single',
+      sense_mode: 'response',
+      idle_effect_id: 'builtin-breath',
+      trigger_effect_id: 'builtin-blink',
+      scoring: { mode: 'rssi_probe', max_find: 0 }
+    },
+    {
+      id: 'tpl-effect',
+      name: '灯效演示',
+      note: '展示常亮、呼吸、闪烁、跑马灯与脉冲跑马。',
+      builtIn: true,
+      feature_preset_id: 'fp-rssi',
+      effect_preset_id: 'builtin-cycle',
+      source_group_mode: 'multi',
+      target_group_mode: 'multi',
+      sense_mode: 'response',
+      idle_effect_id: 'builtin-silent',
+      trigger_effect_id: 'builtin-cycle',
+      scoring: { mode: 'demo', max_find: 0 }
+    }
+  ];
+
+  const groupPalette = ['blue', 'green', 'yellow', 'purple'];
+  const EFFECT_TRACK_LIMIT = 3;
+  const EFFECT_TEMPLATE_LIMIT = 9999;
+  const PREVIEW_FRAME_MS = 80;
+  const WIZARD_STEP_MAX = 4;
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function normalizeNumber(value, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function uid(prefix = 'id') {
+    return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function nowIso() {
+    return new Date().toISOString();
+  }
+
+  function portFromBase(base, fallback = '8777') {
+    try {
+      const url = new URL(String(base || ''), window.location.href);
+      return url.port || String(fallback);
+    } catch (_) {
+      return String(fallback);
+    }
+  }
+
+  function formatTime(iso) {
+    if (!iso) return '未开始';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return String(iso);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function formatDuration(startIso, endIso) {
+    if (!startIso) return '0m';
+    const a = new Date(startIso).getTime();
+    const b = new Date(endIso || nowIso()).getTime();
+    const sec = Math.max(0, Math.round((b - a) / 1000));
+    const min = Math.floor(sec / 60);
+    const rem = sec % 60;
+    return min ? `${min}m${rem.toString().padStart(2, '0')}s` : `${sec}s`;
+  }
+
+  function formatAgo(ms) {
+    const value = Math.max(0, normalizeNumber(ms, 0));
+    if (value < 1000) return `${value} ms 前`;
+    const sec = Math.floor(value / 1000);
+    if (sec < 60) return `${sec}.${Math.floor((value % 1000) / 100)}s 前`;
+    const min = Math.floor(sec / 60);
+    const rem = sec % 60;
+    return `${min}m ${rem}s 前`;
+  }
+
+  function countBits32(value) {
+    let v = value >>> 0;
+    let count = 0;
+    while (v) {
+      v &= v - 1;
+      count++;
+    }
+    return count;
+  }
+
+  function effectModeLabel(mode) {
+    const value = String(mode || '').trim();
+    if (value === 'silent') return '静默';
+    if (value === 'solid') return '常亮';
+    if (value === 'gradient') return '渐变常亮';
+    if (value === 'breath') return '呼吸';
+    if (value === 'blink') return '闪烁';
+    if (value === 'cycle') return '多色循环';
+    if (value === 'chase') return '跑马灯';
+    if (value === 'pulse' || value === 'pulse_chase') return '脉冲跑马';
+    if (value === 'selftest') return '自检';
+    return value || '未设置';
+  }
+
+  function roleModeValue(mode, fallback = 'single') {
+    const value = String(mode || '').trim().toLowerCase();
+    if (['multi', 'multiple', 'many', 'group', 'groups'].includes(value)) return 'multi';
+    if (['single', 'one', 'solo'].includes(value)) return 'single';
+    return fallback === 'multi' ? 'multi' : 'single';
+  }
+
+  function roleModeLabel(mode) {
+    return roleModeValue(mode) === 'multi' ? '多个' : '单个';
+  }
+
+  function effectTemplateIdForMode(mode) {
+    const value = String(mode || '').trim();
+    if (value === 'silent') return 'builtin-silent';
+    if (value === 'solid') return 'builtin-solid';
+    if (value === 'gradient') return 'builtin-gradient';
+    if (value === 'breath') return 'builtin-breath';
+    if (value === 'blink') return 'builtin-blink';
+    if (value === 'cycle') return 'builtin-cycle';
+    if (value === 'chase') return 'builtin-chase';
+    if (value === 'pulse' || value === 'pulse_chase') return 'builtin-pulse';
+    if (value === 'selftest') return 'builtin-selftest';
+    return 'builtin-breath';
+  }
+
+  function effectModeOptionsHtml(selectedMode = 'solid') {
+    const options = ['silent', 'solid', 'gradient', 'breath', 'blink', 'cycle', 'chase', 'pulse_chase', 'selftest'];
+    return options.map((mode) => `<option value="${escapeHtml(mode)}" ${String(selectedMode || 'solid') === mode ? 'selected' : ''}>${escapeHtml(effectModeLabel(mode))}</option>`).join('');
+  }
+
+  function effectTrackPalette(index = 0) {
+    const palettes = [
+      ['#FFD24D', '#34B3FF', '#61E09A'],
+      ['#FF8CC3', '#8A7CFF', '#41C7FF'],
+      ['#F7A24A', '#F5E16A', '#74E5B0']
+    ];
+    return palettes[index % palettes.length].slice();
+  }
+
+  function buildDefaultEffectTrack(mode = 'solid', index = 0, overrides = {}) {
+    const colors = Array.isArray(overrides.colors) && overrides.colors.length
+      ? overrides.colors.slice(0, 3)
+      : effectTrackPalette(index);
+    const trackMode = String(overrides.mode || mode || 'solid');
+    const templateId = String(overrides.template_id || effectTemplateIdForMode(trackMode));
+    const ledCount = clamp(normalizeNumber(overrides.led_count, 35), 1, 9999);
+    const ledStart = clamp(normalizeNumber(overrides.led_start, 1), 1, ledCount);
+    const ledEnd = clamp(normalizeNumber(overrides.led_end, ledCount), ledStart, ledCount);
+    return {
+      id: String(overrides.id || uid('trk')),
+      enabled: overrides.enabled !== undefined ? !!overrides.enabled : true,
+      port: clamp(normalizeNumber(overrides.port, index + 1), 1, 3),
+      template_id: templateId,
+      mode: trackMode,
+      led_count: ledCount,
+      led_start: ledStart,
+      led_end: ledEnd,
+      gap: Math.max(0, normalizeNumber(overrides.gap, 0)),
+      brightness: clamp(normalizeNumber(overrides.brightness, trackMode === 'silent' ? 0 : trackMode === 'selftest' ? 90 : 80), 0, 100),
+      colors,
+      repeat: Math.max(0, normalizeNumber(overrides.repeat, trackMode === 'pulse_chase' ? 15 : 0)),
+      frequency_hz: Math.max(0, normalizeNumber(overrides.frequency_hz, trackMode === 'breath' ? 0.3 : 0)),
+      period_ms: Math.max(0, normalizeNumber(overrides.period_ms, trackMode === 'cycle' ? 420 : trackMode === 'gradient' ? 1800 : trackMode === 'selftest' ? 1200 : 700)),
+      duty: clamp(normalizeNumber(overrides.duty, 50), 0, 100),
+      accel: Math.max(0, normalizeNumber(overrides.accel, 0)),
+      pulse_speed_start: clamp(normalizeNumber(overrides.pulse_speed_start, trackMode === 'pulse_chase' ? 0 : 0), 0, 100),
+      pulse_speed_end: clamp(normalizeNumber(overrides.pulse_speed_end, trackMode === 'pulse_chase' ? 100 : 100), 0, 100),
+      pulse_duration_ms: Math.max(0, normalizeNumber(overrides.pulse_duration_ms, 0)),
+      end_hold_ms: Math.max(0, normalizeNumber(overrides.end_hold_ms, 0)),
+      end_behavior: String(overrides.end_behavior || 'off')
+    };
+  }
+
+  function normalizeEffectTrack(raw, fallback = null, index = 0) {
+    const base = fallback && typeof fallback === 'object'
+      ? fallback
+      : buildDefaultEffectTrack('solid', index);
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const colors = Array.isArray(source.colors) && source.colors.length
+      ? source.colors.slice(0, 3)
+      : Array.isArray(base.colors) && base.colors.length
+        ? base.colors.slice(0, 3)
+        : effectTrackPalette(index);
+    return buildDefaultEffectTrack(source.mode || base.mode || 'solid', index, {
+      id: source.id || base.id || uid('trk'),
+      enabled: source.enabled !== undefined ? !!source.enabled : base.enabled !== undefined ? !!base.enabled : true,
+      port: source.port ?? base.port ?? (index + 1),
+      template_id: source.template_id || source.base_template_id || base.template_id || effectTemplateIdForMode(source.mode || base.mode || 'solid'),
+      led_count: source.led_count ?? base.led_count ?? 35,
+      led_start: source.led_start ?? base.led_start ?? 1,
+      led_end: source.led_end ?? base.led_end ?? (source.led_count ?? base.led_count ?? 35),
+      gap: source.gap ?? base.gap ?? 0,
+      brightness: source.brightness ?? base.brightness ?? 80,
+      colors,
+      repeat: source.repeat ?? base.repeat ?? 0,
+      frequency_hz: source.frequency_hz ?? base.frequency_hz ?? 0,
+      period_ms: source.period_ms ?? base.period_ms ?? 700,
+      duty: source.duty ?? base.duty ?? 50,
+      accel: source.accel ?? base.accel ?? 0,
+      pulse_speed_start: source.pulse_speed_start ?? base.pulse_speed_start ?? 0,
+      pulse_speed_end: source.pulse_speed_end ?? base.pulse_speed_end ?? Math.max(0, Math.min(100, normalizeNumber(source.accel ?? base.accel, 0) * 10 || 100)),
+      pulse_duration_ms: source.pulse_duration_ms ?? base.pulse_duration_ms ?? 0,
+      end_hold_ms: source.end_hold_ms ?? source.endHold ?? base.end_hold_ms ?? 0,
+      end_behavior: source.end_behavior || base.end_behavior || 'off'
+    });
+  }
+
+  function normalizeEffectUI(raw, fallback = null) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const base = fallback && typeof fallback === 'object' ? fallback : {};
+    const legacyMode = String(source.mode || base.mode || 'solid');
+    const legacyColors = Array.isArray(source.colors) && source.colors.length
+      ? source.colors.slice(0, 3)
+      : Array.isArray(base.colors) && base.colors.length
+        ? base.colors.slice(0, 3)
+        : effectTrackPalette(0);
+    const sourceTracks = Array.isArray(source.tracks) ? source.tracks : [];
+    const baseTracks = Array.isArray(base.tracks) ? base.tracks : [];
+    const legacyPorts = Array.isArray(source.ports) ? source.ports : Array.isArray(base.ports) ? base.ports : [];
+    const tracks = [];
+    for (let i = 0; i < EFFECT_TRACK_LIMIT; i++) {
+      const rawTrack = sourceTracks[i];
+      const fallbackTrack = baseTracks[i] || buildDefaultEffectTrack(legacyMode, i, {
+        enabled: legacyPorts[i] !== false && (i === 0 ? true : !!legacyPorts[i]),
+        port: i + 1,
+        template_id: effectTemplateIdForMode(legacyMode),
+        mode: legacyMode,
+        led_count: normalizeNumber(source.led_count ?? base.led_count, 35),
+        led_start: normalizeNumber(source.led_start ?? base.led_start, 1),
+        led_end: normalizeNumber(source.led_end ?? base.led_end, normalizeNumber(source.led_count ?? base.led_count, 35)),
+        gap: normalizeNumber(source.gap ?? base.gap, 0),
+        brightness: normalizeNumber(source.brightness ?? base.brightness, legacyMode === 'silent' ? 0 : 80),
+        colors: legacyColors,
+        repeat: normalizeNumber(source.count ?? base.count, 0),
+        frequency_hz: normalizeNumber(source.frequency_hz ?? base.frequency_hz, legacyMode === 'breath' ? 0.3 : 0),
+        period_ms: normalizeNumber(source.period_ms ?? source.period ?? base.period_ms ?? base.period, legacyMode === 'cycle' ? 420 : 700),
+        duty: normalizeNumber(source.duty ?? base.duty, 50),
+        accel: normalizeNumber(source.accel ?? base.accel, 0),
+        pulse_speed_start: clamp(normalizeNumber(source.pulse_speed_start ?? base.pulse_speed_start, 0), 0, 100),
+        pulse_speed_end: clamp(normalizeNumber(source.pulse_speed_end ?? base.pulse_speed_end, Math.max(0, Math.min(100, normalizeNumber(source.accel ?? base.accel, 0) * 10 || 100))), 0, 100),
+        pulse_duration_ms: Math.max(0, normalizeNumber(source.pulse_duration_ms ?? base.pulse_duration_ms, 0)),
+        end_hold_ms: normalizeNumber(source.end_hold_ms ?? source.endHold ?? base.end_hold_ms ?? base.endHold, 0),
+        end_behavior: String(source.end_behavior || base.end_behavior || 'off')
+      });
+      tracks.push(normalizeEffectTrack(rawTrack || (legacyPorts.length ? { enabled: legacyPorts[i] !== false } : i === 0 ? {
+        enabled: true,
+        port: 1,
+        template_id: effectTemplateIdForMode(legacyMode),
+        mode: legacyMode,
+        led_count: normalizeNumber(source.led_count ?? base.led_count, 35),
+        led_start: normalizeNumber(source.led_start ?? base.led_start, 1),
+        led_end: normalizeNumber(source.led_end ?? base.led_end, normalizeNumber(source.led_count ?? base.led_count, 35)),
+        gap: normalizeNumber(source.gap ?? base.gap, 0),
+        brightness: normalizeNumber(source.brightness ?? base.brightness, legacyMode === 'silent' ? 0 : 80),
+        colors: legacyColors,
+        repeat: normalizeNumber(source.count ?? base.count, 0),
+        frequency_hz: normalizeNumber(source.frequency_hz ?? base.frequency_hz, legacyMode === 'breath' ? 0.3 : 0),
+        period_ms: normalizeNumber(source.period_ms ?? source.period ?? base.period_ms ?? base.period, legacyMode === 'cycle' ? 420 : 700),
+        duty: normalizeNumber(source.duty ?? base.duty, 50),
+        accel: normalizeNumber(source.accel ?? base.accel, 0),
+        pulse_speed_start: clamp(normalizeNumber(source.pulse_speed_start ?? base.pulse_speed_start, 0), 0, 100),
+        pulse_speed_end: clamp(normalizeNumber(source.pulse_speed_end ?? base.pulse_speed_end, Math.max(0, Math.min(100, normalizeNumber(source.accel ?? base.accel, 0) * 10 || 100))), 0, 100),
+        pulse_duration_ms: Math.max(0, normalizeNumber(source.pulse_duration_ms ?? base.pulse_duration_ms, 0)),
+        end_hold_ms: normalizeNumber(source.end_hold_ms ?? source.endHold ?? base.end_hold_ms ?? base.endHold, 0),
+        end_behavior: String(source.end_behavior || base.end_behavior || 'off')
+      } : null), fallbackTrack, i));
+    }
+    const primary = tracks.find((track) => track.enabled !== false) || tracks[0] || buildDefaultEffectTrack(legacyMode, 0);
+    return {
+      schema: 2,
+      mode: primary.mode || legacyMode || 'solid',
+      ports: tracks.map((track) => track.enabled !== false),
+      tracks,
+      colors: Array.isArray(primary.colors) ? primary.colors.slice(0, 3) : legacyColors.slice(0, 3),
+      brightness: normalizeNumber(primary.brightness, 80),
+      speed: normalizeNumber(primary.frequency_hz, 0),
+      period: normalizeNumber(primary.period_ms, 700),
+      duty: normalizeNumber(primary.duty, 50),
+      count: normalizeNumber(primary.repeat, 0),
+      accel: primary.mode === 'pulse_chase'
+        ? Math.round(clamp(normalizeNumber(primary.pulse_speed_end, 100), 0, 100) / 10)
+        : normalizeNumber(primary.accel, 0),
+      pulse_speed_start: clamp(normalizeNumber(primary.pulse_speed_start, 0), 0, 100),
+      pulse_speed_end: clamp(normalizeNumber(primary.pulse_speed_end, 100), 0, 100),
+      pulse_duration_ms: Math.max(0, normalizeNumber(primary.pulse_duration_ms, 0)),
+      endHold: normalizeNumber(primary.end_hold_ms, 0),
+      endColor: String(primary.colors?.[2] || '#FFFFFF')
+    };
+  }
+
+  function buildEffectTemplateFromDefinition(def, index = 0) {
+    const mode = String(def?.mode || 'solid');
+    const tracks = [];
+    tracks.push(buildDefaultEffectTrack(mode, index, {
+      port: 1,
+      led_count: mode === 'chase' ? 35 : 35,
+      led_start: 1,
+      led_end: 35,
+      gap: mode === 'chase' ? 0 : 0,
+      brightness: mode === 'silent' ? 0 : mode === 'blink' ? 100 : mode === 'breath' ? 60 : mode === 'selftest' ? 90 : 80,
+      colors: [def?.colorA || '#FFD24D', def?.colorB || '#34B3FF', def?.colorC || '#61E09A'],
+      repeat: mode === 'pulse_chase' ? 15 : 0,
+      frequency_hz: mode === 'breath' ? 0.3 : 0,
+      period_ms: mode === 'cycle' ? 420 : mode === 'blink' ? 700 : mode === 'chase' ? 420 : mode === 'gradient' ? 1800 : mode === 'selftest' ? 1200 : 700,
+      duty: 50,
+      accel: mode === 'pulse_chase' ? 10 : 0,
+      pulse_speed_start: mode === 'pulse_chase' ? 0 : 0,
+      pulse_speed_end: mode === 'pulse_chase' ? 100 : 100,
+      pulse_duration_ms: 0,
+      end_hold_ms: mode === 'pulse_chase' ? 2000 : 0,
+      end_behavior: mode === 'pulse_chase' ? 'hold' : 'off'
+    }));
+    while (tracks.length < EFFECT_TRACK_LIMIT) {
+      tracks.push(buildDefaultEffectTrack('solid', tracks.length, { enabled: false, port: tracks.length + 1 }));
+    }
+    return {
+      id: String(def?.id || uid('ep')),
+      name: String(def?.name || '未命名灯效'),
+      note: String(def?.note || ''),
+      builtIn: true,
+      effect_ui: normalizeEffectUI({
+        schema: 2,
+        mode,
+        tracks
+      }),
+      created_at: '1970-01-01T00:00:00',
+      updated_at: '1970-01-01T00:00:00'
+    };
+  }
+
+  function buildDefaultEffectTemplates() {
+    return builtinEffects.map((effect, index) => buildEffectTemplateFromDefinition(effect, index));
+  }
+
+  function buildDefaultCustomEffects() {
+    return [];
+  }
+
+  function effectPrimaryTrack(effect) {
+    const tracks = Array.isArray(effect?.effect_ui?.tracks) ? effect.effect_ui.tracks : [];
+    return tracks.find((track) => track.enabled !== false) || tracks[0] || null;
+  }
+
+  function effectTrackEnabledCount(effect) {
+    return Array.isArray(effect?.effect_ui?.tracks) ? effect.effect_ui.tracks.filter((track) => track && track.enabled !== false).length : 0;
+  }
+
+  function previewCellShape() {
+    const value = String(state.localState?.ui?.preview_cell_shape || 'square');
+    return value === 'circle' ? 'circle' : 'square';
+  }
+
+  function setPreviewCellShape(shape) {
+    state.localState.ui.preview_cell_shape = String(shape) === 'circle' ? 'circle' : 'square';
+    persistStateToServer();
+    render();
+  }
+
+  function previewFrameMs() {
+    return state.previewTick * PREVIEW_FRAME_MS;
+  }
+
+  function hexToRgb(hex) {
+    const value = String(hex || '').trim().replace(/^#/, '');
+    if (/^[0-9a-f]{3}$/i.test(value)) {
+      const r = parseInt(value[0] + value[0], 16);
+      const g = parseInt(value[1] + value[1], 16);
+      const b = parseInt(value[2] + value[2], 16);
+      return { r, g, b };
+    }
+    if (/^[0-9a-f]{6}$/i.test(value)) {
+      const r = parseInt(value.slice(0, 2), 16);
+      const g = parseInt(value.slice(2, 4), 16);
+      const b = parseInt(value.slice(4, 6), 16);
+      return { r, g, b };
+    }
+    return null;
+  }
+
+  function rgbaFromHex(hex, alpha = 1) {
+    const rgb = hexToRgb(hex) || { r: 255, g: 255, b: 255 };
+    return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+  }
+
+  function mixHexColor(a, b, t = 0.5) {
+    const rgbA = hexToRgb(a) || { r: 255, g: 255, b: 255 };
+    const rgbB = hexToRgb(b) || rgbA;
+    const ratio = clamp(normalizeNumber(t, 0.5), 0, 1);
+    const mix = (start, end) => Math.round(start + ((end - start) * ratio));
+    const toHex = (value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, '0');
+    return `#${toHex(mix(rgbA.r, rgbB.r))}${toHex(mix(rgbA.g, rgbB.g))}${toHex(mix(rgbA.b, rgbB.b))}`;
+  }
+
+  function circularDistance(index, head, total) {
+    if (total <= 0) return 0;
+    const diff = Math.abs(index - head);
+    return Math.min(diff, total - diff);
+  }
+
+  function pulseSpeedScale(speed) {
+    const normalized = clamp(normalizeNumber(speed, 0), 0, 100) / 100;
+    return 10 - (9 * Math.pow(normalized, 0.8));
+  }
+
+  function pulseChasePulsePlan(track, pulseCount, fallbackSpanMs) {
+    const count = Math.max(1, Math.round(normalizeNumber(pulseCount, 1) || 1));
+    const startSpeed = clamp(normalizeNumber(track?.pulse_speed_start ?? track?.accel, 0), 0, 100);
+    const endSpeed = clamp(normalizeNumber(track?.pulse_speed_end ?? ((track?.accel ?? 0) * 10), 100), 0, 100);
+    const totalDurationMs = Math.max(0, normalizeNumber(track?.pulse_duration_ms, 0));
+    const weights = Array.from({ length: count }, (_, index) => {
+      const t = count === 1 ? 1 : index / (count - 1);
+      const speed = startSpeed + ((endSpeed - startSpeed) * t);
+      return pulseSpeedScale(speed);
+    });
+    const totalWeight = weights.reduce((sum, item) => sum + item, 0) || 1;
+    const baseSpan = Math.max(140, normalizeNumber(fallbackSpanMs, 700));
+    const spans = weights.map((weight) => {
+      if (totalDurationMs > 0) return (totalDurationMs * weight) / totalWeight;
+      return baseSpan * weight;
+    });
+    const totalSpan = spans.reduce((sum, item) => sum + item, 0);
+    return {
+      count,
+      spans,
+      totalSpan,
+      startSpeed,
+      endSpeed,
+      totalDurationMs
+    };
+  }
+
+  function previewScaleMarks(total) {
+    const count = clamp(normalizeNumber(total, 0), 1, 9999);
+    const marks = new Set([1, count]);
+    for (let mark = 10; mark < count; mark += 10) marks.add(mark);
+    return Array.from(marks)
+      .sort((a, b) => a - b)
+      .map((mark) => `<span class="inline-flex min-w-[22px] justify-center">${escapeHtml(mark)}</span>`)
+      .join('');
+  }
+
+  function previewCellStyle(track, cellIndex, activeIndex, tickMs, paletteIndex = 0) {
+    const mode = String(track?.mode || 'solid');
+    const ledCount = clamp(normalizeNumber(track?.led_count, 35), 1, 9999);
+    const start = clamp(normalizeNumber(track?.led_start, 1), 1, ledCount);
+    const end = clamp(normalizeNumber(track?.led_end, ledCount), start, ledCount);
+    const gap = Math.max(0, normalizeNumber(track?.gap, 0));
+    const step = gap + 1;
+    const included = cellIndex >= start && cellIndex <= end && ((cellIndex - start) % step === 0);
+    const palette = Array.isArray(track?.colors) && track.colors.length ? track.colors.slice(0, 3) : effectTrackPalette(paletteIndex);
+    const brightness = clamp(normalizeNumber(track?.brightness, 80), 0, 100) / 100;
+    const periodMs = Math.max(120, normalizeNumber(track?.period_ms, 700));
+    const duty = clamp(normalizeNumber(track?.duty, 50), 0, 100) / 100;
+    const freq = Math.max(0, normalizeNumber(track?.frequency_hz, 0));
+    const repeat = Math.max(0, normalizeNumber(track?.repeat, 0));
+    const endHoldMs = Math.max(0, normalizeNumber(track?.end_hold_ms, 0));
+
+    let color = rgbaFromHex('#2B3950', 0.9);
+    let opacity = included ? 0.16 : 0.08;
+    let shadow = 'none';
+
+    if (!track || track.enabled === false) {
+      return { color, opacity: 0.06, shadow: 'none' };
+    }
+
+    const paletteColor = palette[(Math.max(0, activeIndex) + paletteIndex) % palette.length] || palette[0];
+    const baseAlpha = Math.max(0.08, Math.min(1, brightness));
+
+    if (!included) {
+      color = rgbaFromHex('#263248', 0.92);
+      opacity = 0.08;
+      return { color, opacity, shadow: 'none' };
+    }
+
+    if (mode === 'silent') {
+      color = rgbaFromHex('#253145', 0.92);
+      opacity = 0.04;
+      return { color, opacity, shadow: 'none' };
+    }
+
+    if (mode === 'solid') {
+      color = rgbaFromHex(paletteColor, 0.95);
+      opacity = 0.9 * baseAlpha;
+      shadow = `0 0 10px ${rgbaFromHex(paletteColor, 0.45 * baseAlpha)}`;
+      return { color, opacity, shadow };
+    }
+
+    if (mode === 'gradient') {
+      const phase = (tickMs % periodMs) / periodMs;
+      const gradientColor = phase < 0.5
+        ? mixHexColor(palette[0], palette[1] || palette[0], phase * 2)
+        : mixHexColor(palette[1] || palette[0], palette[2] || palette[0], (phase - 0.5) * 2);
+      color = rgbaFromHex(gradientColor, 0.96);
+      opacity = Math.max(0.18, 0.88 * baseAlpha);
+      shadow = `0 0 12px ${rgbaFromHex(gradientColor, 0.46 * opacity)}`;
+      return { color, opacity, shadow };
+    }
+
+    if (mode === 'breath') {
+      const sweep = 0.5 + 0.5 * Math.sin((tickMs / 1000) * (freq || 0.35) * Math.PI * 2 + paletteIndex * 0.45);
+      const wave = 0.12 + 0.88 * sweep;
+      const breathColor = palette.length >= 3
+        ? (sweep < 0.5
+          ? mixHexColor(palette[0], palette[1], sweep * 2)
+          : mixHexColor(palette[1], palette[2], (sweep - 0.5) * 2))
+        : mixHexColor(palette[0], palette[1] || palette[0], sweep);
+      color = rgbaFromHex(breathColor, 0.96);
+      opacity = Math.max(0.08, wave * baseAlpha);
+      shadow = `0 0 14px ${rgbaFromHex(breathColor, 0.58 * opacity)}`;
+      return { color, opacity, shadow };
+    }
+
+    if (mode === 'blink') {
+      const phase = (tickMs % periodMs) / periodMs;
+      const on = phase < duty;
+      color = rgbaFromHex(paletteColor, on ? 0.98 : 0.85);
+      opacity = on ? Math.max(0.12, baseAlpha) : 0.06;
+      shadow = on ? `0 0 10px ${rgbaFromHex(paletteColor, 0.42 * opacity)}` : 'none';
+      return { color, opacity, shadow };
+    }
+
+    if (mode === 'cycle') {
+      const shift = Math.floor(tickMs / Math.max(120, periodMs / Math.max(1, palette.length)));
+      const cycleColor = palette[(activeIndex + shift) % palette.length] || palette[0];
+      color = rgbaFromHex(cycleColor, 0.95);
+      opacity = Math.max(0.12, baseAlpha);
+      shadow = `0 0 10px ${rgbaFromHex(cycleColor, 0.42 * opacity)}`;
+      return { color, opacity, shadow };
+    }
+
+    if (mode === 'selftest') {
+      const activeCount = Math.max(1, Math.floor((end - start) / step) + 1);
+      const sweepPeriod = Math.max(360, periodMs);
+      const head = Math.floor(((tickMs % sweepPeriod) / sweepPeriod) * activeCount);
+      const dist = circularDistance(activeIndex, head, activeCount);
+      const colorTick = Math.floor(tickMs / Math.max(180, sweepPeriod / 4));
+      const reportColor = palette[(colorTick + activeIndex) % palette.length] || palette[0];
+      const statusWave = 0.5 + 0.5 * Math.sin((tickMs / Math.max(360, sweepPeriod)) * Math.PI * 2 + activeIndex * 0.72);
+      const ambient = 0.36 + 0.28 * statusWave;
+      const trail = Math.max(ambient, dist === 0 ? 1 : dist === 1 ? 0.76 : dist === 2 ? 0.5 : 0.28);
+      color = rgbaFromHex(reportColor, 0.98);
+      opacity = Math.max(0.34, trail * baseAlpha);
+      shadow = dist <= 1 ? `0 0 16px ${rgbaFromHex(reportColor, 0.58 * opacity)}` : `0 0 8px ${rgbaFromHex(reportColor, 0.26 * opacity)}`;
+      return { color, opacity, shadow };
+    }
+
+    if (mode === 'chase') {
+      const activeCount = Math.max(1, Math.floor((end - start) / step) + 1);
+      const headPeriod = Math.max(180, periodMs / Math.max(1, activeCount));
+      const head = Math.floor((tickMs / headPeriod) % activeCount);
+      const dist = circularDistance(activeIndex, head, activeCount);
+      const trail = dist === 0 ? 1 : dist === 1 ? 0.62 : dist === 2 ? 0.28 : 0.08;
+      color = rgbaFromHex(paletteColor, 0.95);
+      opacity = trail * baseAlpha;
+      shadow = dist <= 1 ? `0 0 12px ${rgbaFromHex(paletteColor, 0.5 * opacity)}` : 'none';
+      return { color, opacity, shadow };
+    }
+
+    if (mode === 'pulse_chase') {
+      const pulseCount = Math.max(1, Math.round(repeat || 15));
+      const pulsePlan = pulseChasePulsePlan(track, pulseCount, periodMs / Math.max(1, pulseCount));
+      const loopMs = pulsePlan.totalSpan + endHoldMs;
+      const loopTime = loopMs > 0 ? tickMs % loopMs : tickMs;
+      const activeCount = Math.max(1, Math.floor((end - start) / step) + 1);
+      if (loopTime >= pulsePlan.totalSpan) {
+        color = rgbaFromHex(paletteColor, 0.98);
+        opacity = 0.95 * baseAlpha;
+        shadow = `0 0 14px ${rgbaFromHex(paletteColor, 0.5 * opacity)}`;
+        return { color, opacity, shadow };
+      }
+      let cursor = 0;
+      let pulseIndex = 0;
+      while (pulseIndex < pulsePlan.spans.length) {
+        const span = Math.max(1, pulsePlan.spans[pulseIndex] || 1);
+        if (loopTime < cursor + span) break;
+        cursor += span;
+        pulseIndex++;
+      }
+      const pulseSpanMs = Math.max(1, pulsePlan.spans[pulseIndex] || pulsePlan.spans[pulsePlan.spans.length - 1] || 1);
+      const pulsePhase = clamp((loopTime - cursor) / pulseSpanMs, 0, 1);
+      const head = Math.min(activeCount - 1, Math.floor(pulsePhase * activeCount));
+      const dist = circularDistance(activeIndex, head, activeCount);
+      const trail = dist === 0 ? 1 : dist === 1 ? 0.72 : dist === 2 ? 0.4 : 0.1;
+      const pulseColor = palette[(pulseIndex + activeIndex) % palette.length] || palette[0];
+      color = rgbaFromHex(pulseColor, 0.98);
+      opacity = trail * baseAlpha;
+      shadow = dist <= 1 ? `0 0 14px ${rgbaFromHex(pulseColor, 0.52 * opacity)}` : 'none';
+      return { color, opacity, shadow };
+    }
+
+    color = rgbaFromHex(paletteColor, 0.95);
+    opacity = Math.max(0.1, baseAlpha);
+    shadow = `0 0 10px ${rgbaFromHex(paletteColor, 0.4 * opacity)}`;
+    return { color, opacity, shadow };
+  }
+
+  function renderEffectMiniPreview(effectOrId, options = {}) {
+    const effect = effectOrId && typeof effectOrId === 'object'
+      ? effectOrId
+      : effectDefinitionById(effectOrId) || (effectOrId ? null : (selectedEffectPreset() || state.localState.effect_presets?.[0] || null));
+    const primary = effectPrimaryTrack(effect);
+    if (!effect || !primary) {
+      return '<div class="notice">暂无预览。</div>';
+    }
+    const shape = previewCellShape();
+    const tickMs = previewFrameMs();
+    const ledCount = clamp(normalizeNumber(options.ledCount, primary.led_count || 12), 8, 24);
+    const start = clamp(normalizeNumber(primary?.led_start, 1), 1, ledCount);
+    const end = clamp(normalizeNumber(primary?.led_end, ledCount), start, ledCount);
+    const gap = Math.max(0, normalizeNumber(primary?.gap, 0));
+    const step = gap + 1;
+    const activeIndices = [];
+    for (let led = start; led <= end; led += step) activeIndices.push(led);
+    const activeMap = new Map(activeIndices.map((led, activeIndex) => [led, activeIndex]));
+    const cellSize = clamp(normalizeNumber(options.cellSize, 8), 6, 12);
+    const cellGap = clamp(normalizeNumber(options.cellGap, 2), 1, 4);
+    const showLabel = options.label !== false;
+    return `
+      <div class="rounded-[12px] border border-[rgba(60,70,84,0.26)] bg-[rgba(10,17,27,0.74)] px-2.5 py-2">
+        ${showLabel ? `
+          <div class="flex items-center justify-between gap-2 text-[10px] leading-[1.35] text-[#8ea3bf]">
+            <span>${escapeHtml(effectModeLabel(primary?.mode || 'solid'))}</span>
+            <span>${escapeHtml(start)}-${escapeHtml(end)} · 间隔 ${escapeHtml(normalizeNumber(primary?.gap, 0))}</span>
+          </div>
+        ` : ''}
+        <div class="${showLabel ? 'mt-2' : ''} flex min-w-0 overflow-x-auto pb-0.5" style="gap:${cellGap}px;scrollbar-width:thin;">
+          ${Array.from({ length: ledCount }, (_, ledIdx) => {
+            const ledNo = ledIdx + 1;
+            const activeIndex = activeMap.has(ledNo) ? activeMap.get(ledNo) : -1;
+            const visual = previewCellStyle(primary, ledNo, activeIndex, tickMs, 0);
+            const borderRadius = shape === 'circle' ? '999px' : '4px';
+            return `<span aria-hidden="true" style="flex:0 0 auto;width:${cellSize}px;height:${cellSize}px;border-radius:${borderRadius};background:${visual.color};opacity:${visual.opacity};box-shadow:${visual.shadow};border:1px solid rgba(16,20,28,0.88);transition:background .18s linear,opacity .18s linear,box-shadow .18s linear;"></span>`;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function syncEffectPresetSummary(preset) {
+    if (!preset || typeof preset !== 'object') return preset;
+    preset.effect_ui = normalizeEffectUI(preset.effect_ui || {}, preset.effect_ui || {});
+    const primary = effectPrimaryTrack(preset) || buildDefaultEffectTrack('solid', 0);
+    preset.effect_ui.mode = primary.mode || 'solid';
+    preset.effect_ui.ports = preset.effect_ui.tracks.map((track) => track.enabled !== false);
+    preset.effect_ui.colors = Array.isArray(primary.colors) ? primary.colors.slice(0, 3) : effectTrackPalette(0);
+    preset.effect_ui.brightness = normalizeNumber(primary.brightness, 80);
+    preset.effect_ui.speed = normalizeNumber(primary.frequency_hz, 0);
+    preset.effect_ui.period = normalizeNumber(primary.period_ms, 700);
+    preset.effect_ui.duty = normalizeNumber(primary.duty, 50);
+    preset.effect_ui.count = normalizeNumber(primary.repeat, 0);
+    preset.effect_ui.accel = primary.mode === 'pulse_chase'
+      ? Math.round(clamp(normalizeNumber(primary.pulse_speed_end, 100), 0, 100) / 10)
+      : normalizeNumber(primary.accel, 0);
+    preset.effect_ui.pulse_speed_start = clamp(normalizeNumber(primary.pulse_speed_start, 0), 0, 100);
+    preset.effect_ui.pulse_speed_end = clamp(normalizeNumber(primary.pulse_speed_end, 100), 0, 100);
+    preset.effect_ui.pulse_duration_ms = Math.max(0, normalizeNumber(primary.pulse_duration_ms, 0));
+    preset.effect_ui.endHold = normalizeNumber(primary.end_hold_ms, 0);
+    preset.effect_ui.endColor = String(primary.colors?.[2] || primary.colors?.[0] || '#FFFFFF');
+    return preset;
+  }
+
+  function effectReferenceStats(effectId) {
+    const id = String(effectId || '').trim();
+    if (!id) return { templates: 0, rooms: 0 };
+    let templates = 0;
+    for (const template of state.localState?.templates || []) {
+      const fields = [template?.effect_preset_id, template?.idle_effect_id, template?.trigger_effect_id, template?.preview_effect_id];
+      if (fields.some((field) => String(field || '') === id)) templates++;
+    }
+    let rooms = 0;
+    for (const room of roomList()) {
+      const fields = [room?.effect_preset_id, room?.idle_effect_id, room?.trigger_effect_id, room?.preview_effect_id];
+      if (fields.some((field) => String(field || '') === id)) rooms++;
+    }
+    return { templates, rooms };
+  }
+
+  function cleanupEffectReferences(deletedId, replacementId = 'builtin-breath') {
+    const from = String(deletedId || '').trim();
+    if (!from) return;
+    const defaultEffect = String(replacementId || 'builtin-breath');
+    const defaultIdle = 'builtin-silent';
+    for (const template of state.localState?.templates || []) {
+      if (String(template.effect_preset_id || '') === from) template.effect_preset_id = defaultEffect;
+      if (String(template.preview_effect_id || '') === from) template.preview_effect_id = defaultEffect;
+      if (String(template.idle_effect_id || '') === from) template.idle_effect_id = defaultIdle;
+      if (String(template.trigger_effect_id || '') === from) template.trigger_effect_id = defaultEffect;
+      template.updated_at = nowIso();
+    }
+    for (const room of roomList()) {
+      if (String(room.effect_preset_id || '') === from) room.effect_preset_id = defaultEffect;
+      if (String(room.preview_effect_id || '') === from) room.preview_effect_id = defaultEffect;
+      if (String(room.idle_effect_id || '') === from) room.idle_effect_id = defaultIdle;
+      if (String(room.trigger_effect_id || '') === from) room.trigger_effect_id = defaultEffect;
+      room.updated_at = nowIso();
+      updateRoomDraftSummary(room);
+    }
+  }
+
+  function effectTemplateOptionsHtml(selectedTemplateId = '') {
+    const templates = state.localState?.effect_templates || buildDefaultEffectTemplates();
+    return templates.map((item) => `<option value="${escapeHtml(item.id)}" ${String(selectedTemplateId || '') === String(item.id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('');
+  }
+
+  function effectTrackFromTemplate(templateId, index = 0, overrides = {}) {
+    const template = effectTemplateById(templateId) || buildDefaultEffectTemplates()[0] || null;
+    const sourceTrack = effectPrimaryTrack(template) || buildDefaultEffectTrack('solid', index);
+    const templateMode = String(sourceTrack?.mode || template?.effect_ui?.mode || 'solid');
+    const templateColors = Array.isArray(sourceTrack?.colors) && sourceTrack.colors.length ? sourceTrack.colors : effectTrackPalette(index);
+    return normalizeEffectTrack({
+      id: overrides.id || uid('trk'),
+      enabled: overrides.enabled !== undefined ? !!overrides.enabled : true,
+      port: clamp(normalizeNumber(overrides.port, index + 1), 1, 3),
+      template_id: templateId,
+      mode: overrides.mode || templateMode,
+      led_count: overrides.led_count ?? sourceTrack?.led_count ?? 35,
+      led_start: overrides.led_start ?? sourceTrack?.led_start ?? 1,
+      led_end: overrides.led_end ?? sourceTrack?.led_end ?? sourceTrack?.led_count ?? 35,
+      gap: overrides.gap ?? sourceTrack?.gap ?? 0,
+      brightness: overrides.brightness ?? sourceTrack?.brightness ?? 80,
+      colors: Array.isArray(overrides.colors) && overrides.colors.length ? overrides.colors.slice(0, 3) : templateColors.slice(0, 3),
+      repeat: overrides.repeat ?? sourceTrack?.repeat ?? 0,
+      frequency_hz: overrides.frequency_hz ?? sourceTrack?.frequency_hz ?? 0,
+      period_ms: overrides.period_ms ?? sourceTrack?.period_ms ?? 700,
+      duty: overrides.duty ?? sourceTrack?.duty ?? 50,
+      accel: overrides.accel ?? sourceTrack?.accel ?? 0,
+      pulse_speed_start: overrides.pulse_speed_start ?? sourceTrack?.pulse_speed_start ?? 0,
+      pulse_speed_end: overrides.pulse_speed_end ?? sourceTrack?.pulse_speed_end ?? Math.max(0, Math.min(100, normalizeNumber(sourceTrack?.accel ?? 0, 0) * 10 || 100)),
+      pulse_duration_ms: overrides.pulse_duration_ms ?? sourceTrack?.pulse_duration_ms ?? 0,
+      end_hold_ms: overrides.end_hold_ms ?? sourceTrack?.end_hold_ms ?? 0,
+      end_behavior: overrides.end_behavior ?? sourceTrack?.end_behavior ?? 'off'
+    }, null, index);
+  }
+
+  function buildEffectModalTracks(sourceTemplateId = 'builtin-breath', sourceEffect = null) {
+    const source = sourceEffect && typeof sourceEffect === 'object' ? sourceEffect : null;
+    const sourceTracks = Array.isArray(source?.effect_ui?.tracks) ? source.effect_ui.tracks : [];
+    const tracks = [];
+    for (let i = 0; i < EFFECT_TRACK_LIMIT; i++) {
+      const sourceTrack = sourceTracks[i];
+      if (sourceTrack) {
+        tracks.push(normalizeEffectTrack(sourceTrack, null, i));
+      } else {
+        tracks.push(effectTrackFromTemplate('builtin-silent', i, {
+          port: i + 1,
+          enabled: true,
+          led_count: 35,
+          led_start: 1,
+          led_end: 35,
+          brightness: 0,
+          repeat: 0,
+          frequency_hz: 0,
+          period_ms: 700,
+          duty: 50,
+          accel: 0,
+          pulse_speed_start: 0,
+          pulse_speed_end: 100,
+          pulse_duration_ms: 0,
+          end_hold_ms: 0,
+          end_behavior: 'off'
+        }));
+      }
+    }
+    return tracks;
+  }
+
+  function openEffectFormModal(effectOrTemplateId = null, { mode = 'create' } = {}) {
+    const custom = effectOrTemplateId && typeof effectOrTemplateId === 'object' ? effectOrTemplateId : effectPresetById(effectOrTemplateId);
+    const templateId = custom?.source_template_id
+      || (typeof effectOrTemplateId === 'string' && effectTemplateById(effectOrTemplateId) ? effectOrTemplateId : '')
+      || custom?.effect_ui?.tracks?.find((track) => track && track.enabled !== false)?.template_id
+      || 'builtin-breath';
+    const sourceEffect = custom || null;
+    const sourceTemplate = effectTemplateById(templateId) || buildDefaultEffectTemplates()[0] || null;
+    const isEdit = !!sourceEffect;
+    const draft = {
+      open: true,
+      mode: isEdit ? 'edit' : mode === 'create' ? 'create' : 'create',
+      effectId: sourceEffect?.id || '',
+      name: String(sourceEffect?.name || '我的灯效'),
+      note: String(sourceEffect?.note || ''),
+      source_template_id: String(templateId || sourceTemplate?.id || ''),
+      tracks: buildEffectModalTracks(templateId || sourceTemplate?.id || 'builtin-silent', sourceEffect),
+      step: 1,
+      activeTrackIndex: 0
+    };
+    state.effectFormModal = draft;
+    render();
+    requestAnimationFrame(() => {
+      const input = document.querySelector('[data-role="effect-form-input"][data-effect-form-field="name"]');
+      if (input) {
+        input.focus();
+        input.select?.();
+      }
+    });
+  }
+
+  function closeEffectFormModal() {
+    state.effectFormModal = null;
+    render();
+  }
+
+  function openEffectDeleteModal(effectOrId) {
+    const effect = typeof effectOrId === 'object' ? effectOrId : effectPresetById(effectOrId);
+    if (!effect) return;
+    state.effectDeleteModal = {
+      open: true,
+      effectId: effect.id,
+      name: String(effect.name || '未命名灯效'),
+      refs: effectReferenceStats(effect.id)
+    };
+    render();
+  }
+
+  function closeEffectDeleteModal() {
+    state.effectDeleteModal = null;
+    render();
+  }
+
+  function buildTemplateFormDraft(source = null, { mode = 'create', name, note } = {}) {
+    const raw = source && typeof source === 'object' ? source : {};
+    const sourceMode = roleModeValue(raw.source_group_mode || ((Array.isArray(raw.default_source_group_ids) && raw.default_source_group_ids.length > 1) ? 'multi' : 'single'));
+    const targetMode = roleModeValue(raw.target_group_mode || ((Array.isArray(raw.default_target_group_ids) && raw.default_target_group_ids.length > 1) ? 'multi' : 'single'));
+    const scoring = raw.scoring && typeof raw.scoring === 'object' ? raw.scoring : {};
+    const choices = effectChoiceList();
+    const defaultIdleEffectId = choices.find((item) => String(item.id) === 'builtin-silent')?.id || choices[0]?.id || '';
+    const defaultTriggerEffectId = choices.find((item) => String(item.id) === 'builtin-blink')?.id || choices.find((item) => String(item.id) === 'builtin-pulse')?.id || choices[0]?.id || defaultIdleEffectId;
+    const isUserTemplate = raw.builtIn === false && String(raw.id || '').trim();
+    return {
+      open: true,
+      mode: isUserTemplate && mode !== 'create' ? 'edit' : 'create',
+      templateId: isUserTemplate && mode !== 'create' ? String(raw.id || '') : '',
+      sourceId: String(raw.id || ''),
+      step: 1,
+      name: String(name ?? (isUserTemplate && mode !== 'create' ? raw.name : '我的模板')),
+      note: String(note ?? (raw.note || '从当前配置创建')),
+      feature_preset_id: String(raw.feature_preset_id || state.localState?.feature_presets?.[0]?.id || ''),
+      effect_preset_id: String(raw.effect_preset_id || state.localState?.effect_presets?.[0]?.id || ''),
+      source_group_mode: sourceMode,
+      target_group_mode: targetMode,
+      sense_mode: String(raw.sense_mode || 'ring'),
+      idle_effect_id: String(raw.idle_effect_id || defaultIdleEffectId),
+      trigger_effect_id: String(raw.trigger_effect_id || defaultTriggerEffectId),
+      scoring_mode: String(scoring.mode || 'count_find'),
+      scoring_max_find: normalizeNumber(scoring.max_find, 0)
+    };
+  }
+
+  function openTemplateFormModal(source = null, { mode = 'create', name, note } = {}) {
+    state.templateFormModal = buildTemplateFormDraft(source, { mode, name, note });
+    render();
+    requestAnimationFrame(() => {
+      const input = document.querySelector('[data-role="template-form-input"][data-template-form-field="name"]');
+      if (input) {
+        input.focus();
+        input.select?.();
+      }
+    });
+  }
+
+  function closeTemplateFormModal() {
+    state.templateFormModal = null;
+    render();
+  }
+
+  function ensureTemplateFormModal() {
+    if (!state.templateFormModal) return null;
+    state.templateFormModal.step = clamp(normalizeNumber(state.templateFormModal.step, 1), 1, 2);
+    return state.templateFormModal;
+  }
+
+  function saveTemplateFormModal() {
+    const modal = ensureTemplateFormModal();
+    if (!modal) return;
+    const name = String(modal.name || '').trim();
+    if (!name) {
+      alert('模板名称不能为空。');
+      return;
+    }
+    const duplicate = (state.localState.templates || []).find((item) => String(item.id || '') !== String(modal.templateId || '') && String(item.name || '').trim() === name);
+    if (duplicate) {
+      alert(`已有同名模板「${duplicate.name}」，请换一个不重名的名称。`);
+      return;
+    }
+    const isEdit = String(modal.templateId || '').trim();
+    const prev = isEdit ? state.localState.templates.find((item) => String(item.id) === String(modal.templateId)) : null;
+    const template = {
+      id: isEdit ? String(modal.templateId) : uid('tpl'),
+      name,
+      note: String(modal.note || ''),
+      builtIn: false,
+      feature_preset_id: String(modal.feature_preset_id || ''),
+      effect_preset_id: String(modal.effect_preset_id || ''),
+      source_group_mode: roleModeValue(modal.source_group_mode),
+      target_group_mode: roleModeValue(modal.target_group_mode),
+      default_source_group_ids: [],
+      default_target_group_ids: [],
+      sense_mode: String(modal.sense_mode || 'ring'),
+      idle_effect_id: String(modal.idle_effect_id || 'builtin-silent'),
+      trigger_effect_id: String(modal.trigger_effect_id || 'builtin-blink'),
+      scoring: { mode: String(modal.scoring_mode || 'count_find'), max_find: normalizeNumber(modal.scoring_max_find, 0) },
+      created_at: prev?.created_at || nowIso(),
+      updated_at: nowIso(),
+      config: prev?.config ? clone(prev.config) : buildControllerPayload()
+    };
+    if (template.id === state.selectedTemplateId) {
+      state.selectedTemplateId = template.id;
+      state.localState.ui.selected_template_id = template.id;
+    }
+    const list = Array.isArray(state.localState.templates) ? state.localState.templates.slice() : [];
+    const idx = list.findIndex((item) => String(item.id) === String(template.id));
+    if (idx >= 0) list[idx] = template;
+    else list.unshift(template);
+    state.localState.templates = list;
+    state.selectedTemplateId = template.id;
+    state.localState.ui.selected_template_id = template.id;
+    state.templateFormModal = null;
+    persistStateToServer();
+    logDebug(`${isEdit ? '更新' : '新建'}模板 | ${template.name}`);
+    render();
+  }
+
+  function ensureEffectFormModal() {
+    if (!state.effectFormModal) return null;
+    state.effectFormModal.tracks = Array.isArray(state.effectFormModal.tracks) ? state.effectFormModal.tracks : buildEffectModalTracks(state.effectFormModal.source_template_id || 'builtin-breath');
+    return state.effectFormModal;
+  }
+
+  function saveEffectFormModal() {
+    const modal = ensureEffectFormModal();
+    if (!modal) return;
+    const name = String(modal.name || '').trim();
+    const normalizedName = name.replace(/\s+/g, '');
+    if (!name || normalizedName === '我的灯效') {
+      alert('灯效名称不能是默认名“我的灯效”，请先改成一个唯一名称。');
+      return;
+    }
+    const duplicate = (state.localState.effect_presets || []).find((item) => String(item.id || '') !== String(modal.effectId || '') && String(item.name || '').trim() === name);
+    if (duplicate) {
+      alert(`已有同名灯效「${duplicate.name}」，请换一个不重名的名称。`);
+      return;
+    }
+    const tracks = (modal.tracks || []).slice(0, EFFECT_TRACK_LIMIT).map((track, index) => normalizeEffectTrack(track, null, index));
+    tracks.forEach((track, index) => {
+      if (track && typeof track === 'object') track.port = index + 1;
+    });
+    const sourceTemplateId = String(tracks.find((item) => item?.enabled !== false && item?.template_id && item.template_id !== 'builtin-silent')?.template_id || modal.source_template_id || 'builtin-breath');
+    const isCreate = !String(modal.effectId || '').trim();
+    const effect = {
+      id: modal.effectId || uid('ep'),
+      name,
+      note: String(modal.note || ''),
+      builtIn: false,
+      source_template_id: sourceTemplateId,
+      created_at: isCreate ? nowIso() : String(effectPresetById(modal.effectId)?.created_at || nowIso()),
+      updated_at: nowIso(),
+      effect_ui: normalizeEffectUI({
+        schema: 3,
+        source_template_id: sourceTemplateId,
+        mode: effectModeLabel(effectPrimaryTrack({ effect_ui: { tracks } })?.mode || 'solid'),
+        tracks
+      })
+    };
+    syncEffectPresetSummary(effect);
+    const list = Array.isArray(state.localState.effect_presets) ? state.localState.effect_presets.slice() : [];
+    const idx = list.findIndex((item) => String(item.id) === String(effect.id));
+    if (idx >= 0) list[idx] = effect;
+    else list.unshift(effect);
+    state.localState.effect_presets = list;
+    state.localState.ui.selected_effect_preset_id = effect.id;
+    state.selectedEffectId = effect.id;
+    state.effectFormModal = null;
+    persistStateToServer();
+    logDebug(`${isCreate ? '新建' : '更新'}灯效 | ${effect.name}`);
+    render();
+  }
+
+  function confirmDeleteEffectModal() {
+    const modal = state.effectDeleteModal;
+    if (!modal) return;
+    const preset = effectPresetById(modal.effectId);
+    if (!preset) {
+      closeEffectDeleteModal();
+      return;
+    }
+    const refs = effectReferenceStats(preset.id);
+    cleanupEffectReferences(preset.id, effectTemplateIdForMode(effectPrimaryTrack(preset)?.mode || 'breath'));
+    state.localState.effect_presets = (state.localState.effect_presets || []).filter((item) => String(item.id) !== String(preset.id));
+    const next = state.localState.effect_presets[0] || null;
+    state.localState.ui.selected_effect_preset_id = next?.id || '';
+    state.selectedEffectId = state.localState.ui.selected_effect_preset_id;
+    state.effectDeleteModal = null;
+    persistStateToServer();
+    logDebug(`删除灯效 | ${modal.name} | templates=${refs.templates} rooms=${refs.rooms}`);
+    render();
+  }
+
+  function svgIcon(name) {
+    const shell = (inner) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+    switch (name) {
+      case 'refresh':
+        return shell('<path d="M16.023 9.348h4.992v-5"></path><path d="M20.015 4.348a9.25 9.25 0 0 0-15.24 3.01"></path><path d="M7.978 14.652H3.016v5"></path><path d="M3.985 19.652a9.25 9.25 0 0 0 15.24-3.01"></path>');
+      case 'arrow':
+        return shell('<path d="M3 12h18"></path><path d="M14.25 5.25 21 12l-6.75 6.75"></path>');
+      case 'search':
+        return shell('<circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path>');
+      case 'plus':
+        return shell('<path d="M12 4.5v15"></path><path d="M4.5 12h15"></path>');
+      case 'save':
+        return shell('<path d="M3 20.25h18"></path><path d="M5.25 20.25V3.75h11.19l2.31 2.31v14.19"></path><path d="M8.25 3.75v6h7.5v-6"></path><path d="M9 20.25v-6.75h6v6.75"></path>');
+      case 'trash':
+        return shell('<path d="M4.5 7.5h15"></path><path d="M10.5 4.5h3"></path><path d="M9 4.5h6"></path><path d="M7.5 7.5l.75 11.25h7.5L16.5 7.5"></path><path d="M10.5 10.5v6"></path><path d="M13.5 10.5v6"></path>');
+      case 'play':
+        return shell('<path d="M8.25 5.25v13.5l11.25-6.75L8.25 5.25Z"></path>');
+      case 'pause':
+        return shell('<path d="M8.25 5.25v13.5"></path><path d="M15.75 5.25v13.5"></path>');
+      case 'check':
+        return shell('<path d="M5.25 12.75 9 16.5 18.75 6.75"></path>');
+      case 'gear':
+        return shell('<path d="M4.5 12a7.5 7.5 0 1 0 15 0 7.5 7.5 0 0 0-15 0Z"></path><path d="M12 8.25v7.5"></path><path d="M8.25 12h7.5"></path>');
+      case 'copy':
+        return shell('<path d="M9 9.75h6a2.25 2.25 0 0 1 2.25 2.25v6A2.25 2.25 0 0 1 15 20.25H9A2.25 2.25 0 0 1 6.75 18v-6A2.25 2.25 0 0 1 9 9.75Z"></path><path d="M15.75 6.75h1.5A2.25 2.25 0 0 1 19.5 9v6"></path><path d="M9.75 6.75H8.25A2.25 2.25 0 0 0 6 9v6"></path>');
+      case 'list':
+        return shell('<path d="M8.25 6h12"></path><path d="M8.25 12h12"></path><path d="M8.25 18h12"></path><path d="M4.5 6h.01"></path><path d="M4.5 12h.01"></path><path d="M4.5 18h.01"></path>');
+      case 'device':
+        return shell('<rect x="4.5" y="5.25" width="15" height="9.75" rx="2"></rect><path d="M9 19.5h6"></path><path d="M12 15v4.5"></path>');
+      case 'group':
+        return shell('<rect x="4.5" y="4.5" width="6" height="6" rx="1.5"></rect><rect x="13.5" y="4.5" width="6" height="6" rx="1.5"></rect><rect x="4.5" y="13.5" width="6" height="6" rx="1.5"></rect><rect x="13.5" y="13.5" width="6" height="6" rx="1.5"></rect>');
+      case 'effect':
+        return shell('<path d="M9.813 15.904 8.5 21l3.875-2.563L16.25 21l-1.313-5.096L20.5 12l-5.563-.095L12.375 7 10.95 11.905 5.5 12l4.313 3.904Z"></path>');
+      case 'record':
+        return shell('<path d="M6.75 4.5h10.5a1.5 1.5 0 0 1 1.5 1.5v12A1.5 1.5 0 0 1 17.25 19.5H6.75A1.5 1.5 0 0 1 5.25 18V6A1.5 1.5 0 0 1 6.75 4.5Z"></path><path d="M9 8.25h6"></path><path d="M9 12h6"></path><path d="M9 15.75h3.75"></path>');
+      case 'room':
+        return shell('<path d="M3.75 20.25V8.25l8.25-4.5 8.25 4.5v12"></path><path d="M9 20.25V13.5h6v6.75"></path>');
+      default:
+        return '';
+    }
+  }
+
+  function makePill(label, active = false, extra = '') {
+    const classes = [
+      'inline-flex items-center justify-center gap-2 h-8 px-3 rounded-full border whitespace-nowrap',
+      'border-[rgba(88,113,145,0.28)] bg-[rgba(24,33,47,0.92)] text-[#dae5f4] text-[12px]',
+      active ? 'bg-gradient-to-b from-[#396ecc] to-[#315ea7] text-white border-transparent' : '',
+      extra
+    ].filter(Boolean).join(' ');
+    return `<span class="${classes}">${escapeHtml(label)}</span>`;
+  }
+
+  function makePillButton(label, action, active = false, extra = '') {
+    const classes = [
+      'inline-flex items-center justify-center gap-2 h-8 px-3 rounded-full border whitespace-nowrap cursor-pointer transition',
+      'border-[rgba(88,113,145,0.28)] bg-[rgba(24,33,47,0.92)] text-[#dae5f4] text-[12px] hover:brightness-105 active:translate-y-px',
+      active ? 'bg-gradient-to-b from-[#396ecc] to-[#315ea7] text-white border-transparent' : '',
+      extra
+    ].filter(Boolean).join(' ');
+    return `<button type="button" class="${classes}" data-action="${escapeHtml(action)}" aria-pressed="${active ? 'true' : 'false'}">${escapeHtml(label)}</button>`;
+  }
+
+  function makeChip(label, active = false) {
+    const classes = [
+      'inline-flex items-center justify-center h-7 px-3 rounded-full border whitespace-nowrap',
+      'border-[rgba(88,113,145,0.28)] bg-[rgba(24,33,47,0.92)] text-[#dae5f4] text-[11px]',
+      active ? 'bg-gradient-to-b from-[#396ecc] to-[#315ea7] text-white border-transparent' : ''
+    ].filter(Boolean).join(' ');
+    return `<span class="${classes}">${escapeHtml(label)}</span>`;
+  }
+
+  function makeGroupActionButton(label, action, gid, active = false, compact = false, extra = '') {
+    const classes = [
+      'inline-flex items-center justify-center gap-1 rounded-full border px-2 text-[10px] leading-none whitespace-nowrap cursor-pointer transition active:translate-y-px hover:brightness-105',
+      'border-[rgba(88,113,145,0.28)] bg-[rgba(24,33,47,0.92)] text-[#dbe5f4]',
+      active ? 'bg-gradient-to-b from-[#396ecc] to-[#315ea7] text-white border-transparent' : '',
+      extra
+    ].filter(Boolean).join(' ');
+    const style = compact ? ' style="height:20px;min-width:40px;padding:0 6px;font-size:9px;line-height:1"' : '';
+    return `<button class="${classes}"${style} type="button" data-action="${escapeHtml(action)}" data-gid="${escapeHtml(gid)}">${escapeHtml(label)}</button>`;
+  }
+
+  function buildDefaultDevices() {
+    return [
+      { idx: 0, mac: '58:E6:C5:F0:AD:44', name: '碎片1号', group_mask: 1, rssi: -14, seen_ms: 1283 },
+      { idx: 1, mac: '58:E6:C5:F0:C4:74', name: '碎片2', group_mask: 2, rssi: -12, seen_ms: 2150 },
+      { idx: 2, mac: '58:E6:C5:F1:DF:18', name: '碎片3', group_mask: 3, rssi: -16, seen_ms: 1810 }
+    ];
+  }
+
+  function buildDefaultGroups() {
+    return [
+      {
+        id: 0,
+        valid: true,
+        name: '魔杖组',
+        note: '地图魔杖区域触发设备',
+        target: 1,
+        mode: 1,
+        sense_mode: 'ring',
+        rssi: -70,
+        hold: 2000,
+        template: '标准魔杖玩法',
+        effect_template_id: 'builtin-breath',
+        effect: 'builtin-breath',
+        effect_ui: { mode: 'breath', ports: [true, false, false], colors: ['#FFD24D', '#34B3FF', '#61E09A'], brightness: 60, speed: 45, period: 700, duty: 50, count: 0, accel: 0, pulse_speed_start: 0, pulse_speed_end: 100, pulse_duration_ms: 0, endHold: 0, endColor: '#FFFFFF' },
+        idle_effect: 'builtin-breath',
+        silence: '',
+        signal_ui: { reverse: false, weak_rssi: -90, strong_rssi: -20, weak_output: '低亮 / 慢闪', strong_output: '高亮 / 快闪', hold_ms: 2000 },
+        score: { enabled: true, led_count: 10, color_mode: 'single', max_score: 10 }
+      },
+      {
+        id: 1,
+        valid: true,
+        name: '宝箱组',
+        note: '宝箱触发设备集合',
+        target: 0,
+        mode: 0,
+        sense_mode: 'shared',
+        rssi: -68,
+        hold: 2000,
+        template: '宝箱反馈',
+        effect_template_id: 'builtin-chase',
+        effect: 'builtin-chase',
+        effect_ui: { mode: 'chase', ports: [true, true, true], colors: ['#61E09A', '#F3C44D', '#4BA9FF'], brightness: 80, speed: 420, period: 420, duty: 50, count: 0, accel: 0, pulse_speed_start: 0, pulse_speed_end: 100, pulse_duration_ms: 0, endHold: 0, endColor: '#FFFFFF' },
+        idle_effect: 'builtin-solid',
+        silence: '',
+        signal_ui: { reverse: false, weak_rssi: -90, strong_rssi: -20, weak_output: '低亮', strong_output: '高亮', hold_ms: 2000 },
+        score: { enabled: false, led_count: 0, color_mode: 'none', max_score: 0 }
+      },
+      {
+        id: 2,
+        valid: true,
+        name: '中距离组',
+        note: '中距离感应设备',
+        target: 3,
+        mode: 2,
+        sense_mode: 'response',
+        rssi: -65,
+        hold: 1800,
+        template: '距离提示',
+        effect_template_id: 'builtin-blink',
+        effect: 'builtin-blink',
+        effect_ui: { mode: 'blink', ports: [true, true, true], colors: ['#F3C44D', '#34B3FF', '#61E09A'], brightness: 100, speed: 0, period: 700, duty: 50, count: 0, accel: 0, pulse_speed_start: 0, pulse_speed_end: 100, pulse_duration_ms: 0, endHold: 0, endColor: '#FFFFFF' },
+        idle_effect: 'builtin-breath',
+        silence: '',
+        signal_ui: { reverse: false, weak_rssi: -85, strong_rssi: -30, weak_output: '慢闪', strong_output: '快闪', hold_ms: 1800 },
+        score: { enabled: true, led_count: 6, color_mode: 'single', max_score: 6 }
+      },
+      {
+        id: 3,
+        valid: true,
+        name: '全局组',
+        note: '全局广播或特殊设备',
+        target: 255,
+        mode: 2,
+        sense_mode: 'response',
+        rssi: -72,
+        hold: 2500,
+        template: '全局控制',
+        effect_template_id: 'builtin-breath',
+        effect: 'builtin-breath',
+        effect_ui: { mode: 'breath', ports: [true, true, true], colors: ['#FFD24D', '#34B3FF', '#61E09A'], brightness: 60, speed: 0.3, period: 3333, duty: 50, count: 0, accel: 0, pulse_speed_start: 0, pulse_speed_end: 100, pulse_duration_ms: 0, endHold: 0, endColor: '#FFFFFF' },
+        idle_effect: 'builtin-silent',
+        silence: '',
+        signal_ui: { reverse: false, weak_rssi: -90, strong_rssi: -20, weak_output: '静默', strong_output: '提示', hold_ms: 2500 },
+        score: { enabled: false, led_count: 0, color_mode: 'none', max_score: 0 }
+      }
+    ];
+  }
+
+  function buildDefaultControllerState() {
+    return {
+      schema_version: 2,
+      devices: buildDefaultDevices(),
+      groups: buildDefaultGroups(),
+      records: [],
+      rules: [],
+      presets: builtinTemplates.map((item) => ({
+        id: item.id,
+        name: item.name,
+        note: item.note,
+        source_group_hint: '',
+        target_group_hint: '',
+        config: null
+      })),
+      effects: builtinEffectCatalog.map((item) => ({
+        id: item.id,
+        name: item.name,
+        note: item.note,
+        builtIn: true,
+        effect_ui: normalizeEffectUI({
+          mode: item.mode,
+          tracks: item.kind === 'utility'
+            ? [buildDefaultEffectTrack(item.mode, 0, { port: 1, led_count: 35, led_start: 1, led_end: 35, brightness: 90, colors: [item.colorA, item.colorB, item.colorC], period_ms: 1200 })]
+            : [buildDefaultEffectTrack(item.mode, 0, {
+              port: 1,
+              led_count: 35,
+              led_start: 1,
+              led_end: 35,
+              brightness: item.mode === 'silent' ? 0 : item.mode === 'blink' ? 100 : item.mode === 'breath' ? 60 : item.mode === 'selftest' ? 90 : 80,
+              colors: [item.colorA, item.colorB, item.colorC],
+              repeat: item.mode === 'pulse_chase' ? 15 : 0,
+              frequency_hz: item.mode === 'breath' ? 0.3 : 0,
+              period_ms: item.mode === 'cycle' ? 420 : item.mode === 'chase' ? 420 : item.mode === 'blink' ? 700 : item.mode === 'gradient' ? 1800 : item.mode === 'selftest' ? 1200 : 700,
+              duty: 50,
+              accel: item.mode === 'pulse_chase' ? 2 : 0,
+              pulse_speed_start: item.mode === 'pulse_chase' ? 0 : 0,
+              pulse_speed_end: item.mode === 'pulse_chase' ? 100 : 100,
+              pulse_duration_ms: 0,
+              end_hold_ms: item.mode === 'pulse_chase' ? 2000 : 0,
+              end_behavior: item.mode === 'pulse_chase' ? 'hold' : 'off'
+            })]
+        }),
+        updated_at: '1970-01-01T00:00:00'
+      })),
+      active_preset: '魔杖寻宝-单人轮巡'
+    };
+  }
+
+  function buildOfflineControllerState() {
+    const base = buildDefaultControllerState();
+    return {
+      ...base,
+      devices: base.devices.map((device, idx) => ({
+        ...device,
+        idx: normalizeNumber(device.idx, idx),
+        seen_ms: 999999,
+        rssi: -999
+      })),
+      records: [],
+      rules: []
+    };
+  }
+
+  function buildDefaultFeaturePresets() {
+    return [
+      {
+        id: 'fp-treasure',
+        name: '多人寻宝功能包',
+        note: '寻宝类标准能力包，适合多人并行开局。',
+        builtIn: true,
+        feature_ui: {
+          sense_mode: 'ring',
+          signal_ui: { trigger_rssi_threshold: -10, trigger_hold_ms: 2000 },
+          scoring: { mode: 'count_find', max_find: 0 },
+          timer: { mode: 'manual', duration_ms: 0 },
+          idle_effect_id: 'builtin-breath',
+          trigger_effect_id: 'builtin-pulse'
+        },
+        created_at: '1970-01-01T00:00:00',
+        updated_at: '1970-01-01T00:00:00'
+      },
+      {
+        id: 'fp-rssi',
+        name: '距离提示功能包',
+        note: '只做距离提示与阈值测试。',
+        builtIn: true,
+        feature_ui: {
+          sense_mode: 'response',
+          signal_ui: { trigger_rssi_threshold: -10, trigger_hold_ms: 2000 },
+          scoring: { mode: 'rssi_probe', max_find: 0 },
+          timer: { mode: 'manual', duration_ms: 0 },
+          idle_effect_id: 'builtin-breath',
+          trigger_effect_id: 'builtin-blink'
+        },
+        created_at: '1970-01-01T00:00:00',
+        updated_at: '1970-01-01T00:00:00'
+      }
+    ];
+  }
+
+  function buildDefaultEffectPresets() {
+    return builtinEffects.map((effect, index) => buildEffectPresetFromDefinition(effect, index));
+  }
+
+  function buildDefaultLocalState() {
+    return {
+      schema: 1,
+      updated_at: nowIso(),
+      device_drafts: {},
+      hidden_devices: [],
+      templates: builtinTemplates.map((tpl) => ({
+        id: tpl.id,
+        name: tpl.name,
+        note: tpl.note,
+        builtIn: true,
+        feature_preset_id: String(tpl.feature_preset_id || ''),
+        effect_preset_id: String(tpl.effect_preset_id || ''),
+        source_group_mode: roleModeValue(tpl.source_group_mode || 'single'),
+        target_group_mode: roleModeValue(tpl.target_group_mode || 'single'),
+        default_source_group_ids: [],
+        default_target_group_ids: [],
+        sense_mode: String(tpl.sense_mode || ''),
+        idle_effect_id: String(tpl.idle_effect_id || ''),
+        trigger_effect_id: String(tpl.trigger_effect_id || ''),
+        scoring: tpl.scoring && typeof tpl.scoring === 'object' ? clone(tpl.scoring) : {},
+        created_at: nowIso(),
+        updated_at: nowIso(),
+        config: null
+      })),
+      rooms: [],
+      active_room_id: '',
+      current_room: null,
+      room_history: [],
+      feature_presets: buildDefaultFeaturePresets(),
+      effect_templates: buildDefaultEffectTemplates(),
+      effect_presets: buildDefaultCustomEffects(),
+      ui: {
+        active_tab: 'overview',
+        show_unassigned: true,
+        device_filter_mode: 'ungrouped',
+        device_filter_group_id: -1,
+        room_sort_order: 'desc',
+        show_offline_devices: false,
+        device_preview_collapsed: false,
+        preview_cell_shape: 'square',
+        selected_group_id: 0,
+        expanded_group_id: -1,
+        selected_template_id: builtinTemplates[0].id,
+        selected_feature_preset_id: 'fp-treasure',
+        selected_effect_preset_id: '',
+        wizard: {
+          open: false,
+          step: 0,
+          return_tab: 'overview'
+        }
+      }
+    };
+  }
+
+  function templateDefaults(templateId) {
+    return builtinTemplates.find((tpl) => tpl.id === templateId) || null;
+  }
+
+  function templateMetaFromSource(raw = {}) {
+    return {
+      feature_preset_id: String(raw.feature_preset_id || ''),
+      effect_preset_id: String(raw.effect_preset_id || ''),
+      source_group_mode: roleModeValue(raw.source_group_mode || ((Array.isArray(raw.default_source_group_ids) && raw.default_source_group_ids.length > 1) ? 'multi' : 'single')),
+      target_group_mode: roleModeValue(raw.target_group_mode || ((Array.isArray(raw.default_target_group_ids) && raw.default_target_group_ids.length > 1) ? 'multi' : 'single')),
+      default_source_group_ids: [],
+      default_target_group_ids: [],
+      sense_mode: String(raw.sense_mode || ''),
+      idle_effect_id: String(raw.idle_effect_id || ''),
+      trigger_effect_id: String(raw.trigger_effect_id || ''),
+      scoring: raw.scoring && typeof raw.scoring === 'object' ? clone(raw.scoring) : {}
+    };
+  }
+
+  function normalizeFeaturePresets(raw) {
+    const source = Array.isArray(raw) ? raw : [];
+    const byId = new Map(buildDefaultFeaturePresets().map((item) => [item.id, clone(item)]));
+    for (const item of source) {
+      if (!item || typeof item !== 'object') continue;
+      const id = String(item.id || '').trim() || uid('fp');
+      const featureUi = item.feature_ui && typeof item.feature_ui === 'object' ? clone(item.feature_ui) : clone(item.feature_ui || {});
+      featureUi.signal_ui = {
+        trigger_rssi_threshold: normalizeNumber(featureUi?.signal_ui?.trigger_rssi_threshold, -10),
+        trigger_hold_ms: normalizeNumber(featureUi?.signal_ui?.trigger_hold_ms, 2000)
+      };
+      byId.set(id, {
+        id,
+        name: String(item.name || '未命名功能包'),
+        note: String(item.note || ''),
+        builtIn: item.builtIn === true,
+        feature_ui: featureUi,
+        created_at: String(item.created_at || nowIso()),
+        updated_at: String(item.updated_at || nowIso())
+      });
+    }
+    return Array.from(byId.values());
+  }
+
+  function normalizeEffectTemplates(raw) {
+    const source = Array.isArray(raw) ? raw : [];
+    const byId = new Map(buildDefaultEffectTemplates().map((item) => [item.id, clone(item)]));
+    for (const item of source) {
+      if (!item || typeof item !== 'object') continue;
+      const id = String(item.id || '').trim() || uid('ep');
+      const normalizedUi = normalizeEffectUI(item.effect_ui || item, byId.get(id)?.effect_ui || null);
+      byId.set(id, {
+        id,
+        name: String(item.name || '未命名灯效'),
+        note: String(item.note || ''),
+        builtIn: item.builtIn === true,
+        effect_ui: normalizedUi,
+        created_at: String(item.created_at || nowIso()),
+        updated_at: String(item.updated_at || nowIso())
+      });
+    }
+    return Array.from(byId.values());
+  }
+
+  function normalizeEffectPresets(raw) {
+    const source = Array.isArray(raw) ? raw : [];
+    const byId = new Map();
+    for (const item of source) {
+      if (!item || typeof item !== 'object') continue;
+      if (item.builtIn === true) continue;
+      const id = String(item.id || '').trim() || uid('ep');
+      const normalizedUi = normalizeEffectUI(item.effect_ui || item, null);
+      byId.set(id, {
+        id,
+        name: String(item.name || '未命名灯效'),
+        note: String(item.note || ''),
+        builtIn: false,
+        source_template_id: String(item.source_template_id || item.template_id || ''),
+        effect_ui: normalizedUi,
+        created_at: String(item.created_at || nowIso()),
+        updated_at: String(item.updated_at || nowIso())
+      });
+    }
+    return Array.from(byId.values());
+  }
+
+  function featurePresetById(id) {
+    const presetId = String(id || '');
+    return (state.localState?.feature_presets || buildDefaultFeaturePresets()).find((item) => String(item.id) === presetId) || null;
+  }
+
+  function effectTemplateById(id) {
+    const presetId = String(id || '');
+    return (state.localState?.effect_templates || buildDefaultEffectTemplates()).find((item) => String(item.id) === presetId) || null;
+  }
+
+  function effectPresetById(id) {
+    const presetId = String(id || '');
+    return (state.localState?.effect_presets || buildDefaultCustomEffects()).find((item) => String(item.id) === presetId) || null;
+  }
+
+  function synthesizePreviewEffectDefinition(effect) {
+    if (!effect || typeof effect !== 'object') return null;
+    if (effect.effect_ui && Array.isArray(effect.effect_ui.tracks)) return effect;
+    const mode = String(effect.mode || 'solid');
+    const track = buildDefaultEffectTrack(mode, 0, {
+      template_id: effectTemplateIdForMode(mode),
+      colors: [
+        String(effect.colorA || '#FFFFFF'),
+        String(effect.colorB || effect.colorA || '#FFFFFF'),
+        String(effect.colorC || effect.colorA || '#FFFFFF')
+      ],
+      brightness: mode === 'silent' ? 0 : 80,
+      repeat: mode === 'pulse_chase' ? 15 : 0,
+      frequency_hz: mode === 'breath' ? 0.3 : 0,
+      period_ms: mode === 'cycle' ? 420 : mode === 'gradient' ? 1800 : mode === 'selftest' ? 1200 : 700,
+      duty: 50,
+      accel: 0,
+      pulse_speed_start: mode === 'pulse_chase' ? 0 : 0,
+      pulse_speed_end: mode === 'pulse_chase' ? 100 : 100,
+      pulse_duration_ms: 0,
+      end_hold_ms: 0,
+      end_behavior: 'off'
+    });
+    return {
+      ...effect,
+      effect_ui: {
+        tracks: [track]
+      }
+    };
+  }
+
+  function effectDefinitionById(id) {
+    const presetId = String(id || '');
+    const localMatch = effectPresetById(presetId) || effectTemplateById(presetId);
+    if (localMatch) return localMatch;
+    const controllerMatch = controllerEffects().find((item) => String(item.id) === presetId);
+    if (controllerMatch) return synthesizePreviewEffectDefinition(controllerMatch);
+    const builtinMatch = builtinEffectCatalog.find((item) => String(item.id) === presetId);
+    if (builtinMatch) return synthesizePreviewEffectDefinition(builtinMatch);
+    return null;
+  }
+
+  function effectChoiceList() {
+    const seen = new Set();
+    const merged = [
+      ...(state.localState?.effect_templates || buildDefaultEffectTemplates()),
+      ...controllerEffects(),
+      ...(state.localState?.effect_presets || [])
+    ];
+    return merged
+      .filter((item) => item && item.kind !== 'utility')
+      .filter((item) => {
+        const id = String(item.id || '').trim();
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+  }
+
+  function effectChoiceOptions(selectedId) {
+    const current = String(selectedId || '');
+    return effectChoiceList().map((preset) => `<option value="${escapeHtml(preset.id)}" ${current === String(preset.id) ? 'selected' : ''}>${escapeHtml(preset.name)}${preset.note ? ` · ${escapeHtml(preset.note)}` : ''}</option>`).join('');
+  }
+
+  function roomEffectRuleKey(sourceGroupId, targetGroupId) {
+    return `${normalizeNumber(sourceGroupId, -1)}:${normalizeNumber(targetGroupId, -1)}`;
+  }
+
+  function roomEffectDefaultIds(room = {}) {
+    const idle = String(room?.idle_effect_id || 'builtin-silent');
+    const trigger = String(room?.trigger_effect_id || idle || 'builtin-silent');
+    return {
+      source_idle_effect_id: idle || 'builtin-silent',
+      source_trigger_effect_id: trigger || 'builtin-silent',
+      target_idle_effect_id: 'builtin-silent',
+      target_trigger_effect_id: trigger || 'builtin-silent'
+    };
+  }
+
+  function normalizeRoomEffectRule(rule, room = {}) {
+    if (!rule || typeof rule !== 'object') return null;
+    const sourceId = normalizeNumber(rule.source_group_id, -1);
+    const targetId = normalizeNumber(rule.target_group_id, -1);
+    if (sourceId < 0 || targetId < 0) return null;
+    const defaults = roomEffectDefaultIds(room);
+    return {
+      source_group_id: sourceId,
+      target_group_id: targetId,
+      source_idle_effect_id: String(rule.source_idle_effect_id || defaults.source_idle_effect_id),
+      source_trigger_effect_id: String(rule.source_trigger_effect_id || defaults.source_trigger_effect_id),
+      target_idle_effect_id: String(rule.target_idle_effect_id || defaults.target_idle_effect_id),
+      target_trigger_effect_id: String(rule.target_trigger_effect_id || defaults.target_trigger_effect_id)
+    };
+  }
+
+  function syncRoomEffectRules(room, sourceRules = null) {
+    if (!room || typeof room !== 'object') return [];
+    const sourceIds = Array.isArray(room.source_group_ids)
+      ? room.source_group_ids.map((id) => normalizeNumber(id, -1)).filter((id) => id >= 0)
+      : [];
+    const targetIds = Array.isArray(room.target_group_ids)
+      ? room.target_group_ids.map((id) => normalizeNumber(id, -1)).filter((id) => id >= 0)
+      : [];
+    const existingRules = Array.isArray(sourceRules) ? sourceRules : Array.isArray(room.effect_rules) ? room.effect_rules : [];
+    const existing = new Map();
+    for (const item of existingRules) {
+      const normalized = normalizeRoomEffectRule(item, room);
+      if (normalized) existing.set(roomEffectRuleKey(normalized.source_group_id, normalized.target_group_id), normalized);
+    }
+    const defaults = roomEffectDefaultIds(room);
+    const next = [];
+    for (const targetId of targetIds) {
+      for (const sourceId of sourceIds) {
+        const key = roomEffectRuleKey(sourceId, targetId);
+        const prev = existing.get(key) || {};
+        next.push({
+          source_group_id: sourceId,
+          target_group_id: targetId,
+          source_idle_effect_id: String(prev.source_idle_effect_id || defaults.source_idle_effect_id),
+          source_trigger_effect_id: String(prev.source_trigger_effect_id || defaults.source_trigger_effect_id),
+          target_idle_effect_id: String(prev.target_idle_effect_id || defaults.target_idle_effect_id),
+          target_trigger_effect_id: String(prev.target_trigger_effect_id || defaults.target_trigger_effect_id)
+        });
+      }
+    }
+    room.effect_rules = next;
+    return next;
+  }
+
+  function roomEffectRuleByPair(room, sourceGroupId, targetGroupId) {
+    const key = roomEffectRuleKey(sourceGroupId, targetGroupId);
+    return (Array.isArray(room?.effect_rules) ? room.effect_rules : []).find((item) => roomEffectRuleKey(item.source_group_id, item.target_group_id) === key) || null;
+  }
+
+  function applyTemplateDefaultsToRoom(room, template, { overwrite = false } = {}) {
+    if (!room || !template) return room;
+    room.template_id = template.id || room.template_id || builtinTemplates[0].id;
+    room.template_name = template.name || room.template_name || builtinTemplates[0].name;
+    room.feature_preset_id = String(template.feature_preset_id || room.feature_preset_id || '');
+    room.effect_preset_id = String(template.effect_preset_id || room.effect_preset_id || '');
+    const featurePreset = featurePresetById(room.feature_preset_id);
+    const effectPreset = effectPresetById(room.effect_preset_id);
+    const featureUi = featurePreset?.feature_ui || {};
+    if (overwrite || !String(room.sense_mode || '').trim()) {
+      room.sense_mode = String(template.sense_mode || featureUi.sense_mode || '');
+    }
+    if (overwrite || !String(room.idle_effect_id || '').trim()) {
+      room.idle_effect_id = String(template.idle_effect_id || featureUi.idle_effect_id || '');
+    }
+    if (overwrite || !String(room.trigger_effect_id || '').trim()) {
+      room.trigger_effect_id = String(template.trigger_effect_id || featureUi.trigger_effect_id || '');
+    }
+    if (overwrite || normalizeNumber(room.trigger_signal_rssi, NaN) !== normalizeNumber(room.trigger_signal_rssi, NaN) || !String(room.trigger_signal_rssi ?? '').trim()) {
+      room.trigger_signal_rssi = normalizeNumber(featureUi?.signal_ui?.trigger_rssi_threshold, -10);
+    }
+    if (overwrite || normalizeNumber(room.trigger_hold_ms, NaN) !== normalizeNumber(room.trigger_hold_ms, NaN) || !String(room.trigger_hold_ms ?? '').trim()) {
+      room.trigger_hold_ms = normalizeNumber(featureUi?.signal_ui?.trigger_hold_ms, 2000);
+    }
+    if (overwrite || !(room.scoring && typeof room.scoring === 'object' && Object.keys(room.scoring).length)) {
+      room.scoring = template.scoring && typeof template.scoring === 'object'
+        ? clone(template.scoring)
+        : featureUi.scoring && typeof featureUi.scoring === 'object'
+          ? clone(featureUi.scoring)
+          : {};
+    }
+    if (overwrite || !(room.timer && typeof room.timer === 'object' && Object.keys(room.timer).length)) {
+      room.timer = featureUi.timer && typeof featureUi.timer === 'object' ? clone(featureUi.timer) : {};
+    }
+    if (overwrite || !String(room.preview_effect_id || '').trim()) {
+      room.preview_effect_id = String(effectPreset?.id || room.preview_effect_id || '');
+    }
+    syncRoomEffectRules(room);
+    return room;
+  }
+
+  function normalizeRoomDraft(raw, fallbackTemplate = null) {
+    if (!raw || typeof raw !== 'object') return null;
+    const templateId = String(raw.template_id || fallbackTemplate?.id || builtinTemplates[0].id || '');
+    const templateName = String(raw.template_name || fallbackTemplate?.name || '');
+    const sourceGroupIds = Array.isArray(raw.source_group_ids)
+      ? raw.source_group_ids
+      : Array.isArray(raw.group_ids)
+        ? raw.group_ids
+        : [];
+    const targetGroupIds = Array.isArray(raw.target_group_ids) ? raw.target_group_ids : [];
+    const combined = Array.isArray(raw.group_ids)
+      ? raw.group_ids
+      : Array.from(new Set([...sourceGroupIds, ...targetGroupIds]));
+    const room = {
+      id: String(raw.id || uid('room')),
+      name: String(raw.name || ''),
+      template_id: templateId,
+      template_name: templateName,
+      status: String(raw.status || 'draft'),
+      started_at: String(raw.started_at || ''),
+      ended_at: String(raw.ended_at || ''),
+      published_at: String(raw.published_at || ''),
+      publish_result: raw.publish_result && typeof raw.publish_result === 'object' ? clone(raw.publish_result) : null,
+      created_at: String(raw.created_at || nowIso()),
+      updated_at: String(raw.updated_at || nowIso()),
+      feature_preset_id: String(raw.feature_preset_id || fallbackTemplate?.feature_preset_id || ''),
+      effect_preset_id: String(raw.effect_preset_id || fallbackTemplate?.effect_preset_id || ''),
+      sense_mode: String(raw.sense_mode || fallbackTemplate?.sense_mode || ''),
+      idle_effect_id: String(raw.idle_effect_id || fallbackTemplate?.idle_effect_id || ''),
+      trigger_effect_id: String(raw.trigger_effect_id || fallbackTemplate?.trigger_effect_id || ''),
+      trigger_signal_rssi: normalizeNumber(raw.trigger_signal_rssi, normalizeNumber(featurePresetById(fallbackTemplate?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_rssi_threshold, -10)),
+      trigger_hold_ms: normalizeNumber(raw.trigger_hold_ms, normalizeNumber(featurePresetById(fallbackTemplate?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_hold_ms, 2000)),
+      preview_effect_id: String(raw.preview_effect_id || fallbackTemplate?.effect_preset_id || ''),
+      timer: raw.timer && typeof raw.timer === 'object'
+        ? clone(raw.timer)
+        : (fallbackTemplate?.feature_preset_id ? clone(featurePresetById(fallbackTemplate.feature_preset_id)?.feature_ui?.timer || {}) : {}),
+      scoring: raw.scoring && typeof raw.scoring === 'object'
+        ? clone(raw.scoring)
+        : fallbackTemplate?.scoring && typeof fallbackTemplate.scoring === 'object'
+          ? clone(fallbackTemplate.scoring)
+          : {},
+      source_group_ids: sourceGroupIds
+        .map((v) => normalizeNumber(v, -1))
+        .filter((v) => v >= 0),
+      target_group_ids: targetGroupIds
+        .map((v) => normalizeNumber(v, -1))
+        .filter((v) => v >= 0),
+      group_ids: combined
+        .map((v) => normalizeNumber(v, -1))
+        .filter((v) => v >= 0),
+      effect_rules: [],
+      notes: String(raw.notes || ''),
+      summary: raw.summary && typeof raw.summary === 'object' ? clone(raw.summary) : {}
+    };
+    syncRoomEffectRules(room, raw.effect_rules);
+    return room;
+  }
+
+  function normalizeDeviceName(name, idx, mac = '') {
+    const cleaned = String(name ?? '').trim();
+    if (cleaned) return cleaned;
+    const fallback = ['碎片', '魔杖', '宝箱', '中距离', '设备'];
+    const prefix = fallback[idx % fallback.length];
+    const suffix = idx >= 0 ? String(idx + 1) : (mac ? mac.slice(-4) : 'X');
+    return `${prefix}${suffix}`;
+  }
+
+  function normalizeEffectEffects(raw) {
+    const source = Array.isArray(raw) ? raw : builtinEffectCatalog;
+    return source.map((item) => ({
+      id: String(item?.id || ''),
+      name: String(item?.name || '未命名'),
+      note: String(item?.note || ''),
+      builtIn: item?.builtIn === true,
+      effect_ui: normalizeEffectUI(item?.effect_ui || item, null),
+      updated_at: String(item?.updated_at || nowIso())
+    })).filter((item) => item.id);
+  }
+
+  function migrateLegacyEffectReferences(localState) {
+    if (!localState || typeof localState !== 'object') return localState;
+    const safeEffectId = (localState.effect_presets || []).find((item) => item && item.id)?.id
+      || (localState.effect_templates || []).find((item) => item && item.id)?.id
+      || 'builtin-breath';
+    const safeIdleId = 'builtin-silent';
+    const replace = (value, fallback = safeEffectId) => {
+      const id = String(value || '').trim();
+      if (!id || id === 'builtin-selftest' || id === 'selftest') return fallback;
+      return id;
+    };
+    for (const template of localState.templates || []) {
+      template.effect_preset_id = replace(template.effect_preset_id, safeEffectId);
+      template.preview_effect_id = replace(template.preview_effect_id, safeEffectId);
+      template.trigger_effect_id = replace(template.trigger_effect_id, safeEffectId);
+      template.idle_effect_id = replace(template.idle_effect_id, safeIdleId);
+    }
+    for (const room of localState.rooms || []) {
+      room.effect_preset_id = replace(room.effect_preset_id, safeEffectId);
+      room.preview_effect_id = replace(room.preview_effect_id, safeEffectId);
+      room.trigger_effect_id = replace(room.trigger_effect_id, safeEffectId);
+      room.idle_effect_id = replace(room.idle_effect_id, safeIdleId);
+      for (const rule of room.effect_rules || []) {
+        rule.source_idle_effect_id = replace(rule.source_idle_effect_id, safeIdleId);
+        rule.source_trigger_effect_id = replace(rule.source_trigger_effect_id, safeEffectId);
+        rule.target_idle_effect_id = replace(rule.target_idle_effect_id, safeIdleId);
+        rule.target_trigger_effect_id = replace(rule.target_trigger_effect_id, safeEffectId);
+      }
+    }
+    if (localState.current_room && typeof localState.current_room === 'object') {
+      localState.current_room.effect_preset_id = replace(localState.current_room.effect_preset_id, safeEffectId);
+      localState.current_room.preview_effect_id = replace(localState.current_room.preview_effect_id, safeEffectId);
+      localState.current_room.trigger_effect_id = replace(localState.current_room.trigger_effect_id, safeEffectId);
+      localState.current_room.idle_effect_id = replace(localState.current_room.idle_effect_id, safeIdleId);
+      for (const rule of localState.current_room.effect_rules || []) {
+        rule.source_idle_effect_id = replace(rule.source_idle_effect_id, safeIdleId);
+        rule.source_trigger_effect_id = replace(rule.source_trigger_effect_id, safeEffectId);
+        rule.target_idle_effect_id = replace(rule.target_idle_effect_id, safeIdleId);
+        rule.target_trigger_effect_id = replace(rule.target_trigger_effect_id, safeEffectId);
+      }
+    }
+    if (localState.ui) {
+      if (Array.isArray(localState.effect_presets) && localState.effect_presets.length) {
+        if (!localState.effect_presets.some((item) => String(item.id) === String(localState.ui.selected_effect_preset_id))) {
+          localState.ui.selected_effect_preset_id = safeEffectId;
+        }
+      } else {
+        localState.ui.selected_effect_preset_id = '';
+      }
+    }
+    return localState;
+  }
+
+  function normalizeTemplates(raw) {
+    const source = Array.isArray(raw) ? raw : [];
+    const byId = new Map();
+    for (const tpl of builtinTemplates) {
+      byId.set(tpl.id, {
+        id: tpl.id,
+        name: tpl.name,
+        note: tpl.note,
+        builtIn: true,
+        ...templateMetaFromSource(tpl),
+        created_at: nowIso(),
+        updated_at: nowIso(),
+        config: null
+      });
+    }
+    for (const item of source) {
+      if (!item || typeof item !== 'object') continue;
+      const id = String(item.id || '').trim() || uid('tpl');
+      const base = byId.get(id) || null;
+      const meta = templateMetaFromSource(item);
+      byId.set(id, {
+        id,
+        name: String(item.name || base?.name || '未命名模板'),
+        note: String(item.note || base?.note || ''),
+        builtIn: base?.builtIn === true ? true : item.builtIn === true,
+        feature_preset_id: meta.feature_preset_id || base?.feature_preset_id || '',
+        effect_preset_id: meta.effect_preset_id || base?.effect_preset_id || '',
+        source_group_mode: roleModeValue(meta.source_group_mode || base?.source_group_mode || 'single'),
+        target_group_mode: roleModeValue(meta.target_group_mode || base?.target_group_mode || 'single'),
+        default_source_group_ids: [],
+        default_target_group_ids: [],
+        sense_mode: meta.sense_mode || base?.sense_mode || '',
+        idle_effect_id: meta.idle_effect_id || base?.idle_effect_id || '',
+        trigger_effect_id: meta.trigger_effect_id || base?.trigger_effect_id || '',
+        scoring: meta.scoring && Object.keys(meta.scoring).length ? meta.scoring : (base?.scoring || {}),
+        created_at: String(item.created_at || nowIso()),
+        updated_at: String(item.updated_at || nowIso()),
+        config: item.config && typeof item.config === 'object' ? clone(item.config) : null
+      });
+    }
+    return Array.from(byId.values());
+  }
+
+  function normalizeRecords(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((r) => ({
+      src_group: normalizeNumber(r?.src_group, 0),
+      target_group: normalizeNumber(r?.target_group, 0),
+      src_idx: normalizeNumber(r?.src_idx, -1),
+      dst_idx: normalizeNumber(r?.dst_idx, -1),
+      first_seen_ms: normalizeNumber(r?.first_seen_ms, 0),
+      last_seen_ms: normalizeNumber(r?.last_seen_ms, 0)
+    }));
+  }
+
+  function normalizeGroups(raw, existing = []) {
+    const seed = Array.isArray(existing) && existing.length ? existing : buildDefaultGroups();
+    const byId = new Map();
+    for (const item of seed) {
+      if (!item || typeof item !== 'object') continue;
+      const id = normalizeNumber(item.id, -1);
+      if (id < 0) continue;
+      byId.set(id, clone(item));
+    }
+    if (Array.isArray(raw)) {
+      for (const g of raw) {
+        if (!g || typeof g !== 'object') continue;
+        const id = normalizeNumber(g.id, -1);
+        if (id < 0) continue;
+        const prev = byId.get(id) || emptyGroup(id);
+        byId.set(id, {
+          ...prev,
+          id,
+          valid: g.valid === true || Number(g.valid) === 1,
+          name: String(g.name || `分组${id + 1}`),
+          note: String(g.note || ''),
+          target: 255,
+          mode: normalizeNumber(g.mode, 1),
+          sense_mode: String(g.sense_mode || prev.sense_mode || 'ring'),
+          rssi: normalizeNumber(g.rssi, -70),
+          hold: normalizeNumber(g.hold, 2000),
+          template: String(g.template || ''),
+          effect_template_id: String(g.effect_template_id || prev.effect_template_id || ''),
+          effect: String(g.effect || prev.effect || 'builtin-breath'),
+          effect_ui: g.effect_ui && typeof g.effect_ui === 'object' ? clone(g.effect_ui) : clone(prev.effect_ui || {}),
+          idle_effect: String(g.idle_effect || prev.idle_effect || 'builtin-silent'),
+          silence: String(g.silence || ''),
+          signal_ui: g.signal_ui && typeof g.signal_ui === 'object'
+            ? clone(g.signal_ui)
+            : clone(prev.signal_ui || {
+              reverse: false,
+              weak_rssi: -90,
+              strong_rssi: -20,
+              weak_output: '低亮 / 慢闪',
+              strong_output: '高亮 / 快闪',
+              hold_ms: 2000
+            }),
+          score: g.score && typeof g.score === 'object'
+            ? clone(g.score)
+            : clone(prev.score || { enabled: false, led_count: 0, color_mode: 'none', max_score: 0 })
+        });
+      }
+    }
+    return Array.from(byId.values()).sort((a, b) => normalizeNumber(a?.id, 0) - normalizeNumber(b?.id, 0));
+  }
+
+  function normalizeControllerState(raw, existing = null) {
+    const fallback = buildDefaultControllerState();
+    const out = {
+      schema_version: normalizeNumber(raw?.schema_version ?? raw?.schema, 2) >= 2 ? 2 : 1,
+      devices: clone(fallback.devices),
+      groups: clone(fallback.groups),
+      records: [],
+      rules: [],
+      presets: clone(fallback.presets),
+      effects: clone(fallback.effects),
+        active_preset: fallback.active_preset
+      };
+
+    if (existing && Array.isArray(existing.devices)) out.devices = clone(existing.devices);
+    if (existing && Array.isArray(existing.groups)) out.groups = clone(existing.groups);
+    if (existing && Array.isArray(existing.records)) out.records = clone(existing.records);
+    if (existing && Array.isArray(existing.rules)) out.rules = clone(existing.rules);
+    if (existing && Array.isArray(existing.presets)) out.presets = clone(existing.presets);
+    if (existing && Array.isArray(existing.effects)) out.effects = clone(existing.effects);
+    if (existing && existing.active_preset) out.active_preset = String(existing.active_preset);
+
+    if (raw && typeof raw === 'object') {
+      if (Array.isArray(raw.devices)) {
+        out.devices = raw.devices.map((d, idx) => ({
+          idx: normalizeNumber(d?.idx, idx),
+          mac: String(d?.mac || '').trim(),
+          name: normalizeDeviceName(d?.name, idx, d?.mac),
+          group_mask: normalizeNumber(d?.group_mask, 0) >>> 0,
+          rssi: normalizeNumber(d?.rssi, 0),
+          seen_ms: Math.max(0, normalizeNumber(d?.seen_ms, 0))
+        }));
+      }
+      if (Array.isArray(raw.groups)) {
+        out.groups = normalizeGroups(raw.groups, out.groups);
+      }
+      if (Array.isArray(raw.records)) out.records = normalizeRecords(raw.records);
+      if (Array.isArray(raw.rules)) out.rules = raw.rules.map((r, i) => ({ id: normalizeNumber(r?.id, i), ...clone(r) }));
+      if (Array.isArray(raw.presets)) out.presets = normalizeTemplates(raw.presets);
+      if (Array.isArray(raw.effects)) out.effects = normalizeEffectEffects(raw.effects);
+      if (raw.active_preset !== undefined) out.active_preset = String(raw.active_preset || '自定义');
+    }
+    out.groups = normalizeGroups(out.groups, out.groups);
+    return out;
+  }
+
+  function normalizeLocalState(raw) {
+    const fallback = buildDefaultLocalState();
+    if (!raw || typeof raw !== 'object') return clone(fallback);
+    const out = clone(fallback);
+    out.schema = normalizeNumber(raw.schema, 1);
+    out.updated_at = String(raw.updated_at || nowIso());
+    out.device_drafts = raw.device_drafts && typeof raw.device_drafts === 'object' ? clone(raw.device_drafts) : {};
+    out.hidden_devices = Array.isArray(raw.hidden_devices) ? raw.hidden_devices.map((item) => String(item || '').trim()).filter(Boolean) : [];
+    out.templates = normalizeTemplates(raw.templates || fallback.templates);
+    out.feature_presets = normalizeFeaturePresets(raw.feature_presets || fallback.feature_presets);
+    out.effect_templates = normalizeEffectTemplates(raw.effect_templates || fallback.effect_templates);
+    out.effect_presets = normalizeEffectPresets(raw.effect_presets || fallback.effect_presets);
+    const templateForRoom = (roomRaw) => out.templates.find((tpl) => tpl.id === roomRaw?.template_id) || out.templates.find((tpl) => tpl.id === raw?.ui?.selected_template_id) || out.templates[0] || null;
+    const roomMap = new Map();
+    if (Array.isArray(raw.rooms)) {
+      for (const item of raw.rooms) {
+        const room = normalizeRoomDraft(item, templateForRoom(item));
+        if (room) roomMap.set(room.id, room);
+      }
+    }
+    if (raw.current_room) {
+      const current = normalizeRoomDraft(raw.current_room, templateForRoom(raw.current_room));
+      if (current && !roomMap.has(current.id)) roomMap.set(current.id, current);
+    }
+    out.rooms = Array.from(roomMap.values());
+    out.active_room_id = String(raw.active_room_id || raw?.ui?.active_room_id || raw?.current_room?.id || out.rooms[0]?.id || '');
+    out.current_room = out.rooms.find((room) => room.id === out.active_room_id) ? clone(out.rooms.find((room) => room.id === out.active_room_id)) : (out.rooms[0] ? clone(out.rooms[0]) : null);
+    out.room_history = Array.isArray(raw.room_history) ? raw.room_history.map((item) => clone(item)) : [];
+    out.ui = {
+      active_tab: String(raw?.ui?.active_tab || fallback.ui.active_tab || 'overview'),
+      show_unassigned: raw?.ui?.show_unassigned !== false,
+      device_filter_mode: String(raw?.ui?.device_filter_mode || fallback.ui.device_filter_mode || 'ungrouped'),
+      device_filter_group_id: normalizeNumber(raw?.ui?.device_filter_group_id, -1),
+      room_sort_order: String(raw?.ui?.room_sort_order || fallback.ui.room_sort_order || 'desc') === 'asc' ? 'asc' : 'desc',
+      show_offline_devices: raw?.ui?.show_offline_devices === true,
+      device_preview_collapsed: raw?.ui?.device_preview_collapsed === true,
+      preview_cell_shape: String(raw?.ui?.preview_cell_shape || fallback.ui.preview_cell_shape || 'square') === 'circle' ? 'circle' : 'square',
+      selected_group_id: normalizeNumber(raw?.ui?.selected_group_id, fallback.ui.selected_group_id ?? 0),
+      expanded_group_id: normalizeNumber(raw?.ui?.expanded_group_id, fallback.ui.expanded_group_id ?? -1),
+      selected_template_id: String(raw?.ui?.selected_template_id || out.current_room?.template_id || fallback.ui.selected_template_id || builtinTemplates[0].id),
+      selected_feature_preset_id: String(raw?.ui?.selected_feature_preset_id || fallback.ui.selected_feature_preset_id || 'fp-treasure'),
+      selected_effect_preset_id: String(raw?.ui?.selected_effect_preset_id || fallback.ui.selected_effect_preset_id || ''),
+      wizard: {
+        open: raw?.ui?.wizard?.open === true,
+        step: clamp(normalizeNumber(raw?.ui?.wizard?.step, 0), 0, WIZARD_STEP_MAX),
+        return_tab: String(raw?.ui?.wizard?.return_tab || fallback.ui?.wizard?.return_tab || 'overview')
+      }
+    };
+    if (!out.ui.selected_effect_preset_id || !out.effect_presets.some((item) => String(item.id) === String(out.ui.selected_effect_preset_id))) {
+      out.ui.selected_effect_preset_id = out.effect_presets[0]?.id || '';
+    }
+    migrateLegacyEffectReferences(out);
+    return out;
+  }
+
+  function emptyGroup(id) {
+    return {
+      id,
+      valid: false,
+      name: '',
+      note: '',
+      target: 255,
+      mode: 1,
+      sense_mode: 'ring',
+      rssi: -70,
+      hold: 2000,
+      template: '',
+      effect_template_id: '',
+      effect: 'builtin-breath',
+      effect_ui: {
+        mode: 'breath',
+        ports: [true, true, true],
+        colors: ['#FFD24D', '#34B3FF', '#61E09A'],
+        brightness: 60,
+        speed: 45,
+        period: 700,
+        duty: 50,
+        count: 0,
+        accel: 0,
+        endHold: 0,
+        endColor: '#FFFFFF'
+      },
+      idle_effect: 'builtin-silent',
+      silence: '',
+      signal_ui: {
+        reverse: false,
+        weak_rssi: -90,
+        strong_rssi: -20,
+        weak_output: '低亮 / 慢闪',
+        strong_output: '高亮 / 快闪',
+        hold_ms: 2000
+      },
+      score: {
+        enabled: false,
+        led_count: 0,
+        color_mode: 'none',
+        max_score: 0
+      }
+    };
+  }
+
+  function clone(obj) {
+    return obj == null ? obj : JSON.parse(JSON.stringify(obj));
+  }
+
+  function deviceDraftName(device) {
+    const draft = state.localState?.device_drafts?.[device.mac];
+    if (draft && typeof draft === 'object' && String(draft.name || '').trim()) return String(draft.name).trim();
+    return device.name;
+  }
+
+  function deviceDraftNote(device) {
+    const draft = state.localState?.device_drafts?.[device.mac];
+    if (draft && typeof draft === 'object' && String(draft.note || '').trim()) return String(draft.note).trim();
+    return String(device.note || '');
+  }
+
+  function selectedGroupId() {
+    const raw = normalizeNumber(state.localState?.ui?.selected_group_id, -1);
+    if (raw >= 0) return raw;
+    const first = controllerGroups()[0];
+    return first ? first.id : 0;
+  }
+
+  function selectedGroup() {
+    return groupById(selectedGroupId()) || controllerGroups()[0] || null;
+  }
+
+  function expandedGroupId() {
+    return normalizeNumber(state.localState?.ui?.expanded_group_id, -1);
+  }
+
+  function setExpandedGroupId(groupId) {
+    state.localState.ui.expanded_group_id = normalizeNumber(groupId, -1);
+  }
+
+  function syncGroupEditorDraft(group = selectedGroup()) {
+    const next = group || null;
+    state.editingGroupId = normalizeNumber(next?.id, -1);
+    state.editingGroupName = String(next?.name || '');
+    state.editingGroupNote = String(next?.note || '');
+    state.editingGroupValid = next ? next.valid !== false : true;
+    if (state.localState?.ui) {
+      state.localState.ui.selected_group_id = state.editingGroupId >= 0 ? state.editingGroupId : 0;
+    }
+    return next;
+  }
+
+  function groupReferenceStats(groupId) {
+    const gid = normalizeNumber(groupId, -1);
+    if (gid < 0) return { devices: 0, rooms: 0, templates: 0 };
+    let devices = 0;
+    for (const device of controllerDevices()) {
+      if (normalizeNumber(device?.group_mask, 0) & (1 << gid)) devices++;
+    }
+    let rooms = 0;
+    for (const room of roomList()) {
+      const source = Array.isArray(room.source_group_ids) ? room.source_group_ids : [];
+      const target = Array.isArray(room.target_group_ids) ? room.target_group_ids : [];
+      if (source.includes(gid) || target.includes(gid)) rooms++;
+    }
+    let templates = 0;
+    for (const template of state.localState?.templates || []) {
+      const source = Array.isArray(template.default_source_group_ids) ? template.default_source_group_ids : [];
+      const target = Array.isArray(template.default_target_group_ids) ? template.default_target_group_ids : [];
+      if (source.includes(gid) || target.includes(gid)) templates++;
+    }
+    return { devices, rooms, templates };
+  }
+
+  function openGroupFormModal(groupOrId = null) {
+    const group = typeof groupOrId === 'number'
+      ? groupSlotById(groupOrId)
+      : typeof groupOrId === 'string'
+        ? groupSlotById(normalizeNumber(groupOrId, -1))
+        : groupOrId || null;
+    const editing = !!group;
+    state.groupFormModal = {
+      open: true,
+      mode: editing ? 'edit' : 'create',
+      groupId: editing ? group.id : -1,
+      name: String(group?.name || ''),
+      note: String(group?.note || '')
+    };
+    if (editing) syncGroupEditorDraft(group);
+    render();
+    requestAnimationFrame(() => {
+      const input = document.querySelector('[data-role="group-form-input"][data-group-form-field="name"]');
+      if (input) {
+        input.focus();
+        input.select?.();
+      }
+    });
+  }
+
+  function closeGroupFormModal() {
+    state.groupFormModal = null;
+    render();
+  }
+
+  function openGroupDeleteModal(groupOrId) {
+    const gid = typeof groupOrId === 'number'
+      ? groupOrId
+      : typeof groupOrId === 'string'
+        ? normalizeNumber(groupOrId, -1)
+        : normalizeNumber(groupOrId?.id, -1);
+    const group = groupSlotById(gid);
+    if (!group) return;
+    state.groupDeleteModal = {
+      open: true,
+      groupId: gid,
+      name: String(group.name || `分组${gid + 1}`),
+      refs: groupReferenceStats(gid)
+    };
+    render();
+  }
+
+  function closeGroupDeleteModal() {
+    state.groupDeleteModal = null;
+    render();
+  }
+
+  function selectGroup(groupOrId) {
+    const group = typeof groupOrId === 'number'
+      ? groupSlotById(groupOrId)
+      : typeof groupOrId === 'string'
+        ? groupSlotById(normalizeNumber(groupOrId, -1))
+        : groupOrId || null;
+    const next = group || selectedGroup();
+    syncGroupEditorDraft(next);
+    return next;
+  }
+
+  function mergeDraftsIntoController(controllerState, localState) {
+    const out = clone(controllerState);
+    const drafts = localState?.device_drafts || {};
+    out.devices = (out.devices || []).map((device) => {
+      const draft = drafts[device.mac];
+      const name = draft && typeof draft === 'object' && String(draft.name || '').trim();
+      const note = draft && typeof draft === 'object' && String(draft.note || '').trim();
+      return {
+        ...device,
+        name: name || device.name,
+        note: note || device.note || ''
+      };
+    });
+    return out;
+  }
+
+  function controllerDevices() {
+    return Array.isArray(state.controllerState?.devices) ? state.controllerState.devices : [];
+  }
+
+  function controllerGroups() {
+    return Array.isArray(state.controllerState?.groups) ? state.controllerState.groups.filter((g) => g && g.valid) : [];
+  }
+
+  function controllerGroupSlots() {
+    return Array.isArray(state.controllerState?.groups) ? state.controllerState.groups : [];
+  }
+
+  function controllerEffects() {
+    if (Array.isArray(state.controllerState?.effects) && state.controllerState.effects.length) {
+      return state.controllerState.effects;
+    }
+    return [
+      ...(state.localState?.effect_templates || buildDefaultEffectTemplates()),
+      ...(state.localState?.effect_presets || buildDefaultCustomEffects())
+    ];
+  }
+
+  function activeTemplate() {
+    return state.localState?.templates?.find((tpl) => tpl.id === state.selectedTemplateId) || state.localState?.templates?.[0] || null;
+  }
+
+  function roomList() {
+    return Array.isArray(state.localState?.rooms) ? state.localState.rooms : [];
+  }
+
+  function roomSortOrder() {
+    return String(state.localState?.ui?.room_sort_order || 'desc') === 'asc' ? 'asc' : 'desc';
+  }
+
+  function setRoomSortOrder(order) {
+    if (!state.localState?.ui) return;
+    state.localState.ui.room_sort_order = String(order) === 'asc' ? 'asc' : 'desc';
+    persistStateToServer();
+    render();
+  }
+
+  function sortedRoomList() {
+    const rooms = roomList().slice();
+    const direction = roomSortOrder() === 'asc' ? 1 : -1;
+    return rooms.sort((a, b) => {
+      const aTime = Date.parse(a?.updated_at || a?.created_at || '') || 0;
+      const bTime = Date.parse(b?.updated_at || b?.created_at || '') || 0;
+      if (aTime !== bTime) return direction * (aTime - bTime);
+      const aName = String(a?.name || '');
+      const bName = String(b?.name || '');
+      if (aName !== bName) return direction * aName.localeCompare(bName, 'zh-Hans-CN');
+      return direction * String(a?.id || '').localeCompare(String(b?.id || ''));
+    });
+  }
+
+  function roomById(id) {
+    const roomId = String(id || '');
+    if (!roomId) return null;
+    return roomList().find((room) => room.id === roomId) || null;
+  }
+
+  function activeRoomId() {
+    return String(state.localState?.active_room_id || state.currentRoomId || sortedRoomList()[0]?.id || '');
+  }
+
+  function activeRoom() {
+    return roomById(activeRoomId()) || state.localState?.current_room || null;
+  }
+
+  function roomCountdownActive(roomId = activeRoomId()) {
+    return !!state.roomStartCountdown && String(state.roomStartCountdown.roomId || '') === String(roomId || '');
+  }
+
+  function roomCountdownRemaining(roomId = activeRoomId()) {
+    if (!roomCountdownActive(roomId)) return 0;
+    return clamp(normalizeNumber(state.roomStartCountdown?.remaining, 0), 0, 10);
+  }
+
+  function isDeviceOnline(device) {
+    return state.controllerOnline && normalizeNumber(device?.seen_ms, 999999) < 10000;
+  }
+
+  function roomSelectedGroupIds(room = currentRoom()) {
+    const source = Array.isArray(room?.source_group_ids) ? room.source_group_ids : [];
+    const target = Array.isArray(room?.target_group_ids) ? room.target_group_ids : [];
+    return Array.from(new Set([...source, ...target].map((gid) => normalizeNumber(gid, -1)).filter((gid) => gid >= 0))).sort((a, b) => a - b);
+  }
+
+  function roomSelectedDevices(room = currentRoom()) {
+    const groupIds = roomSelectedGroupIds(room);
+    const map = new Map();
+    for (const gid of groupIds) {
+      const groupName = groupNameById(gid);
+      for (const device of groupDevices(gid)) {
+        const mac = String(device?.mac || '').trim();
+        if (!mac) continue;
+        const current = map.get(mac) || {
+          device: clone(device),
+          groups: new Set()
+        };
+        current.groups.add(groupName);
+        map.set(mac, current);
+      }
+    }
+    return Array.from(map.values()).map((item) => ({
+      device: item.device,
+      groups: Array.from(item.groups)
+    }));
+  }
+
+  function roomPreparationAudit(room = currentRoom()) {
+    const selectedDevices = roomSelectedDevices(room);
+    const offlineDevices = selectedDevices.filter((item) => !isDeviceOnline(item.device));
+    return {
+      groupIds: roomSelectedGroupIds(room),
+      devices: selectedDevices,
+      offlineDevices
+    };
+  }
+
+  function isSoftStopDisconnectError(err) {
+    const message = String(err?.message || err || '');
+    return /HTTP 502/.test(message)
+      && /controller_proxy_failed/.test(message)
+      && /Remote end closed connection without response/i.test(message);
+  }
+
+  function clearRoomCountdown({ silent = false } = {}) {
+    if (state.roomCountdownTimer) {
+      clearInterval(state.roomCountdownTimer);
+      state.roomCountdownTimer = null;
+    }
+    state.roomStartCountdown = null;
+    if (!silent) {
+      logDebug('已取消开始倒计时');
+      render();
+    }
+  }
+
+  function wizardDraftTemplateId() {
+    return String(state.wizardRoomDraft?.template_id || state.selectedTemplateId || activeTemplate()?.id || builtinTemplates[0].id);
+  }
+
+  function buildWizardRoomDraft(templateId, sourceRoom = null) {
+    const template = state.localState?.templates?.find((tpl) => tpl.id === templateId)
+      || state.localState?.templates?.[0]
+      || builtinTemplates[0];
+    const base = sourceRoom ? clone(sourceRoom) : {
+      id: uid('room'),
+      name: '',
+      template_id: template?.id || builtinTemplates[0].id,
+      template_name: template?.name || builtinTemplates[0].name,
+      status: 'draft',
+      started_at: '',
+      ended_at: '',
+      published_at: '',
+      publish_result: null,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+      feature_preset_id: String(template?.feature_preset_id || ''),
+      effect_preset_id: String(template?.effect_preset_id || ''),
+      sense_mode: String(template?.sense_mode || ''),
+      idle_effect_id: String(template?.idle_effect_id || ''),
+      trigger_effect_id: String(template?.trigger_effect_id || ''),
+      trigger_signal_rssi: normalizeNumber(featurePresetById(template?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_rssi_threshold, -10),
+      trigger_hold_ms: normalizeNumber(featurePresetById(template?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_hold_ms, 2000),
+      preview_effect_id: String(template?.effect_preset_id || ''),
+      timer: template?.feature_preset_id ? clone(featurePresetById(template.feature_preset_id)?.feature_ui?.timer || {}) : {},
+      scoring: template?.scoring && typeof template.scoring === 'object' ? clone(template.scoring) : {},
+      source_group_ids: [],
+      target_group_ids: [],
+      group_ids: [],
+      effect_rules: [],
+      notes: '',
+      summary: {}
+    };
+    const room = normalizeRoomDraft(base, template);
+    room.template_id = template?.id || builtinTemplates[0].id;
+    room.template_name = template?.name || builtinTemplates[0].name;
+    room.status = 'draft';
+    room.started_at = '';
+    room.ended_at = '';
+    room.published_at = '';
+    room.publish_result = null;
+    room.updated_at = nowIso();
+    syncRoomEffectRules(room);
+    updateRoomDraftSummary(room);
+    return room;
+  }
+
+  function syncActiveRoomAlias(room = activeRoom()) {
+    if (!state.localState) return null;
+    const next = room ? normalizeRoomDraft(room, state.localState.templates.find((tpl) => tpl.id === room.template_id) || state.localState.templates[0] || builtinTemplates[0]) : null;
+    state.localState.active_room_id = next?.id || '';
+    state.localState.current_room = next ? clone(next) : null;
+    state.currentRoomId = next?.id || '';
+    if (next?.template_id) {
+      state.selectedTemplateId = next.template_id;
+      if (state.localState.ui) state.localState.ui.selected_template_id = next.template_id;
+    }
+    return next;
+  }
+
+  function setActiveRoom(roomOrId) {
+    const room = typeof roomOrId === 'string' ? roomById(roomOrId) : roomOrId || null;
+    return syncActiveRoomAlias(room);
+  }
+
+  function currentRoom() {
+    if (wizardState().open && state.wizardRoomDraft) return state.wizardRoomDraft;
+    return activeRoom();
+  }
+
+  function selectedVisibleDevices() {
+    return filteredDevices().filter((device) => state.selectedDeviceIds.has(device.mac));
+  }
+
+  function visibleGroupIdsForDevice(device) {
+    const mask = normalizeNumber(device?.group_mask, 0) >>> 0;
+    return controllerGroups()
+      .map((group) => normalizeNumber(group?.id, -1))
+      .filter((gid) => gid >= 0 && (mask & (1 << gid)) !== 0);
+  }
+
+  function groupById(id) {
+    return controllerGroups().find((g) => g.id === id) || null;
+  }
+
+  function groupSlotById(id) {
+    return controllerGroupSlots().find((g) => normalizeNumber(g?.id, -1) === normalizeNumber(id, -1)) || null;
+  }
+
+  function groupDevices(groupId) {
+    const bit = 1 << normalizeNumber(groupId, -1);
+    if (bit <= 0) return [];
+    return controllerDevices().filter((device) => ((normalizeNumber(device.group_mask, 0) >>> 0) & bit) !== 0);
+  }
+
+  function groupNameById(id) {
+    const group = groupById(id);
+    return group ? group.name : `分组${id + 1}`;
+  }
+
+  function modeLabel(mode) {
+    const value = normalizeNumber(mode, 1);
+    if (value === 0) return '组共享型';
+    if (value === 2) return '纯响应型';
+    return '轮巡型';
+  }
+
+  function senseLabel(mode) {
+    const value = String(mode || 'ring');
+    if (value === 'shared') return '组共享';
+    if (value === 'response') return '纯响应';
+    return '轮巡';
+  }
+
+  function scoringLabel(mode) {
+    const value = String(mode || 'count_find');
+    if (value === 'shared_count') return '组共享计分';
+    if (value === 'rssi_probe') return '距离测试';
+    if (value === 'demo') return '灯效演示';
+    if (value === 'count_find') return '寻宝计分';
+    return value || '未设置';
+  }
+
+  function effectNameById(effectId) {
+    const id = String(effectId || '');
+    const localMatch = effectDefinitionById(id);
+    if (localMatch) return localMatch.name;
+    const match = controllerEffects().find((item) => String(item.id) === id);
+    if (match) return match.name;
+    if (id === 'builtin-selftest' || id === 'selftest') return '自检';
+    return id || '未设置';
+  }
+
+  function featurePresetNameById(presetId) {
+    const match = featurePresetById(presetId);
+    return match ? match.name : String(presetId || '') || '未设置';
+  }
+
+  function effectPresetNameById(presetId) {
+    const match = effectDefinitionById(presetId);
+    return match ? match.name : String(presetId || '') || '未设置';
+  }
+
+  function effectTemplateNameById(templateId) {
+    const match = effectTemplateById(templateId);
+    return match ? match.name : String(templateId || '') || '未设置';
+  }
+
+  function filteredDevices() {
+    const devices = controllerDevices();
+    const mode = state.deviceFilterMode;
+    const gid = normalizeNumber(state.deviceFilterGroupId, -1);
+    const hidden = new Set((state.localState?.hidden_devices || []).map((item) => String(item || '').trim()).filter(Boolean));
+    let filtered = devices;
+    if (mode === 'group' && gid >= 0) {
+      const bit = 1 << gid;
+      filtered = devices.filter((device) => ((normalizeNumber(device.group_mask, 0) >>> 0) & bit) !== 0);
+    } else if (mode !== 'all') {
+      filtered = devices.filter((device) => (normalizeNumber(device.group_mask, 0) >>> 0) === 0);
+    }
+    filtered = filtered.filter((device) => !hidden.has(String(device.mac || '').trim()));
+    if (!state.localState?.ui?.show_offline_devices) {
+      filtered = filtered.filter((device) => isDeviceOnline(device));
+    }
+    return filtered.slice().sort((a, b) => {
+      const aOnline = isDeviceOnline(a) ? 1 : 0;
+      const bOnline = isDeviceOnline(b) ? 1 : 0;
+      if (aOnline !== bOnline) return bOnline - aOnline;
+      const aRssi = normalizeNumber(a?.rssi, -999);
+      const bRssi = normalizeNumber(b?.rssi, -999);
+      if (aOnline && bOnline && aRssi !== bRssi) return bRssi - aRssi;
+      if (aOnline !== bOnline) return bOnline - aOnline;
+      const aSeen = normalizeNumber(a?.seen_ms, 999999);
+      const bSeen = normalizeNumber(b?.seen_ms, 999999);
+      if (aSeen !== bSeen) return aSeen - bSeen;
+      return normalizeNumber(a?.idx, 0) - normalizeNumber(b?.idx, 0);
+    });
+  }
+
+  function onlineCount() {
+    return controllerDevices().filter((device) => isDeviceOnline(device)).length;
+  }
+
+  function ungroupedCount() {
+    return controllerDevices().filter((device) => (normalizeNumber(device.group_mask, 0) >>> 0) === 0).length;
+  }
+
+  function activeGroupsCount() {
+    return controllerGroups().length;
+  }
+
+  function effectTemplatesCount() {
+    return controllerEffects().filter((item) => String(item?.id || '') !== 'builtin-selftest' && String(item?.id || '') !== 'selftest').length;
+  }
+
+  function lastPublishStatus() {
+    const log = state.serverLogText || '';
+    if (log.includes('Publish completed') || log.includes('publish success') || log.includes('发布成功')) return '成功';
+    if (log.includes('failed') || log.includes('失败')) return '失败';
+    return state.controllerOnline ? '待发布' : '离线';
+  }
+
+  function selectedTemplateName() {
+    const tpl = activeTemplate();
+    return tpl ? tpl.name : '未选择';
+  }
+
+  function currentRoomStatusLabel() {
+    const room = currentRoom();
+    if (!room) return '未创建';
+    if (roomCountdownActive(room.id)) return `倒计时 ${roomCountdownRemaining(room.id)} 秒`;
+    if (room.status === 'draft') return '草稿';
+    if (room.status === 'published') return '已预备';
+    if (room.status === 'running') return '进行中';
+    if (room.status === 'ended') return '已结束';
+    return '待开始';
+  }
+
+  function currentRoomDuration() {
+    const room = currentRoom();
+    if (!room) return '0s';
+    return formatDuration(room.started_at, room.ended_at);
+  }
+
+  function wizardState() {
+    const wizard = state.localState?.ui?.wizard || {};
+    return {
+      open: wizard.open === true,
+      step: clamp(normalizeNumber(wizard.step, 0), 0, WIZARD_STEP_MAX),
+      returnTab: String(wizard.return_tab || 'overview')
+    };
+  }
+
+  function syncWizardState(patch = {}) {
+    if (!state.localState.ui) state.localState.ui = {};
+    if (!state.localState.ui.wizard) state.localState.ui.wizard = { open: false, step: 0, return_tab: 'overview' };
+    state.localState.ui.wizard = {
+      open: patch.open !== undefined ? !!patch.open : state.localState.ui.wizard.open === true,
+      step: patch.step !== undefined ? clamp(normalizeNumber(patch.step, 0), 0, WIZARD_STEP_MAX) : clamp(normalizeNumber(state.localState.ui.wizard.step, 0), 0, WIZARD_STEP_MAX),
+      return_tab: patch.returnTab !== undefined
+        ? String(patch.returnTab || 'overview')
+      : String(state.localState.ui.wizard.return_tab || 'overview')
+    };
+  }
+
+  function ensureRoomCollection() {
+    if (!state.localState) state.localState = buildDefaultLocalState();
+    if (!Array.isArray(state.localState.rooms)) state.localState.rooms = [];
+    if (!state.localState.ui) state.localState.ui = buildDefaultLocalState().ui;
+    return state.localState.rooms;
+  }
+
+  function upsertRoom(room, { activate = true } = {}) {
+    if (!room || typeof room !== 'object') return null;
+    const rooms = ensureRoomCollection();
+    const normalized = normalizeRoomDraft(room, state.localState?.templates?.find((tpl) => tpl.id === room.template_id) || state.localState?.templates?.[0] || builtinTemplates[0]);
+    const index = rooms.findIndex((item) => item.id === normalized.id);
+    if (index >= 0) rooms[index] = normalized;
+    else rooms.push(normalized);
+    if (activate) setActiveRoom(normalized);
+    return normalized;
+  }
+
+  function validateRoomReady(room = currentRoom()) {
+    const issues = [];
+    const template = state.localState?.templates?.find((item) => item.id === room?.template_id) || activeTemplate() || state.localState?.templates?.[0] || builtinTemplates[0];
+    if (!String(room?.name || '').trim()) issues.push('请先填写房间名称。');
+    if (!template?.id) issues.push('请先选择一个游戏模板。');
+    if (!(Array.isArray(room?.source_group_ids) && room.source_group_ids.length)) issues.push('请至少选择一个源组。');
+    if (!(Array.isArray(room?.target_group_ids) && room.target_group_ids.length)) issues.push('请至少选择一个目标组。');
+    return { issues, template };
+  }
+
+  function ensureRoomDraft(templateId = state.selectedTemplateId || activeTemplate()?.id || builtinTemplates[0].id, options = {}) {
+    const template = state.localState?.templates?.find((tpl) => tpl.id === templateId)
+      || state.localState?.templates?.[0]
+      || builtinTemplates[0];
+    const forceNew = options.forceNew === true || !state.wizardRoomDraft;
+    const sourceRoom = options.room || null;
+    if (forceNew || !state.wizardRoomDraft) {
+      state.wizardRoomDraft = buildWizardRoomDraft(template?.id || builtinTemplates[0].id, sourceRoom);
+    } else {
+      state.wizardRoomDraft.template_id = template?.id || builtinTemplates[0].id;
+      state.wizardRoomDraft.template_name = template?.name || builtinTemplates[0].name;
+      applyTemplateDefaultsToRoom(state.wizardRoomDraft, template, { overwrite: options.overwrite === true });
+      state.wizardRoomDraft.status = 'draft';
+      state.wizardRoomDraft.started_at = '';
+      state.wizardRoomDraft.ended_at = '';
+      state.wizardRoomDraft.published_at = '';
+      state.wizardRoomDraft.publish_result = null;
+      state.wizardRoomDraft.updated_at = nowIso();
+      syncRoomEffectRules(state.wizardRoomDraft);
+      updateRoomDraftSummary(state.wizardRoomDraft);
+    }
+    const draft = state.wizardRoomDraft;
+    if (!Array.isArray(draft.source_group_ids)) draft.source_group_ids = [];
+    if (!Array.isArray(draft.target_group_ids)) draft.target_group_ids = [];
+    if (!Array.isArray(draft.group_ids)) {
+      draft.group_ids = Array.from(new Set([...(draft.source_group_ids || []), ...(draft.target_group_ids || [])]));
+    }
+    state.selectedTemplateId = draft.template_id;
+    state.localState.ui.selected_template_id = draft.template_id;
+    return draft;
+  }
+
+  function updateRoomDraftSummary(room = currentRoom()) {
+    if (!room) return;
+    room.group_ids = Array.from(new Set([
+      ...(Array.isArray(room.source_group_ids) ? room.source_group_ids : []),
+      ...(Array.isArray(room.target_group_ids) ? room.target_group_ids : [])
+    ])).sort((a, b) => a - b);
+    syncRoomEffectRules(room);
+    room.summary = {
+      source_group_names: (room.source_group_ids || []).map((gid) => groupNameById(gid)),
+      target_group_names: (room.target_group_ids || []).map((gid) => groupNameById(gid)),
+      source_count: (room.source_group_ids || []).length,
+      target_count: (room.target_group_ids || []).length,
+      feature_preset_name: featurePresetById(room.feature_preset_id)?.name || '',
+      effect_preset_name: effectPresetById(room.effect_preset_id)?.name || '',
+      sense_mode: String(room.sense_mode || ''),
+      idle_effect_name: effectNameById(room.idle_effect_id || ''),
+      trigger_effect_name: effectNameById(room.trigger_effect_id || ''),
+      effect_rule_count: Array.isArray(room.effect_rules) ? room.effect_rules.length : 0,
+      scoring: room.scoring && typeof room.scoring === 'object' ? clone(room.scoring) : {},
+      timer: room.timer && typeof room.timer === 'object' ? clone(room.timer) : {}
+    };
+    room.updated_at = nowIso();
+    syncActiveRoomAlias(room);
+  }
+
+  function openWizard(templateId = state.selectedTemplateId || activeTemplate()?.id || builtinTemplates[0].id, options = {}) {
+    const returnTab = state.activeTab || state.localState?.ui?.active_tab || 'overview';
+    state.selectedTemplateId = templateId || builtinTemplates[0].id;
+    state.localState.ui.selected_template_id = state.selectedTemplateId;
+    state.roomEffectPreviewKey = '';
+    state.roomEffectPreviewId = '';
+    const current = activeRoom();
+    const sourceRoom = options.room || (!options.forceNew && current && current.status !== 'running' ? current : null);
+    state.wizardRoomDraft = buildWizardRoomDraft(state.selectedTemplateId, sourceRoom);
+    syncWizardState({ open: true, step: 0, returnTab });
+    render();
+    requestAnimationFrame(() => {
+      const input = document.querySelector('[data-role="wizard-room-name"]');
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    });
+  }
+
+  function closeWizard() {
+    const returnTab = wizardState().returnTab || 'overview';
+    syncWizardState({ open: false });
+    state.wizardRoomDraft = null;
+    state.roomEffectPreviewKey = '';
+    state.roomEffectPreviewId = '';
+    state.activeTab = returnTab;
+    state.localState.ui.active_tab = returnTab;
+    persistStateToServer();
+    render();
+  }
+
+  function wizardNext() {
+    syncWizardState({ step: clamp(wizardState().step + 1, 0, WIZARD_STEP_MAX) });
+    persistStateToServer();
+    render();
+  }
+
+  function wizardPrev() {
+    syncWizardState({ step: clamp(wizardState().step - 1, 0, WIZARD_STEP_MAX) });
+    persistStateToServer();
+    render();
+  }
+
+  function setWizardRoomName(value) {
+    const room = ensureRoomDraft();
+    room.name = String(value || '').trim();
+    room.updated_at = nowIso();
+    updateRoomDraftSummary(room);
+    persistLocalCache();
+    render();
+  }
+
+  function setWizardRoomNotes(value) {
+    const room = ensureRoomDraft();
+    room.notes = String(value || '');
+    room.updated_at = nowIso();
+    updateRoomDraftSummary(room);
+    persistLocalCache();
+  }
+
+  function setWizardTemplate(templateId) {
+    const template = state.localState.templates.find((item) => item.id === templateId) || activeTemplate() || state.localState.templates[0] || builtinTemplates[0];
+    state.selectedTemplateId = template.id;
+    state.localState.ui.selected_template_id = template.id;
+    const room = ensureRoomDraft(template.id);
+    room.effect_rules = [];
+    applyTemplateDefaultsToRoom(room, template, { overwrite: true });
+    updateRoomDraftSummary(room);
+    persistLocalCache();
+    render();
+  }
+
+  function toggleWizardGroup(kind, gid, checked) {
+    const room = ensureRoomDraft();
+    const key = kind === 'target' ? 'target_group_ids' : 'source_group_ids';
+    const current = new Set(Array.isArray(room[key]) ? room[key] : []);
+    if (checked) current.add(gid);
+    else current.delete(gid);
+    room[key] = Array.from(current).sort((a, b) => a - b);
+    updateRoomDraftSummary(room);
+    persistLocalCache();
+    render();
+  }
+
+  function updateWizardEffectRule(sourceGroupId, targetGroupId, field, value) {
+    const room = ensureRoomDraft();
+    syncRoomEffectRules(room);
+    const rule = roomEffectRuleByPair(room, sourceGroupId, targetGroupId);
+    if (!rule) return;
+    const allowed = new Set(['source_idle_effect_id', 'source_trigger_effect_id', 'target_idle_effect_id', 'target_trigger_effect_id']);
+    if (!allowed.has(field)) return;
+    rule[field] = String(value || 'builtin-silent');
+    room.updated_at = nowIso();
+    updateRoomDraftSummary(room);
+    persistLocalCache();
+  }
+
+  function applyWizardEffectRuleBatch(field, value) {
+    const room = ensureRoomDraft();
+    syncRoomEffectRules(room);
+    const allowed = new Set(['source_idle_effect_id', 'source_trigger_effect_id', 'target_idle_effect_id', 'target_trigger_effect_id']);
+    if (!allowed.has(field)) return;
+    for (const rule of room.effect_rules || []) {
+      rule[field] = String(value || 'builtin-silent');
+    }
+    if (field === 'source_idle_effect_id') room.idle_effect_id = String(value || 'builtin-silent');
+    if (field === 'source_trigger_effect_id' || field === 'target_trigger_effect_id') room.trigger_effect_id = String(value || 'builtin-silent');
+    room.updated_at = nowIso();
+    updateRoomDraftSummary(room);
+    persistLocalCache();
+    render();
+  }
+
+  async function saveWizardDraft() {
+    const room = ensureRoomDraft();
+    if (!String(room.name || '').trim()) {
+      alert('请先输入房间名称。');
+      return;
+    }
+    const template = state.localState?.templates?.find((item) => item.id === room.template_id) || activeTemplate() || state.localState?.templates?.[0] || builtinTemplates[0];
+    const savedRoom = normalizeRoomDraft({
+      ...clone(room),
+      status: 'draft',
+      started_at: '',
+      ended_at: '',
+      published_at: '',
+      publish_result: null,
+      template_id: template?.id || builtinTemplates[0].id,
+      template_name: template?.name || builtinTemplates[0].name,
+      updated_at: nowIso()
+    }, template);
+    updateRoomDraftSummary(savedRoom);
+    upsertRoom(savedRoom, { activate: true });
+    state.wizardRoomDraft = null;
+    syncWizardState({ open: false });
+    state.activeTab = 'room';
+    state.localState.ui.active_tab = 'room';
+    await persistStateToServer();
+    logDebug(`向导设置已保存 | ${savedRoom.name}`);
+    render();
+  }
+
+  async function startWizardRoom() {
+    const room = currentRoom();
+    if (!room) return;
+    logDebug(`向导里不再直接开始 | ${room.name} / ${room.template_name}`);
+  }
+
+  function buildControllerPayload() {
+    const payload = mergeDraftsIntoController(state.controllerState || buildDefaultControllerState(), state.localState || buildDefaultLocalState());
+    payload.schema_version = 2;
+    payload.active_preset = selectedTemplateName();
+    payload.presets = normalizeTemplates(state.localState?.templates || []);
+    payload.effect_templates = normalizeEffectTemplates(state.localState?.effect_templates || []);
+    payload.effect_presets = normalizeEffectPresets(state.localState?.effect_presets || []);
+    payload.effects = normalizeEffectEffects([
+      ...payload.effect_templates,
+      ...payload.effect_presets
+    ]);
+    payload.rooms = roomList().map((room) => {
+      const next = normalizeRoomDraft(room, state.localState?.templates?.find((tpl) => tpl.id === room.template_id) || state.localState?.templates?.[0] || builtinTemplates[0]);
+      return clone(next);
+    });
+    payload.active_room_id = activeRoomId();
+    payload.current_room = currentRoom() ? clone(normalizeRoomDraft(currentRoom(), state.localState?.templates?.find((tpl) => tpl.id === currentRoom().template_id) || state.localState?.templates?.[0] || builtinTemplates[0])) : null;
+    payload.records = Array.isArray(payload.records) ? payload.records : [];
+    payload.rules = Array.isArray(payload.rules) ? payload.rules : [];
+    return payload;
+  }
+
+  function buildLocalStatePayload() {
+    const payload = clone(state.localState || buildDefaultLocalState());
+    payload.schema = 1;
+    payload.updated_at = nowIso();
+    payload.ui = {
+      active_tab: state.activeTab,
+      show_unassigned: payload.ui?.show_unassigned !== false,
+      device_filter_mode: state.deviceFilterMode,
+      device_filter_group_id: state.deviceFilterGroupId,
+      room_sort_order: roomSortOrder(),
+      show_offline_devices: state.localState?.ui?.show_offline_devices === true,
+      device_preview_collapsed: state.localState?.ui?.device_preview_collapsed === true,
+      preview_cell_shape: String(state.localState?.ui?.preview_cell_shape || 'square') === 'circle' ? 'circle' : 'square',
+      selected_group_id: normalizeNumber(state.localState?.ui?.selected_group_id, 0),
+      expanded_group_id: normalizeNumber(state.localState?.ui?.expanded_group_id, -1),
+      selected_template_id: state.selectedTemplateId,
+      selected_feature_preset_id: String(state.localState?.ui?.selected_feature_preset_id || 'fp-treasure'),
+      selected_effect_preset_id: String(state.localState?.ui?.selected_effect_preset_id || ''),
+      wizard: {
+        open: !!state.localState?.ui?.wizard?.open,
+        step: clamp(normalizeNumber(state.localState?.ui?.wizard?.step, 0), 0, WIZARD_STEP_MAX),
+        return_tab: String(state.localState?.ui?.wizard?.return_tab || 'overview')
+      }
+    };
+    payload.rooms = roomList().map((room) => clone(room));
+    payload.active_room_id = activeRoomId();
+    payload.current_room = currentRoom() ? clone(currentRoom()) : null;
+    payload.room_history = Array.isArray(payload.room_history) ? payload.room_history : [];
+    payload.templates = Array.isArray(payload.templates) ? payload.templates : [];
+    payload.feature_presets = Array.isArray(payload.feature_presets) ? payload.feature_presets : [];
+    payload.effect_templates = Array.isArray(payload.effect_templates) ? payload.effect_templates : [];
+    payload.effect_presets = Array.isArray(payload.effect_presets) ? payload.effect_presets : [];
+    payload.hidden_devices = Array.isArray(payload.hidden_devices) ? payload.hidden_devices : [];
+    return payload;
+  }
+
+  function groupMaskCount(mask) {
+    return countBits32(normalizeNumber(mask, 0));
+  }
+
+  function validateDeviceGroupLimit(payload) {
+    const devices = Array.isArray(payload?.devices) ? payload.devices : [];
+    const offenders = devices.filter((device) => groupMaskCount(device?.group_mask) > 8);
+    if (!offenders.length) return '';
+    const first = offenders[0];
+    return `设备 #${normalizeNumber(first?.idx, -1)} 的分组数超过 8 个，请先减少后再保存或发布。`;
+  }
+
+  function setBusy(key, value) {
+    state.busy[key] = !!value;
+    render();
+  }
+
+  function logDebug(line) {
+    const ts = new Date().toISOString();
+    state.debugLines.unshift(`[${ts}] ${line}`);
+    state.debugLines = state.debugLines.slice(0, MAX_VISIBLE_LOG_LINES);
+  }
+
+  function persistLocalCache() {
+    try {
+      localStorage.setItem(STORAGE_KEYS.localState, JSON.stringify(buildLocalStatePayload()));
+    } catch (_) {}
+  }
+
+  function persistRecordsCache() {
+    try {
+      localStorage.setItem(STORAGE_KEYS.roomRecords, JSON.stringify(state.roomRecords));
+    } catch (_) {}
+  }
+
+  async function requestJson(path, options = {}) {
+    const timeoutMs = options.timeoutMs ?? 12000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('timeout')), timeoutMs);
+    try {
+      const response = await fetch(`${state.apiBase}${path}`, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers || {})
+        }
+      });
+      const text = await response.text();
+      let body = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = text;
+      }
+      if (!response.ok) {
+        const detail = typeof body === 'object' && body ? JSON.stringify(body) : String(body || response.statusText);
+        throw new Error(`HTTP ${response.status}: ${detail}`);
+      }
+      return body;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function requestText(path, options = {}) {
+    const timeoutMs = options.timeoutMs ?? 12000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('timeout')), timeoutMs);
+    try {
+      const response = await fetch(`${state.apiBase}${path}`, {
+        ...options,
+        signal: controller.signal
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 160)}`);
+      return text;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function discoverApiBase() {
+    const origin = window.location.origin;
+    if (origin && origin !== 'null' && window.location.protocol !== 'file:') {
+      return origin.replace(/\/$/, '');
+    }
+
+    const storedPort = Number(localStorage.getItem(STORAGE_KEYS.lastPort) || 0);
+    const candidatePorts = [];
+    if (storedPort >= 8777 && storedPort <= 8787) candidatePorts.push(storedPort);
+    for (let port = 8777; port <= 8787; port++) {
+      if (!candidatePorts.includes(port)) candidatePorts.push(port);
+    }
+    for (const port of candidatePorts) {
+      const base = `http://127.0.0.1:${port}`;
+      try {
+        const result = await requestJsonFromBase(base, '/api/status', { timeoutMs: 900 });
+        if (result && result.ok) {
+          localStorage.setItem(STORAGE_KEYS.lastPort, String(port));
+          return base;
+        }
+      } catch (_) {}
+    }
+    return 'http://127.0.0.1:8777';
+  }
+
+  async function requestJsonFromBase(base, path, options = {}) {
+    const timeoutMs = options.timeoutMs ?? 12000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('timeout')), timeoutMs);
+    try {
+      const response = await fetch(`${base}${path}`, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers || {})
+        }
+      });
+      const text = await response.text();
+      let body = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = text;
+      }
+      if (!response.ok) {
+        const detail = typeof body === 'object' && body ? JSON.stringify(body) : String(body || response.statusText);
+        throw new Error(`HTTP ${response.status}: ${detail}`);
+      }
+      return body;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function fetchStatus() {
+    return requestJson('/api/status', { timeoutMs: 5000 });
+  }
+
+  async function fetchControllerState() {
+    return requestJson('/api/controller/state?t=' + Date.now(), { timeoutMs: 12000, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  async function fetchLocalState() {
+    return requestJson('/api/local/state', { timeoutMs: 5000, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  async function fetchRecords() {
+    return requestJson('/api/local/records?tail=200', { timeoutMs: 5000, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  async function fetchServerLog() {
+    return requestText('/api/log?tail=250', { timeoutMs: 5000 });
+  }
+
+  async function persistStateToServer() {
+    try {
+      await requestJson('/api/local/state', {
+        method: 'POST',
+        body: JSON.stringify(buildLocalStatePayload()),
+        timeoutMs: 8000
+      });
+      persistLocalCache();
+      return true;
+    } catch (err) {
+      logDebug(`本地状态保存失败 | ${err.message}`);
+      persistLocalCache();
+      return false;
+    }
+  }
+
+  async function persistDraftToServer() {
+    try {
+      await requestJson('/api/save', {
+        method: 'POST',
+        body: JSON.stringify(buildControllerPayload()),
+        timeoutMs: 15000
+      });
+      return true;
+    } catch (err) {
+      logDebug(`鎺у埗绔崏绋夸繚瀛樺け璐?| ${err.message}`);
+      return false;
+    }
+  }
+
+  async function appendRoomRecord(record) {
+    try {
+      const saved = await requestJson('/api/local/records', {
+        method: 'POST',
+        body: JSON.stringify(record),
+        timeoutMs: 8000
+      });
+      return saved?.record || record;
+    } catch (err) {
+    logDebug(`房间记录追加失败 | ${err.message}`);
+      try {
+        state.roomRecords.push(record);
+        persistRecordsCache();
+      } catch (_) {}
+      return record;
+    }
+  }
+
+  function deviceDisplayName(device) {
+    return deviceDraftName(device);
+  }
+
+  function beginEditDevice(mac) {
+    const device = controllerDevices().find((item) => item.mac === mac);
+    if (!device) return;
+    state.editingMac = mac;
+    state.editingDraftName = deviceDisplayName(device);
+    state.editingDraftNote = deviceDraftNote(device);
+    render();
+    requestAnimationFrame(() => {
+      const input = document.querySelector(`[data-role="device-name-input"][data-mac="${cssEscape(mac)}"]`);
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    });
+  }
+
+  function cancelEditDevice() {
+    state.editingMac = '';
+    state.editingDraftName = '';
+    state.editingDraftNote = '';
+    render();
+  }
+
+  function updateEditDraft(field, value) {
+    if (field === 'note') state.editingDraftNote = value;
+    else state.editingDraftName = value;
+  }
+
+  async function saveDeviceName(mac) {
+    const device = controllerDevices().find((item) => item.mac === mac);
+    if (!device) return;
+    const name = String(state.editingDraftName || '').trim();
+    if (!name) {
+      alert('设备名称不能为空。');
+      return;
+    }
+    device.name = name;
+    const note = String(state.editingDraftNote || '').trim();
+    device.note = note;
+    state.localState.device_drafts[mac] = { name, note };
+    state.editingMac = '';
+    state.editingDraftName = '';
+    state.editingDraftNote = '';
+    await persistStateToServer();
+    render();
+    logDebug(`设备信息已保存 | ${device.mac} -> ${name}${note ? ` / ${note}` : ''}`);
+  }
+
+  function toggleDeviceSelect(mac, checked) {
+    if (checked) state.selectedDeviceIds.add(mac);
+    else state.selectedDeviceIds.delete(mac);
+    render();
+  }
+
+  function toggleSelectAllVisible(checked) {
+    const visible = filteredDevices();
+    for (const device of visible) {
+      if (checked) state.selectedDeviceIds.add(device.mac);
+      else state.selectedDeviceIds.delete(device.mac);
+    }
+    render();
+  }
+
+  function toggleGroupMembership(mac, gid, checked) {
+    const device = controllerDevices().find((item) => item.mac === mac);
+    if (!device) return;
+    const mask = normalizeNumber(device.group_mask, 0) >>> 0;
+    const bit = 1 << gid;
+    device.group_mask = checked ? ((mask | bit) >>> 0) : ((mask & ~bit) >>> 0);
+    render();
+    persistStateToServer();
+  }
+
+  function clearSelectedGroups() {
+    const selected = selectedVisibleDevices();
+    if (!selected.length) return;
+    for (const device of selected) {
+      device.group_mask = 0;
+    }
+    render();
+    persistStateToServer();
+    logDebug(`取消分组 | 已清除 ${selected.length} 台设备的分组`);
+  }
+
+  async function saveDeviceRow(mac) {
+    const device = controllerDevices().find((item) => item.mac === mac);
+    if (!device) return;
+    const input = document.querySelector(`[data-role="device-name-input"][data-mac="${cssEscape(mac)}"]`);
+    const noteInput = document.querySelector(`[data-role="device-note-input"][data-mac="${cssEscape(mac)}"]`);
+    const name = String(input?.value ?? deviceDisplayName(device)).trim();
+    const note = String(noteInput?.value ?? deviceDraftNote(device)).trim();
+    if (!name) {
+      alert('设备名称不能为空。');
+      return;
+    }
+    device.name = name;
+    device.note = note;
+    state.localState.device_drafts[mac] = { name, note };
+    await persistStateToServer();
+    render();
+    logDebug(`保存设备 | ${mac} = ${name}${note ? ` / ${note}` : ''}`);
+  }
+
+  function nextGroupId() {
+    const slots = controllerGroupSlots();
+    const maxId = slots.reduce((max, group) => Math.max(max, normalizeNumber(group?.id, -1)), -1);
+    return maxId + 1;
+  }
+
+  function createGroupContainer(groupId) {
+    const slots = controllerGroupSlots();
+    let group = slots.find((item) => normalizeNumber(item?.id, -1) === normalizeNumber(groupId, -1));
+    if (!group) {
+      group = {
+        id: normalizeNumber(groupId, 0),
+        valid: true,
+        name: `分组${normalizeNumber(groupId, 0) + 1}`,
+        note: '',
+        target: 255,
+        mode: 1,
+        sense_mode: 'ring',
+        rssi: -70,
+        hold: 2000,
+        template: '',
+        effect_template_id: '',
+        effect: 'builtin-breath',
+        effect_ui: clone(buildDefaultGroups()[0].effect_ui),
+        idle_effect: 'builtin-silent',
+        silence: '',
+        signal_ui: clone(buildDefaultGroups()[0].signal_ui),
+        score: clone(buildDefaultGroups()[0].score)
+      };
+      slots.push(group);
+      slots.sort((a, b) => normalizeNumber(a?.id, 0) - normalizeNumber(b?.id, 0));
+    }
+    return group;
+  }
+
+  async function persistGroupState() {
+    await persistStateToServer();
+    const ok = await persistDraftToServer();
+    return ok;
+  }
+
+  function groupMemberCount(groupId) {
+    return groupDevices(groupId).length;
+  }
+
+  function removeGroupReferences(groupId) {
+    const gid = normalizeNumber(groupId, -1);
+    if (gid < 0) return { devices: 0, rooms: 0, templates: 0 };
+    const bit = 1 << gid;
+    let deviceCount = 0;
+    for (const device of controllerDevices()) {
+      const mask = normalizeNumber(device.group_mask, 0) >>> 0;
+      if ((mask & bit) !== 0) {
+        device.group_mask = (mask & ~bit) >>> 0;
+        deviceCount++;
+      }
+    }
+    let roomCount = 0;
+    for (const room of roomList()) {
+      const before = `${room.source_group_ids || []}|${room.target_group_ids || []}`;
+      room.source_group_ids = Array.isArray(room.source_group_ids) ? room.source_group_ids.filter((id) => normalizeNumber(id, -1) !== gid) : [];
+      room.target_group_ids = Array.isArray(room.target_group_ids) ? room.target_group_ids.filter((id) => normalizeNumber(id, -1) !== gid) : [];
+      room.group_ids = Array.from(new Set([...(room.source_group_ids || []), ...(room.target_group_ids || [])])).sort((a, b) => a - b);
+      syncRoomEffectRules(room);
+      room.updated_at = nowIso();
+      const after = `${room.source_group_ids || []}|${room.target_group_ids || []}`;
+      if (before !== after) roomCount++;
+    }
+    let templateCount = 0;
+    for (const template of state.localState?.templates || []) {
+      const before = `${template.default_source_group_ids || []}|${template.default_target_group_ids || []}`;
+      template.default_source_group_ids = Array.isArray(template.default_source_group_ids) ? template.default_source_group_ids.filter((id) => normalizeNumber(id, -1) !== gid) : [];
+      template.default_target_group_ids = Array.isArray(template.default_target_group_ids) ? template.default_target_group_ids.filter((id) => normalizeNumber(id, -1) !== gid) : [];
+      template.updated_at = nowIso();
+      const after = `${template.default_source_group_ids || []}|${template.default_target_group_ids || []}`;
+      if (before !== after) templateCount++;
+    }
+    if (state.localState?.ui?.selected_group_id === gid) {
+      state.localState.ui.selected_group_id = controllerGroups().find((group) => group.id !== gid)?.id ?? 0;
+    }
+    syncActiveRoomAlias(activeRoom());
+    return { devices: deviceCount, rooms: roomCount, templates: templateCount };
+  }
+
+  async function saveGroupFromModal() {
+    const modal = state.groupFormModal;
+    if (!modal) return;
+    const name = String(modal.name || '').trim();
+    if (!name) {
+      alert('分组名称不能为空。');
+      return;
+    }
+    let group = null;
+    let mode = modal.mode;
+    if (mode === 'edit') {
+      group = groupSlotById(modal.groupId);
+      if (!group) {
+        alert('要编辑的分组不存在。');
+        return;
+      }
+    } else {
+      const groupId = nextGroupId();
+      group = createGroupContainer(groupId);
+      mode = 'create';
+    }
+    group.valid = true;
+    group.name = name;
+    group.note = String(modal.note || '').trim();
+    group.target = 255;
+    group.mode = 1;
+    group.sense_mode = 'ring';
+    if (mode === 'create') {
+      group.rssi = -70;
+      group.hold = 2000;
+      group.template = '';
+      group.effect_template_id = '';
+      group.effect = 'builtin-breath';
+      group.effect_ui = clone(buildDefaultGroups()[0].effect_ui);
+      group.idle_effect = 'builtin-silent';
+      group.silence = '';
+      group.signal_ui = clone(buildDefaultGroups()[0].signal_ui);
+      group.score = clone(buildDefaultGroups()[0].score);
+    }
+    group.updated_at = nowIso();
+    state.localState.ui.selected_group_id = group.id;
+    setExpandedGroupId(group.id);
+    syncGroupEditorDraft(group);
+    state.groupFormModal = null;
+    const ok = await persistGroupState();
+    if (!ok) {
+      alert(mode === 'create' ? '分组已创建，但保存到控制端草稿失败。请检查连接后重试。' : '分组已更新，但保存到控制端草稿失败。请检查连接后重试。');
+    }
+    logDebug(`${mode === 'create' ? '新建' : '更新'}分组 | ${group.name}`);
+    render();
+  }
+
+  function createGroupDraft() {
+    openGroupFormModal(null);
+  }
+
+  function editGroupDraft(groupId) {
+    const group = groupSlotById(normalizeNumber(groupId, -1));
+    if (!group) return;
+    state.localState.ui.selected_group_id = group.id;
+    setExpandedGroupId(group.id);
+    syncGroupEditorDraft(group);
+    openGroupFormModal(group);
+  }
+
+  async function deleteGroupDraft(groupId) {
+    const gid = normalizeNumber(groupId, -1);
+    const group = groupSlotById(gid);
+    if (!group) return;
+    state.groupDeleteModal = {
+      open: true,
+      groupId: gid,
+      name: String(group.name || `分组${gid + 1}`),
+      refs: groupReferenceStats(gid)
+    };
+    render();
+  }
+
+  async function confirmDeleteGroupDraft() {
+    const modal = state.groupDeleteModal;
+    if (!modal) return;
+    const gid = normalizeNumber(modal.groupId, -1);
+    const group = groupSlotById(gid);
+    if (!group) {
+      state.groupDeleteModal = null;
+      render();
+      return;
+    }
+    const refs = removeGroupReferences(gid);
+    const nextSelection = controllerGroups().find((item) => item.id !== gid) || null;
+    group.valid = false;
+    group.name = '';
+    group.note = '';
+    group.target = 255;
+    group.mode = 1;
+    group.sense_mode = 'ring';
+    group.rssi = -70;
+    group.hold = 2000;
+    group.template = '';
+    group.effect_template_id = '';
+    group.effect = 'builtin-breath';
+    group.effect_ui = clone(buildDefaultGroups()[0].effect_ui);
+    group.idle_effect = 'builtin-silent';
+    group.silence = '';
+    group.signal_ui = clone(buildDefaultGroups()[0].signal_ui);
+    group.score = clone(buildDefaultGroups()[0].score);
+    group.updated_at = nowIso();
+    state.localState.ui.selected_group_id = nextSelection?.id ?? 0;
+    setExpandedGroupId(nextSelection?.id ?? -1);
+    syncGroupEditorDraft(nextSelection);
+    state.groupDeleteModal = null;
+    const ok = await persistGroupState();
+    if (!ok) {
+      alert('分组已删除，但保存到控制端草稿失败。请检查连接后重试。');
+    }
+    logDebug(`删除分组 | ${gid} | devices=${refs.devices} rooms=${refs.rooms} templates=${refs.templates}`);
+    render();
+  }
+
+  function deleteDevice(mac) {
+    const value = String(mac || '').trim();
+    if (!value) return;
+    const device = controllerDevices().find((item) => item.mac === value);
+    if (!device) return;
+    if (!confirm(`确认删除设备 ${device.name || value}？`)) return;
+    const hidden = new Set(Array.isArray(state.localState?.hidden_devices) ? state.localState.hidden_devices : []);
+    hidden.add(value);
+    state.localState.hidden_devices = Array.from(hidden);
+    state.selectedDeviceIds.delete(value);
+    if (state.editingMac === value) cancelEditDevice();
+    persistStateToServer();
+    render();
+    logDebug(`设备已删除（本地隐藏） | ${value}`);
+  }
+
+  async function identifyDevice(idx) {
+    if (!state.controllerOnline) return;
+    try {
+      setBusy('identify', true);
+      await requestJson(`/api/controller/identify?idx=${encodeURIComponent(idx)}&t=${Date.now()}`, {
+        method: 'GET',
+        timeoutMs: 6000
+      });
+      logDebug(`点名设备 | idx=${idx}`);
+    } catch (err) {
+      logDebug(`点名设备失败 | idx=${idx} | ${err.message}`);
+    } finally {
+      setBusy('identify', false);
+    }
+  }
+
+  async function identifyAllDevices() {
+    if (!state.controllerOnline) {
+      logDebug('全部点名失败 | 控制端未连接');
+      return;
+    }
+    try {
+      setBusy('identify', true);
+      await requestJson(`/api/controller/cmd?name=IDENTIFY&t=${Date.now()}`, {
+        method: 'GET',
+        timeoutMs: 6000
+      });
+      logDebug('全部点名 | 已发送 IDENTIFY');
+    } catch (err) {
+      logDebug(`全部点名失败 | ${err.message}`);
+    } finally {
+      setBusy('identify', false);
+    }
+  }
+
+  async function identifySelectedDevices() {
+    const selected = selectedVisibleDevices();
+    if (!selected.length) return;
+    if (!state.controllerOnline) {
+      logDebug('点名选中失败 | 控制端未连接');
+      return;
+    }
+    try {
+      setBusy('identify', true);
+      for (const device of selected) {
+        const idx = normalizeNumber(device.idx, -1);
+        if (idx < 0) continue;
+        await requestJson(`/api/controller/identify?idx=${encodeURIComponent(idx)}&t=${Date.now()}`, {
+          method: 'GET',
+          timeoutMs: 6000
+        });
+      }
+      logDebug(`点名选中 | ${selected.length} 台`);
+    } catch (err) {
+      logDebug(`点名选中失败 | ${err.message}`);
+    } finally {
+      setBusy('identify', false);
+    }
+  }
+
+  async function loadFromController() {
+    try {
+      setBusy('controller', true);
+      const data = await fetchControllerState();
+      state.controllerState = mergeDraftsIntoController(normalizeControllerState(data, state.controllerState), state.localState);
+      state.controllerOnline = true;
+      localStorage.setItem(STORAGE_KEYS.lastPort, portFromBase(state.apiBase, 8777));
+      logDebug(`从控制端读取成功 | devices=${controllerDevices().length} groups=${controllerGroups().length}`);
+      await reloadServerLog(false);
+      render();
+    } catch (err) {
+      state.controllerOnline = false;
+      state.controllerState = normalizeControllerState(null, state.controllerState);
+      state.controllerState = mergeDraftsIntoController(state.controllerState, state.localState);
+      logDebug(`从控制端读取失败 | ${err.message}`);
+      render();
+    } finally {
+      setBusy('controller', false);
+    }
+  }
+
+  async function scanDevices() {
+    if (!state.controllerOnline) {
+      logDebug('扫描设备失败 | 控制端未连接');
+      return;
+    }
+    try {
+      setBusy('scan', true);
+      await requestJson(`/api/controller/scan?t=${Date.now()}`, {
+        method: 'GET',
+        timeoutMs: 8000
+      });
+      logDebug('扫描设备 | 已发送 DISCOVER');
+      await sleep(700);
+      await loadFromController();
+    } catch (err) {
+      logDebug(`扫描设备失败 | ${err.message}`);
+    } finally {
+      setBusy('scan', false);
+    }
+  }
+
+  function selectTab(tab) {
+    state.activeTab = tab;
+    state.localState.ui.active_tab = tab;
+    persistStateToServer();
+    render();
+  }
+
+  function selectTemplate(templateId) {
+    state.selectedTemplateId = templateId;
+    state.localState.ui.selected_template_id = templateId;
+    persistStateToServer();
+    render();
+  }
+
+  function createTemplateFromCurrent() {
+    const room = currentRoom() || ensureRoomDraft();
+    const sourceTemplate = activeTemplate() || state.localState.templates[0] || builtinTemplates[0];
+    const draftSource = {
+      name: '我的模板',
+      note: '从当前房间配置创建',
+      feature_preset_id: String(room.feature_preset_id || sourceTemplate?.feature_preset_id || ''),
+      effect_preset_id: String(room.effect_preset_id || sourceTemplate?.effect_preset_id || ''),
+      source_group_mode: (Array.isArray(room.source_group_ids) ? room.source_group_ids.length : 0) > 1 ? 'multi' : 'single',
+      target_group_mode: (Array.isArray(room.target_group_ids) ? room.target_group_ids.length : 0) > 1 ? 'multi' : 'single',
+      sense_mode: String(room.sense_mode || sourceTemplate?.sense_mode || ''),
+      idle_effect_id: String(room.idle_effect_id || sourceTemplate?.idle_effect_id || ''),
+      trigger_effect_id: String(room.trigger_effect_id || sourceTemplate?.trigger_effect_id || ''),
+      scoring: room.scoring && typeof room.scoring === 'object' ? clone(room.scoring) : clone(sourceTemplate?.scoring || {})
+    };
+    openTemplateFormModal(draftSource, { mode: 'create', name: '我的模板', note: '从当前房间配置创建' });
+  }
+
+  function cloneTemplate(templateId) {
+    const source = state.localState.templates.find((item) => item.id === templateId);
+    if (!source) return;
+    openTemplateFormModal(source, { mode: 'create', name: `${source.name} 副本`, note: `复制自 ${source.name}` });
+  }
+
+  function deleteTemplate(templateId) {
+    const template = state.localState.templates.find((item) => item.id === templateId);
+    if (!template) return;
+    if (template.builtIn) {
+      alert('内置模板不能删除，可以复制一份再编辑。');
+      return;
+    }
+    if (!confirm(`删除模板「${template.name}」？`)) return;
+    state.localState.templates = state.localState.templates.filter((item) => item.id !== templateId);
+    if (state.selectedTemplateId === templateId) {
+      state.selectedTemplateId = state.localState.templates[0]?.id || '';
+      state.localState.ui.selected_template_id = state.selectedTemplateId;
+    }
+    persistStateToServer();
+    logDebug(`删除模板 | ${template.name}`);
+    render();
+  }
+
+  function loadTemplateIntoCurrent(templateId) {
+    const template = state.localState.templates.find((item) => item.id === templateId);
+    if (!template) return;
+    if (template.config) {
+      const next = normalizeControllerState(template.config, state.controllerState);
+      state.controllerState = mergeDraftsIntoController(next, state.localState);
+    } else {
+      const room = ensureRoomDraft(template.id);
+      applyTemplateDefaultsToRoom(room, template, { overwrite: true });
+      updateRoomDraftSummary(room);
+      upsertRoom(room, { activate: true });
+    }
+    state.selectedTemplateId = template.id;
+    state.localState.ui.selected_template_id = template.id;
+    persistStateToServer();
+    logDebug(`应用模板 | ${template.name}`);
+    render();
+  }
+
+  function parseGroupList(value) {
+    return String(value || '')
+      .split(/[\s,，;；]+/)
+      .map((part) => normalizeNumber(part, -1))
+      .filter((gid) => gid >= 0)
+      .filter((gid, idx, arr) => arr.indexOf(gid) === idx)
+      .sort((a, b) => a - b);
+  }
+
+  function selectedTemplate() {
+    return state.localState?.templates?.find((item) => item.id === state.selectedTemplateId) || state.localState?.templates?.[0] || null;
+  }
+
+  function selectedFeaturePreset() {
+    return featurePresetById(state.localState?.ui?.selected_feature_preset_id);
+  }
+
+  function selectedEffectPreset() {
+    return effectPresetById(state.localState?.ui?.selected_effect_preset_id);
+  }
+
+  function updateSelectedTemplateField(field, value) {
+    const template = selectedTemplate();
+    if (!template) return;
+    switch (field) {
+      case 'name':
+      case 'note':
+      case 'feature_preset_id':
+      case 'effect_preset_id':
+      case 'source_group_mode':
+      case 'target_group_mode':
+      case 'sense_mode':
+      case 'idle_effect_id':
+      case 'trigger_effect_id':
+        template[field] = String(value || '');
+        break;
+      case 'scoring_mode':
+        template.scoring = { ...(template.scoring || {}), mode: String(value || '') };
+        break;
+      case 'scoring_max_find':
+        template.scoring = { ...(template.scoring || {}), max_find: normalizeNumber(value, 0) };
+        break;
+      default:
+        break;
+    }
+    template.updated_at = nowIso();
+    persistStateToServer();
+    render();
+  }
+
+  function updateSelectedFeaturePresetField(field, value) {
+    const preset = selectedFeaturePreset();
+    if (!preset) return;
+    switch (field) {
+      case 'name':
+      case 'note':
+        preset[field] = String(value || '');
+        break;
+      case 'sense_mode':
+      case 'idle_effect_id':
+      case 'trigger_effect_id':
+        preset.feature_ui = preset.feature_ui && typeof preset.feature_ui === 'object' ? preset.feature_ui : {};
+        preset.feature_ui[field] = String(value || '');
+        break;
+      case 'signal_rssi_threshold':
+        preset.feature_ui = preset.feature_ui && typeof preset.feature_ui === 'object' ? preset.feature_ui : {};
+        preset.feature_ui.signal_ui = preset.feature_ui.signal_ui && typeof preset.feature_ui.signal_ui === 'object' ? preset.feature_ui.signal_ui : {};
+        preset.feature_ui.signal_ui.trigger_rssi_threshold = normalizeNumber(value, -10);
+        break;
+      case 'signal_hold_ms':
+        preset.feature_ui = preset.feature_ui && typeof preset.feature_ui === 'object' ? preset.feature_ui : {};
+        preset.feature_ui.signal_ui = preset.feature_ui.signal_ui && typeof preset.feature_ui.signal_ui === 'object' ? preset.feature_ui.signal_ui : {};
+        preset.feature_ui.signal_ui.trigger_hold_ms = normalizeNumber(value, 2000);
+        break;
+      case 'timer_mode':
+        preset.feature_ui = preset.feature_ui && typeof preset.feature_ui === 'object' ? preset.feature_ui : {};
+        preset.feature_ui.timer = preset.feature_ui.timer && typeof preset.feature_ui.timer === 'object' ? preset.feature_ui.timer : {};
+        preset.feature_ui.timer.mode = String(value || '');
+        break;
+      case 'timer_duration_ms':
+        preset.feature_ui = preset.feature_ui && typeof preset.feature_ui === 'object' ? preset.feature_ui : {};
+        preset.feature_ui.timer = preset.feature_ui.timer && typeof preset.feature_ui.timer === 'object' ? preset.feature_ui.timer : {};
+        preset.feature_ui.timer.duration_ms = normalizeNumber(value, 0);
+        break;
+      case 'scoring_mode':
+        preset.feature_ui = preset.feature_ui && typeof preset.feature_ui === 'object' ? preset.feature_ui : {};
+        preset.feature_ui.scoring = preset.feature_ui.scoring && typeof preset.feature_ui.scoring === 'object' ? preset.feature_ui.scoring : {};
+        preset.feature_ui.scoring.mode = String(value || '');
+        break;
+      case 'scoring_max_find':
+        preset.feature_ui = preset.feature_ui && typeof preset.feature_ui === 'object' ? preset.feature_ui : {};
+        preset.feature_ui.scoring = preset.feature_ui.scoring && typeof preset.feature_ui.scoring === 'object' ? preset.feature_ui.scoring : {};
+        preset.feature_ui.scoring.max_find = normalizeNumber(value, 0);
+        break;
+      default:
+        break;
+    }
+    preset.updated_at = nowIso();
+    persistStateToServer();
+    render();
+  }
+
+  function updateSelectedEffectPresetField(field, value) {
+    const preset = selectedEffectPreset();
+    if (!preset) return;
+    switch (field) {
+      case 'name':
+      case 'note':
+        preset[field] = String(value || '');
+        break;
+      default:
+        break;
+    }
+    preset.effect_ui = normalizeEffectUI(preset.effect_ui || {}, preset.effect_ui || {});
+    preset.updated_at = nowIso();
+    syncEffectPresetSummary(preset);
+    persistStateToServer();
+    render();
+  }
+
+  function updateSelectedEffectTrackField(trackIndex, field, value) {
+    const preset = selectedEffectPreset();
+    if (!preset) return;
+    preset.effect_ui = normalizeEffectUI(preset.effect_ui || {}, preset.effect_ui || {});
+    const tracks = Array.isArray(preset.effect_ui.tracks) ? preset.effect_ui.tracks : [];
+    const idx = clamp(normalizeNumber(trackIndex, 0), 0, EFFECT_TRACK_LIMIT - 1);
+    const track = tracks[idx] || buildDefaultEffectTrack('solid', idx);
+    switch (field) {
+      case 'enabled':
+        track.enabled = value === true || value === 'true' || value === 'on' || value === '1';
+        break;
+      case 'template_id': {
+        const templateId = String(value || '').trim() || effectTemplateIdForMode(track.mode || 'solid');
+        const nextTrack = effectTrackFromTemplate(templateId, idx, {
+          id: track.id,
+          enabled: track.enabled,
+          port: track.port,
+          led_count: track.led_count,
+          led_start: track.led_start,
+          led_end: track.led_end,
+          gap: track.gap
+        });
+        nextTrack.enabled = track.enabled !== false;
+        nextTrack.port = clamp(normalizeNumber(track.port, idx + 1), 1, 3);
+        tracks[idx] = nextTrack;
+        preset.effect_ui.tracks = tracks.slice(0, EFFECT_TRACK_LIMIT).map((item, i) => normalizeEffectTrack(item, null, i));
+        syncEffectPresetSummary(preset);
+        preset.updated_at = nowIso();
+        persistStateToServer();
+        render();
+        return;
+      }
+      case 'port':
+        track[field] = clamp(normalizeNumber(value, track[field]), 1, 3);
+        break;
+      case 'led_count':
+        track[field] = clamp(normalizeNumber(value, track[field]), 1, 9999);
+        break;
+      case 'led_start':
+      case 'led_end':
+        track[field] = clamp(normalizeNumber(value, track[field]), 1, 9999);
+        if (field === 'led_start' && track.led_end < track.led_start) track.led_end = track.led_start;
+        if (field === 'led_end' && track.led_end < track.led_start) track.led_start = track.led_end;
+        break;
+      case 'gap':
+      case 'repeat':
+      case 'accel':
+      case 'pulse_speed_start':
+      case 'pulse_speed_end':
+      case 'pulse_duration_ms':
+      case 'end_hold_ms':
+        track[field] = Math.max(0, normalizeNumber(value, track[field]));
+        break;
+      case 'brightness':
+      case 'duty':
+        track[field] = clamp(normalizeNumber(value, track[field]), 0, 100);
+        break;
+      case 'frequency_hz':
+        track[field] = Math.max(0, normalizeNumber(value, track[field]));
+        break;
+      case 'period_ms':
+        track[field] = Math.max(0, normalizeNumber(value, track[field]));
+        break;
+      case 'mode':
+      case 'end_behavior':
+        track[field] = String(value || '');
+        break;
+      case 'colorA':
+      case 'colorB':
+      case 'colorC': {
+        const colorIndex = field === 'colorA' ? 0 : field === 'colorB' ? 1 : 2;
+        track.colors = Array.isArray(track.colors) ? track.colors.slice(0, 3) : [];
+        while (track.colors.length < 3) track.colors.push('#FFFFFF');
+        track.colors[colorIndex] = String(value || '#FFFFFF');
+        break;
+      }
+      default:
+        break;
+    }
+    tracks[idx] = track;
+    preset.effect_ui.tracks = tracks.slice(0, EFFECT_TRACK_LIMIT).map((item, i) => normalizeEffectTrack(item, null, i));
+    syncEffectPresetSummary(preset);
+    preset.updated_at = nowIso();
+    persistStateToServer();
+    render();
+  }
+
+  function createRoomFromTemplate(templateId = state.selectedTemplateId || activeTemplate()?.id || builtinTemplates[0].id) {
+    state.activeTab = 'room';
+    state.localState.ui.active_tab = 'room';
+    openWizard(templateId || builtinTemplates[0].id, { forceNew: true });
+  }
+
+  async function prepareRoom(room = currentRoom(), { force = false } = {}) {
+    if (!room) return false;
+    if (room.status === 'running') {
+      alert('请先停止进行中的游戏，再进行设备预备。');
+      return false;
+    }
+    const { issues } = validateRoomReady(room);
+    if (issues.length) {
+      alert(issues[0]);
+      if (state.activeTab !== 'room') {
+        state.activeTab = 'room';
+        state.localState.ui.active_tab = 'room';
+      }
+      render();
+      return false;
+    }
+    const audit = roomPreparationAudit(room);
+    if (audit.offlineDevices.length && !force) {
+      state.roomPrepareModal = {
+        roomId: room.id,
+        roomName: room.name || '未命名房间',
+        offlineDevices: audit.offlineDevices.map((item) => ({
+          mac: String(item.device?.mac || ''),
+          name: String(item.device?.name || ''),
+          groups: Array.isArray(item.groups) ? item.groups.slice() : [],
+          rssi: normalizeNumber(item.device?.rssi, 0),
+          seen_ms: normalizeNumber(item.device?.seen_ms, 0)
+        }))
+      };
+      renderDialogs();
+      return false;
+    }
+    try {
+      setBusy('publish', true);
+      const saved = await persistDraftToServer();
+      if (!saved) return false;
+      await requestJson('/api/publish', {
+        method: 'POST',
+        timeoutMs: 20000,
+        body: JSON.stringify({ source: 'ui_rebuild_room_prepare', room_id: room.id })
+      });
+      const now = nowIso();
+      room.status = 'published';
+      room.published_at = now;
+      room.publish_result = { ok: true, published_at: now, controller: state.controllerBase || '/api/controller' };
+      room.started_at = '';
+      room.ended_at = '';
+      room.updated_at = now;
+      updateRoomDraftSummary(room);
+      upsertRoom(room, { activate: true });
+      state.roomPrepareModal = null;
+      await persistStateToServer();
+      await loadFromController();
+      logDebug(`设备预备完成 | ${room.name}`);
+      render();
+      return true;
+    } catch (err) {
+      room.publish_result = { ok: false, error: String(err.message || err) };
+      room.updated_at = nowIso();
+      updateRoomDraftSummary(room);
+      upsertRoom(room, { activate: true });
+      await persistStateToServer();
+      logDebug(`设备预备失败 | ${err.message}`);
+      alert(`设备预备失败：${err.message}`);
+      render();
+      return false;
+    } finally {
+      setBusy('publish', false);
+    }
+  }
+
+  async function publishRoom(room = currentRoom()) {
+    return prepareRoom(room, { force: true });
+  }
+
+  function beginRoomStartCountdown(room = currentRoom()) {
+    if (!room) return false;
+    if (room.status !== 'published') {
+      alert('请先完成设备预备，再开始游戏。');
+      return false;
+    }
+    if (roomCountdownActive(room.id)) return true;
+    clearRoomCountdown({ silent: true });
+    state.roomStartCountdown = {
+      roomId: room.id,
+      remaining: 10,
+      started_at: nowIso()
+    };
+    render();
+    state.roomCountdownTimer = window.setInterval(() => {
+      if (!state.roomStartCountdown || String(state.roomStartCountdown.roomId || '') !== String(room.id)) {
+        clearRoomCountdown({ silent: true });
+        return;
+      }
+      const next = normalizeNumber(state.roomStartCountdown.remaining, 0) - 1;
+      if (next <= 0) {
+        clearRoomCountdown({ silent: true });
+        executeRoomStart(room.id);
+        return;
+      }
+      state.roomStartCountdown.remaining = next;
+      render();
+    }, 1000);
+    logDebug(`开始倒计时 | ${room.name}`);
+    return true;
+  }
+
+  async function executeRoomStart(roomId = activeRoomId()) {
+    const room = roomById(roomId) || currentRoom();
+    if (!room) return false;
+    if (room.status !== 'published') {
+      alert('请先完成设备预备，再开始游戏。');
+      return false;
+    }
+    const { issues } = validateRoomReady(room);
+    if (issues.length) {
+      alert(issues[0]);
+      if (state.activeTab !== 'room') {
+        state.activeTab = 'room';
+        state.localState.ui.active_tab = 'room';
+      }
+      render();
+      return false;
+    }
+    try {
+      setBusy('controller', true);
+      await requestJson(`/api/controller/cmd?name=START_GAME&t=${Date.now()}`, {
+        method: 'GET',
+        timeoutMs: 8000
+      });
+      room.status = 'running';
+      room.started_at = room.started_at || nowIso();
+      room.ended_at = '';
+      room.updated_at = nowIso();
+      upsertRoom(room, { activate: true });
+      await persistStateToServer();
+      logDebug(`开始游戏 | ${room.name}`);
+      render();
+      return true;
+    } catch (err) {
+      logDebug(`开始游戏失败 | ${room.name} | ${err.message}`);
+      alert(`开始游戏失败：${err.message}`);
+      return false;
+    } finally {
+      setBusy('controller', false);
+    }
+  }
+
+  async function startRoom() {
+    const room = currentRoom();
+    if (!room) {
+      createRoomFromTemplate();
+      return;
+    }
+    beginRoomStartCountdown(room);
+  }
+
+  async function endRoom() {
+    const room = currentRoom();
+    if (!room) return;
+    if (room.status !== 'running') {
+      alert('请先开始游戏，再停止。');
+      return;
+    }
+    try {
+      setBusy('controller', true);
+      try {
+        await requestJson(`/api/controller/cmd?name=STOP_GAME&t=${Date.now()}`, {
+          method: 'GET',
+          timeoutMs: 8000
+        });
+      } catch (err) {
+        if (!isSoftStopDisconnectError(err)) throw err;
+        logDebug(`停止游戏收到代理断连响应，按成功处理 | ${room.name}`);
+      }
+      room.status = 'ended';
+      room.ended_at = nowIso();
+      room.updated_at = nowIso();
+      upsertRoom(room, { activate: true });
+      const record = {
+        schema: 1,
+        type: 'room_session',
+        room_id: room.id,
+        room_name: room.name,
+        template_id: room.template_id,
+        template_name: room.template_name,
+        status: room.status,
+        started_at: room.started_at,
+        ended_at: room.ended_at,
+        duration: formatDuration(room.started_at, room.ended_at),
+        device_count: controllerDevices().length,
+        source_group_ids: Array.isArray(room.source_group_ids) ? room.source_group_ids.slice() : [],
+        target_group_ids: Array.isArray(room.target_group_ids) ? room.target_group_ids.slice() : [],
+        group_ids: Array.isArray(room.group_ids) && room.group_ids.length
+          ? room.group_ids.slice()
+          : Array.from(new Set([...(room.source_group_ids || []), ...(room.target_group_ids || [])])),
+        sense_mode: String(room.sense_mode || ''),
+        idle_effect_id: String(room.idle_effect_id || ''),
+        trigger_effect_id: String(room.trigger_effect_id || ''),
+        effect_rules: Array.isArray(room.effect_rules) ? clone(room.effect_rules) : [],
+        scoring: room.scoring && typeof room.scoring === 'object' ? clone(room.scoring) : {},
+        notes: room.notes || '',
+        updated_at: nowIso()
+      };
+      const saved = await appendRoomRecord(record);
+      state.roomRecords.unshift(saved);
+      state.roomRecords = state.roomRecords.slice(0, 200);
+      state.localState.room_history.unshift(saved);
+      state.localState.room_history = state.localState.room_history.slice(0, 200);
+      await persistStateToServer();
+      persistRecordsCache();
+      logDebug(`结束游戏 | ${room.name} / ${record.duration}`);
+      render();
+    } catch (err) {
+      logDebug(`停止游戏失败 | ${room.name} | ${err.message}`);
+      alert(`停止游戏失败：${err.message}`);
+    } finally {
+      setBusy('controller', false);
+    }
+  }
+
+  async function deleteRoom(roomId = activeRoomId()) {
+    const target = roomById(roomId);
+    if (!target) return;
+    if (target.status === 'running') {
+      alert('请先停止正在进行的游戏，再删除房间。');
+      return;
+    }
+    if (!confirm(`确认删除房间「${target.name || '未命名房间'}」？此操作不会删除本局历史记录。`)) return;
+    const rooms = ensureRoomCollection();
+    state.localState.rooms = rooms.filter((room) => room.id !== target.id);
+    const nextActive = state.localState.rooms.find((room) => room.id !== target.id) || state.localState.rooms[0] || null;
+    syncActiveRoomAlias(nextActive);
+    if (!state.localState.rooms.length) {
+      state.selectedTemplateId = state.localState.ui.selected_template_id || builtinTemplates[0].id;
+    }
+    await persistStateToServer();
+    logDebug(`删除房间 | ${target.name || target.id}`);
+    render();
+  }
+
+  async function saveLocalConfig() {
+    try {
+      setBusy('save', true);
+      const ok = await persistDraftToServer();
+      if (ok) {
+        logDebug('本地草稿已保存到控制端可发布配置文件');
+      }
+    } finally {
+      setBusy('save', false);
+      render();
+    }
+  }
+
+  async function publishConfig() {
+    const payload = buildControllerPayload();
+    const limitError = validateDeviceGroupLimit(payload);
+    if (limitError) {
+      alert(limitError);
+      return;
+    }
+    try {
+      setBusy('publish', true);
+      const saved = await persistDraftToServer();
+      if (!saved) return;
+      await requestJson('/api/publish', {
+        method: 'POST',
+        timeoutMs: 20000,
+        body: JSON.stringify({ source: 'ui_rebuild' })
+      });
+      logDebug(`发布成功 | devices=${payload.devices.length} groups=${payload.groups.length}`);
+      await loadFromController();
+    } catch (err) {
+      logDebug(`发布失败 | ${err.message}`);
+      alert(`发布失败：${err.message}`);
+    } finally {
+      setBusy('publish', false);
+      render();
+    }
+  }
+
+  async function restoreDraft() {
+    try {
+      setBusy('restore', true);
+      let localPayload = null;
+      try {
+        localPayload = await fetchLocalState();
+      } catch (_) {
+        const backup = localStorage.getItem(STORAGE_KEYS.localState);
+        localPayload = backup ? JSON.parse(backup) : null;
+      }
+      state.localState = normalizeLocalState(localPayload || buildDefaultLocalState());
+      state.localState.ui.expanded_group_id = -1;
+      state.activeTab = state.localState.ui.active_tab || 'overview';
+      state.deviceFilterMode = state.localState.ui.device_filter_mode || 'ungrouped';
+      state.deviceFilterGroupId = normalizeNumber(state.localState.ui.device_filter_group_id, -1);
+      state.selectedTemplateId = state.localState.ui.selected_template_id || builtinTemplates[0].id;
+      state.currentRoomId = state.localState.active_room_id || state.localState.current_room?.id || state.localState.rooms?.[0]?.id || '';
+      syncGroupEditorDraft(selectedGroup());
+      syncActiveRoomAlias(roomById(state.currentRoomId) || state.localState.current_room || state.localState.rooms?.[0] || null);
+      state.controllerState = mergeDraftsIntoController(normalizeControllerState(state.controllerState, state.controllerState), state.localState);
+      logDebug('已恢复本地草稿');
+      await reloadServerLog(false);
+      render();
+    } catch (err) {
+      logDebug(`恢复草稿失败 | ${err.message}`);
+    } finally {
+      setBusy('restore', false);
+    }
+  }
+
+  async function reloadServerLog(silent = false) {
+    try {
+      setBusy('log', true);
+      state.serverLogText = await fetchServerLog();
+      if (!silent) logDebug('已读取 serve 日志');
+    } catch (err) {
+      state.serverLogText = `读取 serve 日志失败：${err.message}`;
+      if (!silent) logDebug(`读取 serve 日志失败 | ${err.message}`);
+    } finally {
+      setBusy('log', false);
+    }
+  }
+
+  async function clearServerLog() {
+    if (!confirm('确认清空 serve 日志？')) return;
+    try {
+      await requestJson('/api/log/clear', {
+        method: 'POST',
+        timeoutMs: 5000
+      });
+      state.serverLogText = '';
+      state.debugLines = [];
+      await reloadServerLog(true);
+      render();
+    } catch (err) {
+      alert(`清空日志失败：${err.message}`);
+    }
+  }
+
+  function renderIconButton(tooltip, action, iconName) {
+    return `<button class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[11px] border border-[rgba(91,118,152,0.28)] bg-[rgba(14,22,34,0.92)] text-[#dfe9f7] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:border-[rgba(128,170,222,0.44)] hover:bg-[rgba(24,35,52,0.96)] active:translate-y-px" type="button" title="${escapeHtml(tooltip)}" data-action="${action}">${svgIcon(iconName)}</button>`;
+  }
+
+  function renderTopActions() {
+    const buttonBase = 'inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-[11px] border px-3 text-[11px] font-extrabold leading-none whitespace-nowrap shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition hover:brightness-105 active:translate-y-px';
+    const tone = {
+      blue: 'border-[rgba(82,155,236,0.36)] bg-[linear-gradient(180deg,rgba(59,133,221,0.96),rgba(42,91,162,0.96))] text-[#f7fbff]',
+      green: 'border-[rgba(77,209,134,0.34)] bg-[linear-gradient(180deg,rgba(66,190,118,0.96),rgba(45,143,92,0.96))] text-[#f8fffb]',
+      yellow: 'border-[rgba(232,190,79,0.36)] bg-[linear-gradient(180deg,rgba(232,190,79,0.96),rgba(181,139,45,0.96))] text-[#16120a]',
+      slate: 'border-[rgba(113,139,174,0.3)] bg-[rgba(19,29,44,0.94)] text-[#dbe7f8]',
+      violet: 'border-[rgba(137,156,220,0.36)] bg-[linear-gradient(180deg,rgba(92,116,189,0.96),rgba(70,91,158,0.96))] text-[#f8fbff]'
+    };
+    const actionButton = (label, action, icon, color = 'slate') => (
+      `<button class="${buttonBase} ${tone[color] || tone.slate}" type="button" data-action="${action}">${svgIcon(icon)}${escapeHtml(label)}</button>`
+    );
+    return `
+      <div class="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto rounded-[16px] border border-[rgba(88,116,154,0.24)] bg-[linear-gradient(180deg,rgba(15,24,38,0.96),rgba(10,17,28,0.94))] px-2.5 py-2 shadow-[0_12px_30px_rgba(0,0,0,0.22)]">
+        <div class="flex h-8 shrink-0 items-center gap-2 rounded-[12px] border border-[rgba(91,118,152,0.24)] bg-[rgba(9,15,24,0.72)] px-2.5">
+          <span class="inline-flex h-2 w-2 rounded-full ${state.controllerOnline ? 'bg-[#5de18f] shadow-[0_0_0_4px_rgba(93,225,143,0.12)]' : 'bg-[#f0c955] shadow-[0_0_0_4px_rgba(240,201,85,0.1)]'}"></span>
+          <div class="text-[10px] font-extrabold text-[#dce8f8]">控制端 ${state.controllerOnline ? '已连接' : '未连接'}</div>
+          <div class="max-w-[210px] truncate text-[10px] font-medium text-[#8fa3bf]">${escapeHtml(state.controllerBase || '/api/controller')}</div>
+          ${renderIconButton('设置 / 调试', 'open-debug', 'gear')}
+        </div>
+        <div class="h-5 w-px shrink-0 bg-[rgba(103,130,169,0.2)]"></div>
+        <div class="flex shrink-0 items-center gap-1.5 rounded-[12px] bg-[rgba(255,255,255,0.025)] px-1.5 py-1">
+          <span class="px-1.5 text-[10px] font-bold text-[#9fb1c8]">控制包</span>
+          ${actionButton('读取', 'load-controller', 'refresh', 'blue')}
+          ${actionButton('发布', 'publish', 'arrow', 'green')}
+        </div>
+        <div class="flex shrink-0 items-center gap-1.5 rounded-[12px] bg-[rgba(255,255,255,0.025)] px-1.5 py-1">
+          <span class="px-1.5 text-[10px] font-bold text-[#9fb1c8]">设备</span>
+          ${actionButton('扫描', 'scan-devices', 'search', 'yellow')}
+          ${actionButton('全点名', 'identify-all', 'plus', 'blue')}
+          ${actionButton('点名选中', 'identify-selected', 'plus', 'blue')}
+        </div>
+        <div class="flex shrink-0 items-center gap-1.5 rounded-[12px] bg-[rgba(255,255,255,0.025)] px-1.5 py-1">
+          <span class="px-1.5 text-[10px] font-bold text-[#9fb1c8]">本地</span>
+          ${actionButton('恢复', 'restore-draft', 'refresh', 'slate')}
+          ${actionButton('保存', 'save-local', 'save', 'green')}
+          ${actionButton('模板', 'open-templates', 'list', 'slate')}
+          ${actionButton('向导', 'open-wizard', 'room', 'violet')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderOverview() {
+    return `
+      <section class="rounded-[16px] border border-[rgba(88,116,154,0.34)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-3.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
+        <div class="mb-3 flex items-start justify-between gap-3">
+          <h3 class="m-0 text-[16px] font-extrabold leading-none">总览</h3>
+          <div class="flex flex-wrap justify-end gap-2">
+            ${makePill('桌面端导航布局', true)}
+            ${makePill(state.deviceFilterMode === 'ungrouped' ? '默认显示未分组设备' : '当前过滤中')}
+          </div>
+        </div>
+        <div class="grid gap-2.5 [grid-template-columns:repeat(3,minmax(0,1fr))] max-[1680px]:grid-cols-3 max-[1160px]:grid-cols-2">
+          <div class="min-h-[98px] rounded-[16px] border border-[rgba(75,169,255,0.35)] bg-[rgba(19,26,38,0.94)] p-2.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
+            <div class="mb-2.5 flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(75,169,255,0.18)] text-[#7ec6ff]">${svgIcon('device')}</span><span class="text-[11px] font-bold text-[#c7d5eb]">在线设备</span></div>
+            <div class="text-[23px] font-extrabold leading-none">${onlineCount()} <span class="text-[13px] font-normal text-[#9fb2c8]">/ ${controllerDevices().length}</span></div>
+            <div class="mt-2.5 text-[11px] leading-[1.35] text-[#aabbd1]">当前加载进页面的设备数量</div>
+          </div>
+          <div class="min-h-[98px] rounded-[16px] border border-[rgba(240,201,85,0.35)] bg-[rgba(19,26,38,0.94)] p-2.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
+            <div class="mb-2.5 flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(240,201,85,0.18)] text-[#f3c44d]">${svgIcon('device')}</span><span class="text-[11px] font-bold text-[#c7d5eb]">未分组设备</span></div>
+            <div class="text-[23px] font-extrabold leading-none">${ungroupedCount()}</div>
+            <div class="mt-2.5 text-[11px] leading-[1.35] text-[#aabbd1]">默认先看这个，避免漏掉新接入设备</div>
+          </div>
+          <div class="min-h-[98px] rounded-[16px] border border-[rgba(93,225,143,0.35)] bg-[rgba(19,26,38,0.94)] p-2.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
+            <div class="mb-2.5 flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(93,225,143,0.18)] text-[#6be29d]">${svgIcon('group')}</span><span class="text-[11px] font-bold text-[#c7d5eb]">活跃分组</span></div>
+            <div class="text-[23px] font-extrabold leading-none">${activeGroupsCount()}</div>
+            <div class="mt-2.5 text-[11px] leading-[1.35] text-[#aabbd1]">当前启用并可编辑的分组数量</div>
+          </div>
+          <div class="min-h-[98px] rounded-[16px] border border-[rgba(177,103,255,0.35)] bg-[rgba(19,26,38,0.94)] p-2.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
+            <div class="mb-2.5 flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(177,103,255,0.18)] text-[#a966ff]">${svgIcon('effect')}</span><span class="text-[11px] font-bold text-[#c7d5eb]">灯效模板</span></div>
+            <div class="text-[23px] font-extrabold leading-none">${effectTemplatesCount()}</div>
+            <div class="mt-2.5 text-[11px] leading-[1.35] text-[#aabbd1]">可复用的灯效模板总数</div>
+          </div>
+          <div class="min-h-[98px] rounded-[16px] border border-[rgba(239,106,120,0.35)] bg-[rgba(19,26,38,0.94)] p-2.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
+            <div class="mb-2.5 flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(239,106,120,0.18)] text-[#ef6a78]">${svgIcon('record')}</span><span class="text-[11px] font-bold text-[#c7d5eb]">发现记录</span></div>
+            <div class="text-[23px] font-extrabold leading-none">${state.roomRecords.length}</div>
+            <div class="mt-2.5 text-[11px] leading-[1.35] text-[#aabbd1]">当前保存的配对与房间历史</div>
+          </div>
+          <div class="min-h-[98px] rounded-[16px] border border-[rgba(75,169,255,0.35)] bg-[rgba(19,26,38,0.94)] p-2.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
+            <div class="mb-2.5 flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(75,169,255,0.18)] text-[#7ec6ff]">${svgIcon('room')}</span><span class="text-[11px] font-bold text-[#c7d5eb]">当前游戏房间</span></div>
+            <div class="text-[19px] font-extrabold leading-[1.08]">${escapeHtml(selectedTemplateName())}</div>
+            <div class="mt-2.5 text-[11px] leading-[1.35] text-[#aabbd1]">房间状态：${currentRoomStatusLabel()} · ${formatTime(currentRoom()?.started_at || '') || '未开始'}</div>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderLogPanel() {
+    const serverLines = (state.serverLogText || '')
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-10)
+      .reverse();
+    const debugLines = state.debugLines.slice(0, 8);
+    const lines = [...debugLines, ...serverLines.map((line) => `[serve] ${line}`)].slice(0, 12);
+    return `
+      <details class="rounded-[16px] border border-[rgba(88,116,154,0.34)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-[12px] font-extrabold">
+          <span>调试日志（原始错误）</span>
+          <span class="text-[10px] font-medium text-[#9cadc6]">可展开 / 收起</span>
+        </summary>
+        <div class="border-t border-[rgba(88,116,154,0.18)] px-4 py-3">
+          <div class="mb-2.5 flex flex-wrap justify-end gap-2">
+            <button class="inline-flex h-[26px] items-center justify-center rounded-full border border-[rgba(88,113,145,0.28)] bg-[rgba(24,33,47,0.92)] px-2.5 text-[10px] text-[#dae5f4] hover:brightness-105" type="button" data-action="load-serve-log">读取 serve 日志</button>
+            <button class="inline-flex h-[26px] items-center justify-center rounded-full border border-[rgba(88,113,145,0.28)] bg-[rgba(24,33,47,0.92)] px-2.5 text-[10px] text-[#dae5f4] hover:brightness-105" type="button" data-action="clear-serve-log">清空 serve 日志</button>
+            <button class="inline-flex h-[26px] items-center justify-center rounded-full border border-[rgba(88,113,145,0.28)] bg-[rgba(24,33,47,0.92)] px-2.5 text-[10px] text-[#dae5f4] hover:brightness-105" type="button" data-action="copy-debug">复制调试文本</button>
+            <button class="inline-flex h-[26px] items-center justify-center rounded-full border border-[rgba(88,113,145,0.28)] bg-[rgba(24,33,47,0.92)] px-2.5 text-[10px] text-[#dae5f4] hover:brightness-105" type="button" data-action="clear-debug">清空页面调试</button>
+          </div>
+          <div class="max-h-[200px] overflow-auto rounded-[14px] border border-[rgba(84,108,141,0.24)] bg-[rgba(16,22,31,0.94)] p-3 text-[11px] leading-[1.55] text-[#dbe5f6]">
+            ${lines.length ? lines.map((line) => `<div>${escapeHtml(line)}</div>`).join('') : '<div class="text-[#8fa4bf]">暂无日志。</div>'}
+          </div>
+        </div>
+      </details>
+    `;
+  }
+
+  function renderTabs() {
+    const tabs = [
+      ['overview', '总览'],
+      ['devices', '设备'],
+      ['groups', '分组'],
+      ['effects', '灯效库'],
+      ['preview', '预览台'],
+      ['templates', '游戏设置'],
+      ['room', '游戏房间'],
+      ['debug', '调试']
+    ];
+    return `
+      <div class="rounded-[18px] border border-[rgba(88,116,154,0.28)] bg-[linear-gradient(180deg,rgba(17,27,42,0.96),rgba(11,18,29,0.95))] shadow-[0_16px_40px_rgba(0,0,0,0.28)]">
+        <div class="flex flex-wrap gap-1.5 border-b border-[rgba(88,116,154,0.16)] px-3 pt-3">
+          ${tabs.map(([key, label]) => `<button class="inline-flex h-8 items-center rounded-t-[12px] border border-b-0 border-transparent px-3.5 text-[11px] font-extrabold text-[#91a4bd] transition hover:bg-[rgba(23,34,50,0.72)] hover:text-white ${state.activeTab === key ? 'border-[rgba(106,151,210,0.34)] bg-[linear-gradient(180deg,rgba(35,52,77,0.98),rgba(20,32,50,0.98))] text-white shadow-[inset_0_2px_0_rgba(74,168,255,0.72)]' : 'bg-transparent'}" type="button" data-action="tab" data-tab="${key}">${escapeHtml(label)}</button>`).join('')}
+        </div>
+        <div class="grid gap-0">
+          <section class="p-3.5" data-page="overview" style="display:${state.activeTab === 'overview' ? 'block' : 'none'}">
+            ${renderOverview()}
+          </section>
+          <section class="p-3.5" data-page="devices" style="display:${state.activeTab === 'devices' ? 'block' : 'none'}">
+            ${renderDevicesPage()}
+          </section>
+          <section class="p-3.5" data-page="groups" style="display:${state.activeTab === 'groups' ? 'block' : 'none'}">
+            ${renderGroupsPage()}
+          </section>
+          <section class="p-3.5" data-page="game" style="display:${state.activeTab === 'game' ? 'block' : 'none'}">
+            ${renderGamePage()}
+          </section>
+          <section class="p-3.5" data-page="effects" style="display:${state.activeTab === 'effects' ? 'block' : 'none'}">
+            ${renderEffectsPage()}
+          </section>
+          <section class="p-3.5" data-page="preview" style="display:${state.activeTab === 'preview' ? 'block' : 'none'}">
+            ${renderPreviewPage()}
+          </section>
+          <section class="p-3.5" data-page="templates" style="display:${state.activeTab === 'templates' ? 'block' : 'none'}">
+            ${renderTemplatesPage()}
+          </section>
+          <section class="p-3.5" data-page="room" style="display:${state.activeTab === 'room' ? 'block' : 'none'}">
+            ${renderRoomPage()}
+          </section>
+          <section class="p-3.5" data-page="debug" style="display:${state.activeTab === 'debug' ? 'block' : 'none'}">
+            ${renderDebugPage()}
+          </section>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDevicesToolbar() {
+    const visible = filteredDevices();
+    const checked = visible.length > 0 && visible.every((device) => state.selectedDeviceIds.has(device.mac));
+    const groupOptions = controllerGroups()
+      .map((group) => `<option value="${group.id}" ${normalizeNumber(state.deviceFilterGroupId, -1) === group.id ? 'selected' : ''}>${escapeHtml(group.name)}</option>`)
+      .join('');
+    return `
+      <div class="sticky top-0 z-30 -mx-0 rounded-[16px] border border-[rgba(88,116,154,0.26)] bg-[rgba(13,19,29,0.94)] px-3 py-2 shadow-[0_16px_32px_rgba(0,0,0,0.28)] backdrop-blur-md">
+        <div class="sub-row">
+          <div class="pill-actions">
+            ${makePillButton(`全部 ${controllerDevices().length}`, 'device-filter-mode-all', state.deviceFilterMode === 'all')}
+            ${makePillButton(`未分组 ${ungroupedCount()}`, 'device-filter-mode-ungrouped', state.deviceFilterMode === 'ungrouped')}
+            ${makePillButton('按分组筛选', 'device-filter-mode-group', state.deviceFilterMode === 'group')}
+            <select class="page-select" data-action="device-filter-group" ${state.deviceFilterMode === 'group' ? '' : 'disabled'}>
+              <option value="-1">全部分组</option>
+              ${groupOptions}
+            </select>
+          </div>
+          <div class="pill-actions">
+            ${makePill(`总数 ${controllerDevices().length}`)}
+            ${makePill(`可见 ${visible.length}`)}
+            ${makePill(`已选 ${state.selectedDeviceIds.size}`)}
+          </div>
+        </div>
+        <div class="sub-row">
+          <label class="checkbox-line">
+            <input type="checkbox" data-action="select-all-visible" ${checked ? 'checked' : ''}>
+            全选（当前可见）
+          </label>
+          <div class="pill-actions">
+            <label class="checkbox-line">
+              <input type="checkbox" data-action="toggle-show-offline" ${state.localState?.ui?.show_offline_devices ? 'checked' : ''}>
+              显示离线设备
+            </label>
+            <button class="ghost-btn" type="button" data-action="clear-selected-groups">${svgIcon('trash')}取消所选设备分组</button>
+            <button class="ghost-btn" type="button" data-action="clear-selection">${svgIcon('refresh')}清空选择</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDeviceRow(device) {
+    const idx = normalizeNumber(device.idx, 0);
+    const mac = String(device.mac || '');
+    const online = isDeviceOnline(device);
+    const editing = state.editingMac === mac;
+    const name = deviceDisplayName(device);
+    const note = deviceDraftNote(device);
+    const selected = state.selectedDeviceIds.has(mac);
+    const groupIds = visibleGroupIdsForDevice(device);
+    const draftName = editing ? state.editingDraftName : name;
+    const draftNote = editing ? state.editingDraftNote : note;
+    const rowClass = [selected ? 'is-selected' : '', online ? 'is-online' : 'is-offline'].filter(Boolean).join(' ');
+    const groupCells = controllerGroups().map((group) => {
+      const checked = groupIds.includes(group.id);
+      return `
+        <label class="group-check">
+          <input type="checkbox" data-action="toggle-device-group" data-mac="${escapeHtml(mac)}" data-gid="${group.id}" ${checked ? 'checked' : ''}>
+          ${escapeHtml(group.name)}
+        </label>
+      `;
+    }).join('');
+
+    return `
+      <tr class="${rowClass}" data-device-row="${escapeHtml(mac)}">
+        <td>
+          <label class="checkbox-line">
+            <input type="checkbox" data-action="toggle-device-select" data-mac="${escapeHtml(mac)}" ${selected ? 'checked' : ''}>
+          </label>
+        </td>
+        <td class="name-cell">
+          <div class="device-name-wrap">
+            <div class="device-name-top">
+              <div class="device-name-main">
+                ${editing
+                  ? `<input class="name-editor" data-role="device-name-input" data-mac="${escapeHtml(mac)}" value="${escapeHtml(draftName)}">`
+                  : `<div>${escapeHtml(name)}</div>`}
+                <div class="status-line" style="margin-top:4px"><span class="tiny-dot" style="background:${online ? '#42d96f' : '#f0c955'}"></span>${online ? '在线' : '离线'} · ${normalizeNumber(device.group_mask, 0) ? `${groupIds.length} 组` : '未分组'}</div>
+                ${editing
+                  ? `<textarea class="name-editor" data-role="device-note-input" data-mac="${escapeHtml(mac)}" style="min-height:56px;resize:vertical;margin-top:6px" placeholder="备注">${escapeHtml(draftNote)}</textarea>`
+                  : `<div class="device-note" style="margin-top:4px;color:#8ea1bc;font-size:12px;line-height:1.35">${escapeHtml(note || '无备注')}</div>`}
+              </div>
+              <div class="device-name-actions">
+                ${editing
+                  ? `<button class="table-btn save" type="button" data-action="save-device-name" data-mac="${escapeHtml(mac)}">保存</button>
+                     <button class="table-btn cancel" type="button" data-action="cancel-device-name" data-mac="${escapeHtml(mac)}">取消</button>`
+                  : `<button class="table-btn" type="button" data-action="edit-device-name" data-mac="${escapeHtml(mac)}">编辑</button>`}
+                <button class="table-btn" type="button" data-action="delete-device" data-mac="${escapeHtml(mac)}">删除</button>
+              </div>
+            </div>
+          </div>
+        </td>
+        <td>${escapeHtml(mac)}</td>
+        <td>${online ? `<span class="rssi">${normalizeNumber(device.rssi, 0)} dBm</span><span class="signal-icon" style="color:${normalizeNumber(device.rssi, 0) > -50 ? '#57da78' : '#f0c955'}"><span></span><span></span><span></span><span></span></span>` : '<span style="color:#8ea1bc">离线</span>'}</td>
+        <td>${escapeHtml(formatAgo(device.seen_ms))}</td>
+        <td>
+          <div class="device-name-actions">
+            ${online ? `<button class="table-btn" type="button" data-action="identify-device" data-idx="${idx}">点名</button>` : ''}
+            ${online ? `<button class="table-btn save" type="button" data-action="save-device-row" data-mac="${escapeHtml(mac)}">保存设备</button>` : ''}
+          </div>
+        </td>
+        <td><div class="group-cell">${groupCells || '<span style="color:#8ea1bc">无可选分组</span>'}</div></td>
+      </tr>
+    `;
+  }
+
+  function renderDevicesPage() {
+    const devices = filteredDevices();
+    const collapsed = state.localState?.ui?.device_preview_collapsed === true;
+    return `
+      <div class="page-section-head">
+        <div>
+          <h3>设备</h3>
+          <p>这里负责命名、备注、筛选、批量分组和点名。默认隐藏离线设备，先看未分组设备，避免漏掉新接入设备。</p>
+        </div>
+        <div class="pill-actions">
+          ${makePill(`总数 ${controllerDevices().length}`)}
+          ${makePill(`可见 ${devices.length}`)}
+          ${makePill(`已选 ${state.selectedDeviceIds.size}`)}
+        </div>
+      </div>
+      <div class="page-section-body" style="display:grid;grid-template-columns:minmax(0,1.7fr) ${collapsed ? '58px' : '360px'};gap:14px;align-items:start">
+        <div class="table-panel" style="padding:14px 14px 16px">
+          <h4 style="margin:0 0 8px;font-size:17px;">设备列表</h4>
+          <div style="color:#9db0c8;font-size:14px;margin-bottom:10px">默认隐藏离线设备，备注和名称会跟随本地草稿保存，方便你在大规模设备里快速区分。</div>
+          ${renderDevicesToolbar()}
+          <div style="overflow:auto">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:44px"></th>
+                  <th>设备名称</th>
+                  <th>MAC 地址</th>
+                  <th>信号 (RSSI)</th>
+                  <th>最后上线</th>
+                  <th>操作</th>
+                  <th>分组成员（可多选）</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${devices.length ? devices.map((device) => renderDeviceRow(device)).join('') : `<tr><td colspan="7" style="color:#91a5c3;text-align:center;padding:28px">当前筛选下没有设备。</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <div>共 ${controllerDevices().length} 条 · 当前显示 ${devices.length} 条</div>
+            <div class="pager-center">
+              <button class="page-btn active" type="button">1</button>
+              <button class="page-btn" type="button">2</button>
+            </div>
+            <div class="page-select">10 条 / 页</div>
+          </div>
+        </div>
+        <aside class="groups-panel" style="${collapsed ? 'width:58px;min-width:58px;padding:10px 8px;overflow:hidden' : 'width:360px;min-width:360px'}">
+          <div class="groups-head" style="${collapsed ? 'align-items:center;justify-content:center;flex-direction:column;gap:8px' : ''}">
+            <div style="${collapsed ? 'display:flex;flex-direction:column;align-items:center;gap:4px' : ''}">
+              <h3 style="${collapsed ? 'writing-mode:vertical-rl;transform:rotate(180deg);margin:0;font-size:15px;line-height:1' : ''}">分组（预览）</h3>
+              ${collapsed ? `<div style="font-size:11px;color:#9db0c8">${controllerGroups().length} 组</div>` : ''}
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;${collapsed ? 'width:100%' : ''}">
+              <button class="mini-btn" type="button" data-action="toggle-device-groups-panel">${collapsed ? '展开' : '收起'}</button>
+              ${collapsed ? `<button class="mini-btn" type="button" data-action="open-groups">管理</button>` : `<button class="mini-btn" type="button" data-action="open-groups">管理分组</button>`}
+            </div>
+          </div>
+          <div class="group-list" style="${collapsed ? 'display:none' : ''}">
+            ${controllerGroups().map((group) => renderGroupCard(group, { compactActions: true })).join('') || '<div class="notice">暂无分组。先创建分组后再分配设备。</div>'}
+          </div>
+        </aside>
+      </div>
+    `;
+  }
+
+  function renderGroupCard(group, options = {}) {
+    const {
+      compactActions = false,
+      showDelete = false
+    } = options || {};
+    const colorClass = groupPalette[group.id % groupPalette.length];
+    const memberCount = groupMemberCount(group.id);
+    const expanded = expandedGroupId() === group.id;
+    const allMembers = groupDevices(group.id);
+    const members = allMembers.slice(0, 8);
+    return `
+      <div class="group-card ${colorClass} ${expanded ? 'ring-1 ring-[#63adff]/50' : ''}">
+        <div class="group-top">
+          <div class="group-name"><span class="bullet"></span>${escapeHtml(group.name)} <span class="group-id">ID: ${group.id + 1001}</span></div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+            ${makeGroupActionButton('编辑', 'edit-group', group.id, selectedGroupId() === group.id, compactActions)}
+            ${makeGroupActionButton(expanded ? '收起' : '展开', 'select-group', group.id, expanded, compactActions)}
+            ${showDelete ? makeGroupActionButton('删除', 'delete-group', group.id, false, compactActions, 'text-[#ffd5d5] border-[rgba(255,122,122,0.24)] bg-[rgba(52,18,24,0.72)]') : ''}
+          </div>
+        </div>
+        <div class="group-desc">${escapeHtml(group.note || '未填写备注')}</div>
+        <div class="group-meta">
+          <div class="meta-left"><span>👥</span><span>${memberCount} 台设备</span></div>
+          <div class="target">成员容器</div>
+        </div>
+        ${expanded ? `
+          <div class="mt-3 rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+            <div class="text-[10px] font-bold text-[#8ea3bf]">成员设备</div>
+            <div class="mt-2 space-y-1.5 text-[11px] leading-[1.45] text-[#dbe5f6]">
+              ${members.length
+                ? members.map((device) => `
+                  <div class="flex items-center justify-between gap-2 rounded-[12px] border border-[rgba(88,116,154,0.16)] bg-[rgba(14,20,31,0.72)] px-2.5 py-1.5">
+                    <div class="min-w-0">
+                      <div class="truncate font-bold text-white">${escapeHtml(deviceDraftName(device))}</div>
+                      <div class="truncate text-[10px] text-[#9fb2c8]">${escapeHtml(device.mac || '')}</div>
+                    </div>
+                    <span class="shrink-0 text-[10px] text-[#9fb2c8]">${normalizeNumber(device.seen_ms, 999999) < 10000 ? '在线' : '离线'}</span>
+                  </div>
+                `).join('')
+                : '<div class="text-[11px] text-[#9fb2c8]">这个分组还没有成员。</div>'}
+              ${allMembers.length > members.length ? `<div class="text-[10px] text-[#8ea3bf]">还有 ${allMembers.length - members.length} 台设备未展开显示。</div>` : ''}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  function renderGroupsPage() {
+    const groups = controllerGroups();
+    return `
+      <div class="page-section-head">
+        <div>
+          <h3>分组</h3>
+          <p>分组只负责承载设备与备注。角色、源组、目标组这些关系都在“游戏房间”里设置。</p>
+        </div>
+        <div class="pill-actions">
+          ${makePill(`有效分组 ${controllerGroups().length}`, true)}
+          ${makePill(`设备 ${controllerDevices().length}`)}
+        </div>
+      </div>
+      <div class="page-section-body stack-col">
+        <section class="mini-panel">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h4>分组列表</h4>
+              <div class="text-[12px] leading-[1.5] text-[#9db0c8]">点击“编辑”打开表单卡片；点击“展开”看成员。</div>
+            </div>
+            <button class="ghost-btn" type="button" data-action="create-group">${svgIcon('plus')}新建分组</button>
+          </div>
+          <div class="mt-3 grid gap-2.5">
+            ${groups.map((group) => renderGroupCard(group, { compactActions: false, showDelete: true })).join('') || '<div class="notice">暂无分组。先新建一个分组。</div>'}
+          </div>
+        </section>
+        <div class="notice">分组是设备容器。真正的角色关系请到“游戏房间”里配置。</div>
+      </div>
+    `;
+  }
+
+  function renderGroupDialogs() {
+    const form = state.groupFormModal;
+    const del = state.groupDeleteModal;
+    if (!form && !del) return '';
+    const modal = form || del;
+    const isDelete = !!del && !form;
+    return `
+      <div class="fixed inset-0 z-[120] flex items-center justify-center bg-[rgba(3,6,12,0.88)] px-4 py-8 backdrop-blur-[3px]">
+        <div class="w-full overflow-auto rounded-[20px] border border-[rgba(103,130,169,0.42)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.72)]" style="width:min(800px,calc(100vw - 48px));max-height:calc(100vh - 64px);background:#0d1520;">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="m-0 text-[18px] font-extrabold leading-none text-white">${isDelete ? '确认删除分组' : (form.mode === 'edit' ? '编辑分组' : '新建分组')}</h3>
+              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">${isDelete ? '这不是错误提示，而是删除前的确认卡片。删掉后会同步清理引用。' : '先填名称和备注，再保存成分组。'}</p>
+            </div>
+            <button class="ghost-btn" type="button" data-action="${isDelete ? 'cancel-delete-group' : 'cancel-group-form'}">关闭</button>
+          </div>
+          ${isDelete ? `
+            <div class="mt-4 rounded-[16px] border border-[rgba(255,138,138,0.22)] bg-[rgba(46,18,24,0.68)] p-3.5">
+              <div class="text-[13px] font-bold text-[#ffd5d5]">${escapeHtml(modal.name || '未命名分组')}</div>
+              <div class="mt-2 grid gap-2 text-[12px] leading-[1.55] text-[#ffdede]">
+                <div>会清理：设备 ${modal.refs?.devices ?? 0} 台、房间 ${modal.refs?.rooms ?? 0} 个、模板 ${modal.refs?.templates ?? 0} 个引用。</div>
+                <div>删除后该分组会从列表移除，历史记录不会被删。</div>
+              </div>
+            </div>
+            <div class="mt-4 flex flex-wrap justify-end gap-2">
+              <button class="ghost-btn" type="button" data-action="cancel-delete-group">取消</button>
+              <button class="ghost-btn" type="button" data-action="confirm-delete-group">${svgIcon('trash')}确认删除</button>
+            </div>
+          ` : `
+            <div class="mt-4 grid gap-3">
+              <div class="field">
+                <label>分组名称</label>
+                <input class="fake-input" data-role="group-form-input" data-group-form-field="name" value="${escapeHtml(form.name || '')}" placeholder="例如：魔杖组、宝箱组">
+              </div>
+              <div class="field">
+                <label>备注</label>
+                <textarea class="fake-input" data-role="group-form-input" data-group-form-field="note" style="min-height:96px;resize:vertical" placeholder="写一点用途说明，方便后面快速识别">${escapeHtml(form.note || '')}</textarea>
+              </div>
+              <div class="chip-row">
+                ${makeChip(form.mode === 'edit' ? '编辑中' : '新建中', true)}
+                ${makeChip('分组是容器')}
+                ${makeChip('角色放到房间里')}
+              </div>
+            </div>
+            <div class="mt-4 flex flex-wrap justify-end gap-2">
+              <button class="ghost-btn" type="button" data-action="cancel-group-form">取消</button>
+              <button class="ghost-btn" type="button" data-action="save-group-form">${svgIcon('save')}保存</button>
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderGamePage() {
+    const presets = state.localState.feature_presets || [];
+    const selected = selectedFeaturePreset() || presets[0] || null;
+    return `
+      <div class="page-section-head">
+        <div>
+          <h3>游戏设置</h3>
+          <p>感应、计时和计分已经并入游戏模板。这里不再单独维护一页重复功能，模板本身就是游戏玩法的入口。</p>
+        </div>
+        <div class="pill-actions">
+          ${makePill('功能预设', true)}
+          ${makePill('可编辑')}
+          ${makePill('可复制')}
+        </div>
+      </div>
+      <div class="page-section-body stack-col">
+        <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.92fr)]">
+          <div class="mini-panel">
+            <h4>功能预设列表</h4>
+            <div class="group-mini-list">
+              ${presets.map((preset) => `
+                <button class="group-mini-item ${selected?.id === preset.id ? 'selected' : ''}" type="button" data-action="select-feature-preset" data-preset-id="${escapeHtml(preset.id)}">
+                  <div>
+                    <div class="title">${escapeHtml(preset.name)}</div>
+                    <div class="desc">${escapeHtml(preset.note || '')}</div>
+                  </div>
+                  <span class="pill">${escapeHtml(senseLabel(preset.feature_ui?.sense_mode || 'ring'))}</span>
+                </button>
+              `).join('')}
+            </div>
+          </div>
+          <div class="mini-panel">
+            <h4>功能预设编辑</h4>
+            ${selected ? `
+              <div class="stack-col">
+                <div class="field"><label>名称</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="name" value="${escapeHtml(selected.name || '')}"></div>
+                <div class="field"><label>备注</label><textarea class="fake-input" data-role="feature-preset-field" data-preset-field="note" style="min-height:78px;resize:vertical">${escapeHtml(selected.note || '')}</textarea></div>
+                <div class="field"><label>感应方式</label><select class="fake-select" data-role="feature-preset-field" data-preset-field="sense_mode"><option value="ring" ${String(selected.feature_ui?.sense_mode || 'ring') === 'ring' ? 'selected' : ''}>轮巡</option><option value="shared" ${String(selected.feature_ui?.sense_mode || '') === 'shared' ? 'selected' : ''}>组共享</option><option value="response" ${String(selected.feature_ui?.sense_mode || '') === 'response' ? 'selected' : ''}>纯响应</option></select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">轮巡：每个组里的人都可以依次找到，找到后先停留约 2 秒再触发灯效；触发后本人不能再次触发。组共享：每个组里只要有一个人找到，先停留约 2 秒再触发灯效；触发后本组所有人都不能再次触发。纯响应：任何人都可以找到，先停留约 2 秒再触发灯效；触发后仍然可以重复触发。</div></div>
+                <div class="field xl:col-span-2">
+                  <label>触发条件</label>
+                  <div class="grid gap-2 md:grid-cols-2">
+                    <div class="field">
+                      <label>触发信号强度（dBm）</label>
+                      <input class="fake-input" data-role="feature-preset-field" data-preset-field="signal_rssi_threshold" type="number" step="1" value="${escapeHtml(selected.feature_ui?.signal_ui?.trigger_rssi_threshold ?? -10)}">
+                    </div>
+                    <div class="field">
+                      <label>触发停留时间（ms）</label>
+                      <input class="fake-input" data-role="feature-preset-field" data-preset-field="signal_hold_ms" type="number" step="50" value="${escapeHtml(selected.feature_ui?.signal_ui?.trigger_hold_ms ?? 2000)}">
+                    </div>
+                  </div>
+                  <div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">当源组和目标组的信号都达到阈值并持续保持到设定时间后才触发。默认阈值 -10 dBm，默认停留 2000 ms；如果你想更严格，可以把阈值再调低一些。</div>
+                </div>
+                <div class="field"><label>空闲灯效</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="idle_effect_id" value="${escapeHtml(selected.feature_ui?.idle_effect_id || '')}"></div>
+                <div class="field"><label>触发灯效</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="trigger_effect_id" value="${escapeHtml(selected.feature_ui?.trigger_effect_id || '')}"></div>
+                <div class="field"><label>计时模式</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="timer_mode" value="${escapeHtml(selected.feature_ui?.timer?.mode || 'manual')}"></div>
+                <div class="field"><label>计时长度(ms)</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="timer_duration_ms" value="${escapeHtml(selected.feature_ui?.timer?.duration_ms ?? 0)}"></div>
+                <div class="field"><label>计分模式</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="scoring_mode" value="${escapeHtml(selected.feature_ui?.scoring?.mode || '')}"></div>
+                <div class="field"><label>最大计数</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="scoring_max_find" value="${escapeHtml(selected.feature_ui?.scoring?.max_find ?? 0)}"></div>
+                <div class="chip-row">
+                  ${makeChip(selected.builtIn ? '内置预设' : '用户预设', true)}
+                  ${makeChip(`感应 ${escapeHtml(senseLabel(selected.feature_ui?.sense_mode || 'ring'))}`)}
+                </div>
+              </div>
+            ` : '<div class="notice">暂无功能预设。</div>'}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderEffectTrackEditor(track, index) {
+    const enabled = track?.enabled !== false;
+    const colors = Array.isArray(track?.colors) && track.colors.length ? track.colors : effectTrackPalette(index);
+    const templateId = String(track?.template_id || effectTemplateIdForMode(track?.mode || 'solid'));
+    const isPulse = String(track?.mode || 'solid') === 'pulse_chase';
+    const isGradient = String(track?.mode || 'solid') === 'gradient';
+    const isSelftest = String(track?.mode || 'solid') === 'selftest';
+    return `
+      <div class="rounded-[16px] border ${enabled ? 'border-[rgba(120,184,255,0.24)] bg-[rgba(15,22,34,0.94)]' : 'border-[rgba(88,116,154,0.18)] bg-[rgba(11,17,27,0.72)] opacity-85'} p-3.5">
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <div class="text-[13px] font-extrabold text-[#eef6ff]">第 ${index + 1} 路</div>
+            <div class="mt-0.5 text-[11px] leading-[1.5] text-[#9fb2c8]">LED${index + 1} · ${escapeHtml(effectTemplateNameById(templateId))} · ${escapeHtml(effectModeLabel(track?.mode || 'solid'))}</div>
+          </div>
+          <label class="inline-flex items-center gap-2 text-[11px] font-bold text-[#dbe7f8]">
+            <input type="checkbox" class="accent-[#63a6ff]" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="enabled" ${enabled ? 'checked' : ''}>
+            启用
+          </label>
+        </div>
+        <div class="mt-3 grid gap-2 md:grid-cols-3">
+          <div class="field"><label>模板（基础灯效类型）</label><select class="fake-select" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="template_id">${effectTemplateOptionsHtml(templateId)}</select></div>
+          <div class="field"><label>灯珠总数（每路总灯数）</label><input class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="led_count" value="${escapeHtml(track?.led_count ?? 35)}"></div>
+          <div class="field"><label>起始灯号（从第几个开始）</label><input class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="led_start" value="${escapeHtml(track?.led_start ?? 1)}"></div>
+          <div class="field"><label>结束灯号（到第几个结束）</label><input class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="led_end" value="${escapeHtml(track?.led_end ?? track?.led_count ?? 35)}"></div>
+          <div class="field"><label>灯珠间隔（跳过几个灯）</label><input class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="gap" value="${escapeHtml(track?.gap ?? 0)}"></div>
+          <div class="field"><label>亮度（0-100%）</label><input class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="brightness" value="${escapeHtml(track?.brightness ?? 80)}"></div>
+          ${isPulse ? `
+            <div class="field"><label>运行次数（脉冲次数）</label><input type="number" min="1" step="1" class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="repeat" value="${escapeHtml(track?.repeat || 15)}"></div>
+            <div class="field"><label>起始速度（0-100，0=最慢）</label><input type="number" min="0" max="100" step="1" class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="pulse_speed_start" value="${escapeHtml(track?.pulse_speed_start ?? 0)}"></div>
+            <div class="field"><label>结束速度（0-100，100=当前基准）</label><input type="number" min="0" max="100" step="1" class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="pulse_speed_end" value="${escapeHtml(track?.pulse_speed_end ?? 100)}"></div>
+            <div class="field"><label>总时长(ms，可选，留空按速度自动算)</label><input type="number" min="0" step="50" class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="pulse_duration_ms" value="${escapeHtml(track?.pulse_duration_ms ?? 0)}"></div>
+            <div class="field"><label>结束停留（最后保持多久 ms）</label><input type="number" min="0" step="50" class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="end_hold_ms" value="${escapeHtml(track?.end_hold_ms ?? 0)}"></div>
+            <div class="field"><label>结束动作（结束后怎么处理）</label><select class="fake-select" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="end_behavior"><option value="off" ${String(track?.end_behavior || 'off') === 'off' ? 'selected' : ''}>熄灭</option><option value="hold" ${String(track?.end_behavior || 'off') === 'hold' ? 'selected' : ''}>停留</option><option value="loop" ${String(track?.end_behavior || 'off') === 'loop' ? 'selected' : ''}>循环</option></select></div>
+          ` : `
+            <div class="field"><label>呼吸频率（每秒变化次数，例如 0.5 次/秒）</label><input class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="frequency_hz" value="${escapeHtml(track?.frequency_hz ?? 0)}"></div>
+            <div class="field"><label>周期（每轮持续时间 ms）</label><input class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="period_ms" value="${escapeHtml(track?.period_ms ?? 700)}"></div>
+            <div class="field"><label>占空比（亮的时间比例）</label><input class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="duty" value="${escapeHtml(track?.duty ?? 50)}"></div>
+            <div class="field"><label>重复次数（循环次数）</label><input class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="repeat" value="${escapeHtml(track?.repeat ?? 0)}"></div>
+            <div class="field"><label>结束停留（最后保持多久 ms）</label><input class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="end_hold_ms" value="${escapeHtml(track?.end_hold_ms ?? 0)}"></div>
+            <div class="field"><label>结束动作（结束后怎么处理）</label><select class="fake-select" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="end_behavior"><option value="off" ${String(track?.end_behavior || 'off') === 'off' ? 'selected' : ''}>熄灭</option><option value="hold" ${String(track?.end_behavior || 'off') === 'hold' ? 'selected' : ''}>停留</option><option value="loop" ${String(track?.end_behavior || 'off') === 'loop' ? 'selected' : ''}>循环</option></select></div>
+          `}
+          <div class="field"><label>颜色 A（起始色）</label><input type="color" class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="colorA" value="${escapeHtml(colors[0] || '#FFD24D')}"></div>
+          <div class="field"><label>颜色 B（过渡色）</label><input type="color" class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="colorB" value="${escapeHtml(colors[1] || '#34B3FF')}"></div>
+          <div class="field"><label>颜色 C（结束色）</label><input type="color" class="fake-input" data-role="effect-form-track-field" data-track-index="${index}" data-track-field="colorC" value="${escapeHtml(colors[2] || '#61E09A')}"></div>
+          ${isPulse ? `
+            <div class="md:col-span-3 text-[11px] leading-[1.55] text-[#8ea3bf]">脉冲跑马已经改成「运行次数 + 起始速度 + 结束速度 + 可选总时长」的模型。速度是 0 - 100 的相对档位，0 最慢，100 代表当前基准速度；如果总时长留空，系统会按这两个速度自动估算每一轮脉冲的耗时。</div>
+            <div class="md:col-span-3 text-[11px] leading-[1.5] text-[#8ea3bf]">例如：运行 10 次，起始速度 0，结束速度 5，系统会把前几次慢一些、后几次快一些；如果再填总时长 3000ms，系统会把这 10 次整体压进 3 秒里完成。</div>
+          ` : `
+            <div class="md:col-span-3 text-[11px] leading-[1.5] text-[#8ea3bf]">${
+              isGradient
+                ? '渐变常亮不会熄灭，会在颜色 A -> 颜色 B -> 颜色 C 之间平滑循环；如果只想两色来回，把颜色 C 设成和颜色 A 一样即可。'
+                : isSelftest
+                  ? '自检用于人工检查设备响应，预览会模拟点名式状态汇报：颜色按 A/B/C 轮换，亮点沿灯条扫描。可以调灯珠范围、亮度、周期和颜色。'
+                  : '颜色 A/B/C 是三段配色：A 通常是起始色，B 是过渡色，C 是结束色。呼吸、多色循环、脉冲跑马和渐变常亮会按这三种颜色做渐变或轮转。'
+            }</div>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderEffectsPage() {
+    const templates = state.localState.effect_templates || buildDefaultEffectTemplates();
+    const effects = state.localState.effect_presets || [];
+    const selected = selectedEffectPreset() || effects[0] || null;
+    return `
+      <div class="page-section-head">
+        <div>
+          <h3>灯效库</h3>
+          <p>默认模板库只读；“我的灯效”才是用户可保存、可复用、可预览的对象。</p>
+        </div>
+        <div class="pill-actions">
+          ${makePill('默认只读', true)}
+          ${makePill('我的灯效可保存')}
+          ${makePill('先创建再预览')}
+        </div>
+      </div>
+      <div class="page-section-body stack-col">
+        <section class="mini-panel">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h4>默认灯效模板库</h4>
+              <div class="mt-1 text-[11px] leading-[1.5] text-[#9db0c8]">这些模板固定不变，只能拿来创建“我的灯效”。</div>
+            </div>
+          </div>
+          <div class="mt-3 grid gap-2 overflow-x-auto pb-1" style="grid-template-columns:repeat(5,minmax(164px,1fr)) !important;gap:8px !important;align-items:start;">
+            ${templates.map((template) => {
+              const primary = effectPrimaryTrack(template) || buildDefaultEffectTrack('solid', 0);
+              return `
+                <div class="effect-card rounded-[14px] border border-[rgba(36,44,54,0.34)] bg-[rgba(14,20,31,0.92)]" style="min-height:108px !important;padding:8px !important;gap:6px !important;min-width:0;">
+                  <div class="title">${escapeHtml(template.name)}</div>
+                  <div class="mt-2">${renderPreviewBars(template, { showControls: false, compact: true, rows: 1, previewKind: 'template' })}</div>
+                  <div class="meta">${escapeHtml(template.note || '无说明')}</div>
+                  <div class="mt-3 flex flex-wrap justify-between gap-2">
+                    <button class="ghost-btn" type="button" data-action="toggle-template-preview" data-template-id="${escapeHtml(template.id)}">${state.effectPreviewTemplateId === template.id ? svgIcon('pause') + '停止预览' : svgIcon('play') + '预览'}</button>
+                    <button class="ghost-btn" type="button" data-action="create-effect-from-template" data-template-id="${escapeHtml(template.id)}">${svgIcon('plus')}基于此创建</button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </section>
+
+        <section class="mini-panel">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h4>我的灯效</h4>
+              <div class="mt-1 text-[11px] leading-[1.5] text-[#9db0c8]">这里是用户真正保存和复用的灯效。默认模板不会混进来。</div>
+            </div>
+            <div class="pill-actions">
+              <button class="ghost-btn" type="button" data-action="create-custom-effect">${svgIcon('plus')}新建我的灯效</button>
+            </div>
+          </div>
+          <div class="mt-3 grid gap-2 overflow-x-auto pb-1" style="grid-template-columns:repeat(5,minmax(164px,1fr)) !important;gap:8px !important;align-items:start;">
+            ${effects.map((effect) => {
+              const primary = effectPrimaryTrack(effect);
+              const routes = effectTrackEnabledCount(effect);
+              return `
+                  <div class="effect-card ${selected?.id === effect.id ? 'selected' : ''} rounded-[14px] border border-[rgba(36,44,54,0.34)] bg-[rgba(14,20,31,0.92)]" data-action="select-custom-effect" data-preset-id="${escapeHtml(effect.id)}" style="min-height:108px !important;padding:8px !important;gap:6px !important;min-width:0;">
+                    <div class="title">${escapeHtml(effect.name)}</div>
+                    <div class="mt-2">${renderPreviewBars(effect, { showControls: false, compact: true, rows: 3, previewKind: 'effect' })}</div>
+                    <div class="meta">${escapeHtml(effect.note || '无说明')}</div>
+                    <div class="mt-2 text-[10.5px] leading-[1.45] text-[#8ea3bf]">来源 ${escapeHtml(effectTemplateNameById(effect.source_template_id || primary?.template_id || 'builtin-silent'))} · 启用 ${escapeHtml(routes)} 路</div>
+                    <div class="mt-3 flex flex-wrap justify-end gap-2">
+                      <button class="ghost-btn" type="button" data-action="edit-custom-effect" data-preset-id="${escapeHtml(effect.id)}">${svgIcon('edit')}编辑</button>
+                      <button class="ghost-btn" type="button" data-action="delete-custom-effect" data-preset-id="${escapeHtml(effect.id)}">${svgIcon('trash')}删除</button>
+                    </div>
+                  </div>
+              `;
+            }).join('') || '<div class="notice">还没有我的灯效。先从默认模板创建一个。</div>'}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderPreviewBars(effectOrId, options = {}) {
+    const effect = effectOrId && typeof effectOrId === 'object'
+      ? effectOrId
+      : effectDefinitionById(effectOrId) || (effectOrId ? null : (selectedEffectPreset() || state.localState.effect_presets?.[0] || null));
+    const allTracks = Array.isArray(effect?.effect_ui?.tracks) ? effect.effect_ui.tracks : [];
+    const rowCount = clamp(normalizeNumber(options.rows, allTracks.length || 1), 1, 3);
+    const tracks = allTracks.slice(0, rowCount);
+    const showControls = options.showControls !== false;
+    const compact = options.compact === true;
+    const displayLedCount = Math.max(0, normalizeNumber(options.ledCount, compact ? 10 : 0));
+    const tickMs = previewFrameMs();
+    const shape = previewCellShape();
+    const cellSize = compact ? 10 : 12;
+    const cellGap = compact ? 3 : 4;
+    const previewKind = String(options.previewKind || (showControls ? 'preview' : 'effect'));
+    const previewPaused = previewKind === 'template' && String(state.effectPreviewTemplateId || '') !== String(effect?.id || '');
+    const clipOverflow = options.clipOverflow === true || compact;
+    const previewLedCount = Math.max(
+      1,
+      ...tracks.map((track) => clamp(normalizeNumber(track?.led_count, compact ? 10 : 35), 1, 9999)),
+      displayLedCount > 0 ? displayLedCount : 1
+    );
+    return `
+      <div class="${compact ? 'space-y-2.5' : 'space-y-3.5'}" data-effect-preview-root data-effect-preview-kind="${escapeHtml(previewKind)}" data-effect-preview-id="${escapeHtml(effect?.id || '')}" data-effect-preview-rows="${escapeHtml(rowCount)}" data-effect-preview-led-count="${escapeHtml(previewLedCount)}" data-effect-preview-paused="${previewPaused ? '1' : '0'}">
+        ${showControls ? `
+          <div class="flex flex-wrap items-end justify-between gap-3 rounded-[16px] border border-[rgba(28,36,46,0.2)] bg-[rgba(8,11,16,0.86)] px-3 py-2.5">
+            <div class="grid gap-2 sm:grid-cols-[minmax(220px,320px)_auto]">
+              <div class="field">
+                <label>当前灯效</label>
+                <select class="fake-select" data-role="preview-effect-select">${(state.localState.effect_presets || []).length ? (state.localState.effect_presets || []).map((item) => `<option value="${escapeHtml(item.id)}" ${String(effect?.id || '') === String(item.id) ? 'selected' : ''}>${escapeHtml(item.name || '未命名灯效')}</option>`).join('') : '<option value="">暂无我的灯效</option>'}</select>
+              </div>
+              <div class="field">
+                <label>播放控制</label>
+                <div class="pill-actions">
+                  <button class="ghost-btn" type="button" data-action="toggle-preview-play">${svgIcon(state.previewPlaying ? 'pause' : 'play')}${state.previewPlaying ? '暂停播放' : '开始播放'}</button>
+                  <button class="ghost-btn" type="button" data-action="reset-preview">${svgIcon('refresh')}重置</button>
+                  <button class="ghost-btn" type="button" data-action="toggle-preview-shape">${shape === 'square' ? '圆点显示' : '方块显示'}</button>
+                </div>
+              </div>
+            </div>
+            <div class="chip-row">
+              ${makeChip(effect?.name || '未选择', true)}
+              ${makeChip(`轨道 ${tracks.length}`)}
+              ${makeChip(`样式 ${shape === 'square' ? '方块' : '圆点'}`)}
+            </div>
+          </div>
+        ` : ''}
+        ${tracks.length ? tracks.map((track, index) => {
+          const enabled = track?.enabled !== false;
+          const ledCount = displayLedCount > 0 ? clamp(displayLedCount, 1, 9999) : clamp(normalizeNumber(track?.led_count, 35), 1, 9999);
+          const start = clamp(normalizeNumber(track?.led_start, 1), 1, ledCount);
+          const end = clamp(normalizeNumber(track?.led_end, ledCount), start, ledCount);
+          const step = Math.max(1, Math.max(0, normalizeNumber(track?.gap, 0)) + 1);
+          const activeIndices = [];
+          for (let led = start; led <= end; led += step) activeIndices.push(led);
+          const activeMap = new Map(activeIndices.map((led, activeIndex) => [led, activeIndex]));
+          const markers = previewScaleMarks(ledCount);
+          return `
+            <div class="rounded-[16px] border ${enabled ? 'border-[rgba(14,18,24,0.72)] bg-[rgba(14,20,31,0.92)]' : 'border-[rgba(14,18,24,0.28)] bg-[rgba(11,17,27,0.72)] opacity-70'} p-3" data-effect-preview-row data-track-index="${index}" data-led-count="${escapeHtml(ledCount)}">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-[12px] font-extrabold leading-none text-[#eef6ff]">灯条 ${index + 1}</div>
+                  <div class="mt-1 text-[11px] leading-[1.45] text-[#9db0c8]">LED${escapeHtml(normalizeNumber(track?.port, index + 1))} · ${escapeHtml(effectTemplateNameById(track?.template_id || effectTemplateIdForMode(track?.mode || 'solid')))} · ${escapeHtml(effectModeLabel(track?.mode || 'solid'))}</div>
+                </div>
+                <div class="text-[10px] leading-[1.45] text-[#8ea3bf]">${markers}</div>
+              </div>
+              <div class="mt-2 flex min-w-0 ${clipOverflow ? 'overflow-hidden' : 'overflow-x-auto pb-1'}" style="gap:${cellGap}px;scrollbar-width:thin;">
+                ${Array.from({ length: ledCount }, (_, ledIdx) => {
+                  const ledNo = ledIdx + 1;
+                  const activeIndex = activeMap.has(ledNo) ? activeMap.get(ledNo) : -1;
+                  const visual = previewCellStyle(track, ledNo, activeIndex, tickMs, index);
+                  const borderRadius = shape === 'circle' ? '999px' : '4px';
+                  return `<span aria-hidden="true" data-effect-preview-cell data-led-no="${ledNo}" style="flex:0 0 auto;width:${cellSize}px;height:${cellSize}px;border-radius:${borderRadius};background:${visual.color};opacity:${visual.opacity};box-shadow:${visual.shadow};border:1px solid rgba(16,20,28,0.88);transition:background .18s linear,opacity .18s linear,box-shadow .18s linear;"></span>`;
+                }).join('')}
+              </div>
+              <div class="mt-1 text-[10.5px] leading-[1.4] text-[#8ea3bf]">范围 ${escapeHtml(start)} - ${escapeHtml(end)} · 间隔 ${escapeHtml(normalizeNumber(track?.gap, 0))} · 亮度 ${escapeHtml(track?.brightness ?? 80)}%</div>
+            </div>
+          `;
+        }).join('') : '<div class="notice">这个灯效还没有轨道，先在卡片里创建。</div>'}
+      </div>
+    `;
+  }
+
+  function updateEffectPreviewNodes() {
+    const roots = document.querySelectorAll('[data-effect-preview-root]');
+    if (!roots.length) return;
+    const now = performance.now();
+    roots.forEach((root) => {
+      const kind = String(root.dataset.effectPreviewKind || 'effect');
+      const effectId = String(root.dataset.effectPreviewId || '');
+      const rowCount = clamp(normalizeNumber(root.dataset.effectPreviewRows, 1), 1, 3);
+      const ledCount = clamp(normalizeNumber(root.dataset.effectPreviewLedCount, 10), 1, 9999);
+      const paused = kind === 'template' && String(state.effectPreviewTemplateId || '') !== effectId;
+      if (kind === 'template') {
+        root.dataset.effectPreviewPaused = paused ? '1' : '0';
+      }
+
+      let tracks = [];
+      if (kind === 'preview') {
+        const effect = effectDefinitionById(effectId) || null;
+        tracks = Array.isArray(effect?.effect_ui?.tracks) ? effect.effect_ui.tracks.slice(0, rowCount) : [];
+      } else if (kind === 'template') {
+        const effect = effectTemplateById(effectId);
+        tracks = Array.isArray(effect?.effect_ui?.tracks) ? effect.effect_ui.tracks.slice(0, rowCount) : [];
+      } else {
+        const effect = effectPresetById(effectId) || effectDefinitionById(effectId) || null;
+        tracks = Array.isArray(effect?.effect_ui?.tracks) ? effect.effect_ui.tracks.slice(0, rowCount) : [];
+      }
+
+      const tickMs = (kind === 'template' && paused) || (kind === 'preview' && !state.previewPlaying) ? 0 : now;
+      const shape = previewCellShape();
+      const rowEls = Array.from(root.querySelectorAll('[data-effect-preview-row]'));
+      rowEls.forEach((rowEl, rowIndex) => {
+        const track = tracks[rowIndex] || buildDefaultEffectTrack('silent', rowIndex, { enabled: false, port: rowIndex + 1 });
+        const enabled = track?.enabled !== false;
+        rowEl.style.opacity = enabled ? '' : '0.68';
+        const cellEls = Array.from(rowEl.querySelectorAll('[data-effect-preview-cell]'));
+        const count = clamp(normalizeNumber(rowEl.dataset.ledCount, ledCount), 1, 9999);
+        const start = clamp(normalizeNumber(track?.led_start, 1), 1, count);
+        const end = clamp(normalizeNumber(track?.led_end, count), start, count);
+        const gap = Math.max(0, normalizeNumber(track?.gap, 0));
+        const step = gap + 1;
+        const activeIndices = [];
+        for (let led = start; led <= end; led += step) activeIndices.push(led);
+        const activeMap = new Map(activeIndices.map((led, activeIndex) => [led, activeIndex]));
+        cellEls.forEach((cellEl, cellIndex) => {
+          const ledNo = cellIndex + 1;
+          const activeIndex = activeMap.has(ledNo) ? activeMap.get(ledNo) : -1;
+          const visual = previewCellStyle(track, ledNo, activeIndex, tickMs, rowIndex);
+          const radius = shape === 'circle' ? '999px' : '4px';
+          cellEl.style.borderRadius = radius;
+          cellEl.style.background = visual.color;
+          cellEl.style.opacity = visual.opacity;
+          cellEl.style.boxShadow = visual.shadow;
+          cellEl.style.border = '1px solid rgba(16,20,28,0.88)';
+        });
+      });
+    });
+
+    document.querySelectorAll('[data-action="toggle-template-preview"]').forEach((button) => {
+      const templateId = String(button.dataset.templateId || '');
+      const active = String(state.effectPreviewTemplateId || '') === templateId;
+      button.innerHTML = `${svgIcon(active ? 'pause' : 'play')}${active ? '停止预览' : '预览'}`;
+    });
+  }
+
+  function renderEffectDialogs() {
+    const form = state.effectFormModal ? ensureEffectFormModal() : null;
+    const del = state.effectDeleteModal;
+    if (!form && !del) return '';
+    const modal = form || del;
+    const isDelete = !!del && !form;
+    const activeTrackIndex = clamp(normalizeNumber(form?.activeTrackIndex, 0), 0, EFFECT_TRACK_LIMIT - 1);
+    const activeTrack = form?.tracks?.[activeTrackIndex] || form?.tracks?.[0] || buildDefaultEffectTrack('silent', activeTrackIndex);
+    const sourceTemplateId = String(form?.source_template_id || activeTrack?.template_id || 'builtin-silent');
+    const sourceTemplate = effectTemplateById(sourceTemplateId);
+    const sourceTemplateName = sourceTemplate?.name || effectTemplateNameById(sourceTemplateId);
+    return `
+      <div class="fixed inset-0 z-[130] flex items-center justify-center bg-[rgba(3,6,12,0.88)] px-4 py-8 backdrop-blur-[3px]">
+        <div class="w-full overflow-auto rounded-[20px] border border-[rgba(103,130,169,0.42)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.72)]" style="width:min(800px,calc(100vw - 48px));max-height:calc(100vh - 64px);background:#0d1520;">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="m-0 text-[18px] font-extrabold leading-none text-white">${isDelete ? '确认删除灯效' : (form.mode === 'edit' ? '编辑我的灯效' : '新建我的灯效')}</h3>
+              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">${isDelete ? '这是删除前的确认卡片，不是报错。删掉后会同步清理引用。' : '分两步编辑：先写名称和备注，再切到 LED1-LED3 标签页分别配置灯效。'}</p>
+            </div>
+            <button class="ghost-btn" type="button" data-action="${isDelete ? 'cancel-effect-delete' : 'cancel-effect-form'}">关闭</button>
+          </div>
+          ${isDelete ? `
+            <div class="mt-4 rounded-[16px] border border-[rgba(255,138,138,0.22)] bg-[rgba(46,18,24,0.68)] p-3.5">
+              <div class="text-[13px] font-bold text-[#ffd5d5]">${escapeHtml(modal.name || '未命名灯效')}</div>
+              <div class="mt-2 grid gap-2 text-[12px] leading-[1.55] text-[#ffdede]">
+                <div>会清理：模板 ${modal.refs?.templates ?? 0} 个引用、房间 ${modal.refs?.rooms ?? 0} 个引用。</div>
+                <div>删除后这条灯效会从“我的灯效”消失，默认模板库不会受到影响。</div>
+              </div>
+            </div>
+            <div class="mt-4 flex flex-wrap justify-end gap-2">
+              <button class="ghost-btn" type="button" data-action="cancel-effect-delete">取消</button>
+              <button class="ghost-btn" type="button" data-action="confirm-effect-delete">${svgIcon('trash')}确认删除</button>
+            </div>
+          ` : `
+            <div class="mt-4 grid gap-4">
+              ${form.step === 1 ? `
+                <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_260px]">
+                  <div class="stack-col">
+                    <div class="field">
+                      <label>灯效名称</label>
+                      <input class="fake-input" data-role="effect-form-input" data-effect-form-field="name" value="${escapeHtml(form.name || '')}" placeholder="例如：宝箱呼吸蓝、寻宝脉冲灯">
+                    </div>
+                    <div class="field">
+                      <label>备注</label>
+                      <textarea class="fake-input" data-role="effect-form-input" data-effect-form-field="note" style="min-height:128px;resize:vertical" placeholder="写一点这个灯效的用途，方便后面复用">${escapeHtml(form.note || '')}</textarea>
+                    </div>
+                  </div>
+                  <div class="mini-panel">
+                    <h4>基础信息</h4>
+                    <div class="fake-input">来源模板：${escapeHtml(sourceTemplateName)}</div>
+                    <div class="mt-2 text-[11px] leading-[1.55] text-[#9db0c8]">下一步会进入 LED1-LED3 标签页，分别选择模板并设置参数。</div>
+                    <div class="mt-3 chip-row">
+                      ${makeChip(form.mode === 'edit' ? '编辑中' : '新建中', true)}
+                      ${makeChip('默认模板只读')}
+                      ${makeChip('我的灯效可保存')}
+                    </div>
+                  </div>
+                </div>
+                <div class="flex flex-wrap justify-end gap-2">
+                  <button class="ghost-btn" type="button" data-action="cancel-effect-form">取消</button>
+                  <button class="ghost-btn" type="button" data-action="effect-form-next-step">${svgIcon('arrow')}下一步</button>
+                </div>
+              ` : `
+                <div class="stack-col">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="chip-row">
+                      ${Array.from({ length: EFFECT_TRACK_LIMIT }, (_, index) => `
+                        <button class="ghost-btn ${index === activeTrackIndex ? 'border-[rgba(120,184,255,0.72)] bg-[rgba(18,34,52,0.96)] text-[#eff6ff]' : ''}" type="button" data-action="effect-form-switch-track" data-track-index="${index}">LED${index + 1}</button>
+                      `).join('')}
+                    </div>
+                    <div class="chip-row">
+                      ${makeChip(`当前：LED${activeTrackIndex + 1}`, true)}
+                      ${makeChip(`来源 ${escapeHtml(sourceTemplateName)}`)}
+                    </div>
+                  </div>
+                  <div class="rounded-[16px] border border-[rgba(60,70,84,0.42)] bg-[rgba(11,17,27,0.74)] p-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div class="text-[13px] font-extrabold text-[#eef6ff]">LED${activeTrackIndex + 1}</div>
+                        <div class="mt-0.5 text-[11px] leading-[1.45] text-[#9fb2c8]">选择模板后再调参数，默认模板是“静默”。</div>
+                      </div>
+                      <div class="text-[11px] text-[#8ea3bf]">三路效果都保存在本地，开始前再下发。</div>
+                    </div>
+                    <div class="mt-3">
+                      ${renderEffectTrackEditor(activeTrack, activeTrackIndex)}
+                    </div>
+                  </div>
+                </div>
+                <div class="flex flex-wrap justify-between gap-2">
+                  <button class="ghost-btn" type="button" data-action="effect-form-prev-step">${svgIcon('arrow')}上一步</button>
+                  <div class="flex flex-wrap gap-2">
+                    <button class="ghost-btn" type="button" data-action="cancel-effect-form">取消</button>
+                    <button class="ghost-btn" type="button" data-action="save-effect-form">${svgIcon('save')}保存</button>
+                  </div>
+                </div>
+              `}
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderPreviewPage() {
+    const effects = state.localState.effect_presets || [];
+    const effect = selectedEffectPreset() || effects[0] || null;
+    const primaryTrack = effectPrimaryTrack(effect);
+    const enabledCount = effectTrackEnabledCount(effect);
+    const sourceName = effectTemplateNameById(effect?.source_template_id || primaryTrack?.template_id || 'builtin-breath');
+    const listCollapsed = !!state.localState?.ui?.preview_effect_list_collapsed;
+    return `
+      <div class="page-section-head">
+        <div>
+          <h3>预览台</h3>
+          <p>这里直接看灯珠在屏幕上的实际表现。右侧列表点一下就能切换灯效，不用下拉菜单。</p>
+        </div>
+        <div class="pill-actions">
+          ${makePill(`当前 ${escapeHtml(effect?.name || '未选择')}`, true)}
+          ${makePill(`来源 ${escapeHtml(sourceName)}`)}
+          ${makePill(`轨道 ${enabledCount}`)}
+        </div>
+      </div>
+      <div class="page-section-body">
+        <div class="grid gap-3" style="display:grid;grid-template-columns:minmax(0,1fr) 320px;align-items:start;min-width:0;">
+          <section class="mini-panel sticky top-4 self-start max-h-[calc(100vh-144px)] overflow-auto">
+            <div class="flex flex-wrap items-end justify-between gap-3 rounded-[16px] border border-[rgba(28,36,46,0.2)] bg-[rgba(8,11,16,0.86)] px-3 py-2.5">
+              <div class="grid gap-2 sm:grid-cols-[minmax(220px,320px)_auto]">
+                <div class="field">
+                  <label>当前灯效</label>
+                  <div class="fake-input">${escapeHtml(effect?.name || '暂无我的灯效')}</div>
+                </div>
+                <div class="field">
+                  <label>播放控制</label>
+                  <div class="pill-actions">
+                    <button class="ghost-btn" type="button" data-action="toggle-preview-play">${svgIcon(state.previewPlaying ? 'pause' : 'play')}${state.previewPlaying ? '暂停播放' : '开始播放'}</button>
+                    <button class="ghost-btn" type="button" data-action="reset-preview">${svgIcon('refresh')}重置</button>
+                    <button class="ghost-btn" type="button" data-action="toggle-preview-shape">${previewCellShape() === 'square' ? '圆点显示' : '方块显示'}</button>
+                  </div>
+                </div>
+              </div>
+              <div class="chip-row">
+                ${makeChip(effect?.name || '未选择', true)}
+                ${makeChip(`轨道 ${enabledCount}`)}
+                ${makeChip(`样式 ${previewCellShape() === 'square' ? '方块' : '圆点'}`)}
+              </div>
+            </div>
+            <div class="mt-3">
+              ${effect ? renderPreviewBars(effect.id, { showControls: false, compact: false, previewKind: 'preview', clipOverflow: true }) : '<div class="notice">暂无我的灯效，请先创建一个。</div>'}
+            </div>
+            <div class="mt-3 grid gap-2 md:grid-cols-3">
+              <div class="fake-input">主模式：${escapeHtml(effectModeLabel(primaryTrack?.mode || 'solid'))}</div>
+              <div class="fake-input">范围：${escapeHtml(primaryTrack?.led_start ?? 1)} - ${escapeHtml(primaryTrack?.led_end ?? primaryTrack?.led_count ?? 35)}</div>
+              <div class="fake-input">周期：${escapeHtml(primaryTrack?.period_ms ?? 700)} ms · 频率：${escapeHtml(primaryTrack?.frequency_hz ?? 0)} 次/秒</div>
+            </div>
+          </section>
+          <aside class="mini-panel">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h4>我的灯效</h4>
+                <div class="mt-1 text-[11px] leading-[1.5] text-[#9db0c8]">点一下就能切换预览，右侧可以收起来。</div>
+              </div>
+              <button class="ghost-btn" type="button" data-action="toggle-preview-effect-list">${listCollapsed ? svgIcon('chevron-right') + '展开' : svgIcon('chevron-left') + '收起'}</button>
+            </div>
+            ${listCollapsed ? `
+              <div class="mt-3 notice">列表已收起，点击右上角按钮展开。</div>
+            ` : `
+              <div class="mt-3 grid gap-2 max-h-[calc(100vh-340px)] overflow-y-auto overscroll-contain pr-1">
+                ${effects.map((item) => {
+                  const active = String(effect?.id || '') === String(item.id || '');
+                  const accent = active ? 'rgba(76, 140, 255, 0.24)' : 'rgba(17, 24, 34, 0.95)';
+                  const rowBg = active
+                    ? 'linear-gradient(180deg, rgba(43, 79, 146, 0.68), rgba(24, 39, 67, 0.96))'
+                    : 'linear-gradient(180deg, rgba(17, 24, 36, 0.98), rgba(12, 17, 26, 0.98))';
+                  return `
+                    <button class="group-mini-item ${active ? 'selected' : ''} relative overflow-hidden" type="button" data-action="select-custom-effect" data-preset-id="${escapeHtml(item.id)}" style="align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 14px;border-color:transparent;background:${rowBg};box-shadow:inset 0 0 0 1px ${accent}, ${active ? '0 0 0 1px rgba(120,184,255,0.36)' : 'none'};outline:${active ? '1px solid rgba(120,184,255,0.38)' : '1px solid transparent'};">
+                      <span class="absolute inset-y-0 left-0 w-1.5 ${active ? 'bg-[#64b3ff]' : 'bg-transparent'}"></span>
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-2">
+                          <div class="title">${escapeHtml(item.name || '未命名灯效')}</div>
+                          <span class="pill shrink-0 ${active ? 'bg-[rgba(88,167,255,0.18)] text-[#dbeaff]' : ''}">${active ? '当前选中' : '点击选择'}</span>
+                        </div>
+                        <div class="desc">${escapeHtml(item.note || '无说明')}</div>
+                        <div class="mt-2 text-[10.5px] leading-[1.45] text-[#8ea3bf]">来源 ${escapeHtml(effectTemplateNameById(item.source_template_id || effectPrimaryTrack(item)?.template_id || 'builtin-silent'))}</div>
+                      </div>
+                      <span class="pill shrink-0">${escapeHtml(effectTrackEnabledCount(item))} 路</span>
+                    </button>
+                  `;
+                }).join('') || '<div class="notice">还没有我的灯效，先去灯效库新建一个。</div>'}
+              </div>
+            `}
+          </aside>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderTemplateCard(template, { mode = 'builtin', compact = false, showActions = true } = {}) {
+    const selected = template.id === state.selectedTemplateId;
+    const builtIn = template.builtIn === true;
+    const featureName = featurePresetNameById(template.feature_preset_id);
+    const sourceMode = roleModeValue(template.source_group_mode || (Array.isArray(template.default_source_group_ids) && template.default_source_group_ids.length > 1 ? 'multi' : 'single'));
+    const targetMode = roleModeValue(template.target_group_mode || (Array.isArray(template.default_target_group_ids) && template.default_target_group_ids.length > 1 ? 'multi' : 'single'));
+    const featureSignal = featurePresetById(template.feature_preset_id)?.feature_ui?.signal_ui || {};
+    const scoringText = template.scoring && typeof template.scoring === 'object' && template.scoring.mode
+      ? scoringLabel(template.scoring.mode)
+      : '未设置';
+    const selectedStyle = selected
+      ? 'border-[rgba(120,184,255,0.86)] bg-[linear-gradient(180deg,rgba(28,44,69,0.98),rgba(18,28,42,0.98))] shadow-[0_0_0_1px_rgba(120,184,255,0.18),0_16px_34px_rgba(0,0,0,0.24)] ring-1 ring-[rgba(120,184,255,0.18)]'
+      : 'border-[rgba(88,116,154,0.24)] bg-[rgba(14,20,31,0.92)] hover:border-[rgba(120,184,255,0.38)] hover:bg-[rgba(16,24,36,0.96)]';
+    const statusClass = selected
+      ? 'border-[rgba(99,172,255,0.42)] bg-[rgba(75,169,255,0.16)] text-[#dbeaff]'
+      : 'border-[rgba(88,116,154,0.24)] bg-[rgba(21,30,43,0.86)] text-[#c7d5eb]';
+    const statusText = selected ? '当前选中' : '点选切换';
+    const defaultBadge = builtIn ? '默认模板' : '我的模板';
+    const actionRow = showActions
+      ? builtIn
+        ? `
+          <button class="ghost-btn" type="button" data-action="create-room-from-template" data-template-id="${escapeHtml(template.id)}">${svgIcon('arrow')}创建房间</button>
+        `
+        : `
+          <button class="ghost-btn" type="button" data-action="edit-template" data-template-id="${escapeHtml(template.id)}">${svgIcon('edit')}编辑</button>
+          <button class="ghost-btn" type="button" data-action="create-room-from-template" data-template-id="${escapeHtml(template.id)}">${svgIcon('arrow')}创建房间</button>
+          <button class="ghost-btn" type="button" data-action="delete-template" data-template-id="${escapeHtml(template.id)}">${svgIcon('trash')}删除</button>
+        `
+      : '';
+    const summaryGrid = compact
+      ? `
+        <div class="mt-2 space-y-1.5 text-[10.5px] leading-[1.42] text-[#c0d0e4]">
+          <div><span class="text-[#8ea3bf]">玩法：</span><span class="font-semibold text-white">${escapeHtml(featureName)}</span></div>
+          <div><span class="text-[#8ea3bf]">源/目标：</span><span class="font-semibold text-white">${escapeHtml(roleModeLabel(sourceMode))} / ${escapeHtml(roleModeLabel(targetMode))}</span></div>
+          <div><span class="text-[#8ea3bf]">感应/计分：</span><span class="font-semibold text-white">${escapeHtml(senseLabel(template.sense_mode || 'ring'))} / ${escapeHtml(scoringText)}</span></div>
+        </div>
+      `
+      : `
+        <div class="mt-3 grid gap-2 md:grid-cols-2">
+          <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2">
+            <div class="text-[10px] font-bold text-[#8ea3bf]">玩法功能包</div>
+            <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(featureName)}</div>
+          </div>
+          <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2">
+            <div class="text-[10px] font-bold text-[#8ea3bf]">源组 / 目标组</div>
+            <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(roleModeLabel(sourceMode))} / ${escapeHtml(roleModeLabel(targetMode))}</div>
+          </div>
+          <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2">
+            <div class="text-[10px] font-bold text-[#8ea3bf]">感应 / 计分</div>
+            <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(senseLabel(template.sense_mode || 'ring'))} / ${escapeHtml(scoringText)}</div>
+          </div>
+          <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2">
+            <div class="text-[10px] font-bold text-[#8ea3bf]">空闲 / 触发</div>
+            <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(effectNameById(template.idle_effect_id || 'builtin-silent'))} / ${escapeHtml(effectNameById(template.trigger_effect_id || 'builtin-blink'))}</div>
+          </div>
+        </div>
+      `;
+    const metaRow = compact
+      ? ''
+      : `
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <span class="${[
+            'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-bold whitespace-nowrap',
+            selected
+              ? 'border-transparent bg-[rgba(88,167,255,0.18)] text-[#dbeaff]'
+              : 'border-[rgba(88,116,154,0.24)] bg-[rgba(21,30,43,0.86)] text-[#c7d5eb]'
+          ].join(' ')}">
+            ${selected ? svgIcon('check') : svgIcon('copy')}
+            ${selected ? '已选中' : '点击选择'}
+          </span>
+          <span class="${[
+            'inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-bold whitespace-nowrap',
+            builtIn ? 'border-transparent bg-[rgba(91,225,143,0.16)] text-[#82e8a9]' : 'border-[rgba(88,116,154,0.24)] bg-[rgba(21,30,43,0.86)] text-[#c7d5eb]'
+          ].join(' ')}">${builtIn ? '内置' : '可编辑'}</span>
+          <span class="inline-flex items-center rounded-full border border-[rgba(88,116,154,0.24)] bg-[rgba(21,30,43,0.86)] px-2.5 py-1 text-[10px] font-bold whitespace-nowrap text-[#c7d5eb]">${escapeHtml(formatTime(template.updated_at))}</span>
+        </div>
+      `;
+
+    return `
+      <div class="${[
+        'group relative cursor-pointer overflow-hidden rounded-[18px] border text-left transition',
+        compact ? 'px-3 py-2.5' : 'px-4 py-3.5',
+        selectedStyle
+      ].join(' ')}" role="button" tabindex="0" aria-pressed="${selected ? 'true' : 'false'}" data-action="select-template" data-template-id="${escapeHtml(template.id)}">
+        <span class="absolute inset-y-0 left-0 w-1.5 ${selected ? 'bg-[#64b3ff]' : 'bg-transparent'}"></span>
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 pr-1">
+            <div class="flex items-center gap-2">
+              <div class="${selected ? 'text-[14px]' : 'text-[13px]'} font-extrabold leading-[1.12] text-[#f4f8ff]">${escapeHtml(template.name)}</div>
+              <span class="${[
+                'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap',
+                builtIn ? 'border-[rgba(103,174,254,0.3)] bg-[rgba(75,169,255,0.14)] text-[#dbeaff]' : 'border-[rgba(88,116,154,0.24)] bg-[rgba(21,30,43,0.86)] text-[#c7d5eb]'
+              ].join(' ')}">${escapeHtml(defaultBadge)}</span>
+            </div>
+            <div class="mt-1.5 text-[11px] leading-[1.45] text-[#9fb2c8]">${escapeHtml(template.note || '无备注')}</div>
+          </div>
+          <span class="${[
+            'shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold whitespace-nowrap',
+            statusClass
+          ].join(' ')}">${escapeHtml(statusText)}</span>
+        </div>
+        ${metaRow}
+        ${summaryGrid}
+        ${compact ? '' : `<div class="mt-2 text-[10.5px] leading-[1.45] text-[#8ea3bf]">触发条件：信号强度 ≥ ${escapeHtml(normalizeNumber(featureSignal.trigger_rssi_threshold, -10))} dBm，持续 ${escapeHtml(normalizeNumber(featureSignal.trigger_hold_ms, 2000))} ms 后触发。</div>`}
+        ${actionRow ? `<div class="mt-3 flex flex-wrap gap-2">${actionRow}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function renderTemplateCards(options = {}) {
+    return (state.localState.templates || [])
+      .map((item) => renderTemplateCard(item, {
+        mode: item?.builtIn ? 'builtin' : 'user',
+        compact: options.compact === true,
+        showActions: options.showActions !== false
+      }))
+      .join('');
+  }
+
+  function renderRoomPanel() {
+    const rooms = sortedRoomList();
+    const sortOrder = roomSortOrder();
+    const room = currentRoom();
+    const validation = validateRoomReady(room);
+    const roomSourceText = Array.isArray(room?.source_group_ids) && room.source_group_ids.length
+      ? room.source_group_ids.map((gid) => groupNameById(gid)).join(' / ')
+      : '未选择';
+    const roomTargetText = Array.isArray(room?.target_group_ids) && room.target_group_ids.length
+      ? room.target_group_ids.map((gid) => groupNameById(gid)).join(' / ')
+      : '未选择';
+    const roomSenseText = room?.sense_mode || '未设置';
+    const roomIdleEffectText = effectNameById(room?.idle_effect_id || '');
+    const roomTriggerEffectText = effectNameById(room?.trigger_effect_id || '');
+    const roomScoreText = room?.scoring && typeof room.scoring === 'object' && room.scoring.mode
+      ? String(room.scoring.mode)
+      : '未设置';
+    const roomCountdown = roomCountdownActive(room?.id);
+    const roomCountdownRemainingText = roomCountdownRemaining(room?.id);
+    const roomStatusClass = roomCountdown
+      ? 'border-[rgba(245,201,95,0.42)] bg-[rgba(42,32,12,0.96)] text-[#ffd88a]'
+      : room?.status === 'running'
+        ? 'border-[rgba(91,225,143,0.42)] bg-[rgba(19,31,27,0.96)] text-[#8ff0b0]'
+        : room?.status === 'published'
+          ? 'border-[rgba(99,172,255,0.42)] bg-[rgba(18,28,42,0.96)] text-[#cfe4ff]'
+        : room?.status === 'ended'
+          ? 'border-[rgba(255,124,124,0.34)] bg-[rgba(34,18,20,0.96)] text-[#ffb0b0]'
+          : 'border-[rgba(88,116,154,0.24)] bg-[rgba(14,20,31,0.9)] text-[#d6e5f4]';
+    const roomCards = rooms.length
+      ? rooms.map((item) => {
+          const active = item.id === activeRoomId();
+          const itemValidation = validateRoomReady(item);
+          const itemCountdown = roomCountdownActive(item.id);
+          const itemCountdownRemaining = roomCountdownRemaining(item.id);
+          const canItemPrepare = item.status !== 'running' && itemValidation.issues.length === 0 && !itemCountdown;
+          const canItemStart = item.status === 'published' && !itemCountdown;
+          const canItemStop = item.status === 'running';
+          const canItemDelete = item.status !== 'running';
+          const statusText = itemCountdown
+            ? `倒计时 ${itemCountdownRemaining} 秒`
+            : item.status === 'running'
+              ? '进行中'
+              : item.status === 'published'
+                ? '已预备'
+                : item.status === 'ended'
+                  ? '已结束'
+                  : '草稿';
+          const statusClass = itemCountdown
+            ? 'border-[rgba(245,201,95,0.34)] bg-[rgba(42,32,12,0.96)] text-[#ffd88a]'
+            : item.status === 'running'
+            ? 'border-[rgba(91,225,143,0.34)] bg-[rgba(18,34,23,0.96)] text-[#8ff0b0]'
+            : item.status === 'published'
+              ? 'border-[rgba(99,172,255,0.34)] bg-[rgba(18,28,42,0.96)] text-[#cfe4ff]'
+            : item.status === 'ended'
+              ? 'border-[rgba(255,124,124,0.3)] bg-[rgba(34,18,20,0.94)] text-[#ffb0b0]'
+              : 'border-[rgba(88,116,154,0.24)] bg-[rgba(14,20,31,0.9)] text-[#d6e5f4]';
+          const itemSourceText = Array.isArray(item.source_group_ids) && item.source_group_ids.length
+            ? item.source_group_ids.map((gid) => groupNameById(gid)).join(' / ')
+            : '未选择';
+          const itemTargetText = Array.isArray(item.target_group_ids) && item.target_group_ids.length
+            ? item.target_group_ids.map((gid) => groupNameById(gid)).join(' / ')
+            : '未选择';
+          const itemSenseText = item.sense_mode || '未设置';
+          const itemIdleEffectText = effectNameById(item.idle_effect_id || '');
+          const itemTriggerEffectText = effectNameById(item.trigger_effect_id || '');
+          const itemScoreText = item.scoring && typeof item.scoring === 'object' && item.scoring.mode
+            ? String(item.scoring.mode)
+            : '未设置';
+          return `
+            <article class="${[
+              'rounded-[18px] border p-4 transition',
+              active
+                ? 'border-[rgba(120,184,255,0.72)] bg-[linear-gradient(180deg,rgba(20,33,51,0.98),rgba(16,24,36,0.96))] shadow-[0_0_0_1px_rgba(120,184,255,0.12),0_12px_28px_rgba(0,0,0,0.18)]'
+                : 'border-[rgba(88,116,154,0.24)] bg-[rgba(14,20,31,0.9)] hover:border-[rgba(120,184,255,0.32)]'
+            ].join(' ')}">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <div class="truncate text-[14px] font-extrabold leading-none text-white">${escapeHtml(item.name || '未命名房间')}</div>
+                    <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-bold whitespace-nowrap ${statusClass}">${escapeHtml(statusText)}</span>
+                  </div>
+                  <div class="mt-1 text-[11px] leading-[1.5] text-[#9fb2c8]">模板：${escapeHtml(item.template_name || '未选择模板')} · 更新时间：${escapeHtml(formatTime(item.updated_at || item.created_at))}</div>
+                </div>
+                <div class="flex flex-wrap justify-end gap-2">
+                  <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px" type="button" data-action="select-room" data-room-id="${escapeHtml(item.id)}">${svgIcon('check')}设为当前</button>
+                  <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px" type="button" data-action="room-open-wizard" data-room-id="${escapeHtml(item.id)}">${svgIcon('edit')}${item.status === 'draft' ? '继续编辑' : '查看'}</button>
+                  <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border-0 bg-gradient-to-b from-[#4caeff] to-[#428fe0] px-3.5 text-[11px] font-extrabold whitespace-nowrap text-white transition hover:brightness-105 active:translate-y-px ${canItemPrepare ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="prepare-room" data-room-id="${escapeHtml(item.id)}" ${canItemPrepare ? '' : 'disabled'}>${svgIcon('save')}${item.status === 'published' ? '重新预备' : '设备预备'}</button>
+                  ${itemCountdown
+                    ? `<button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(245,201,95,0.34)] bg-[rgba(42,32,12,0.96)] px-3 text-[11px] font-bold whitespace-nowrap text-[#ffd88a] transition hover:brightness-105 active:translate-y-px" type="button" data-action="cancel-room-countdown">${svgIcon('pause')}取消倒计时</button>`
+                    : `<button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border-0 bg-gradient-to-b from-[#62d89a] to-[#48bb7c] px-3.5 text-[11px] font-extrabold whitespace-nowrap text-white transition hover:brightness-105 active:translate-y-px ${canItemStart ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="start-room" data-room-id="${escapeHtml(item.id)}" ${canItemStart ? '' : 'disabled'}>${svgIcon('play')}开始游戏</button>`}
+                  <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border-0 bg-gradient-to-b from-[#62d89a] to-[#48bb7c] px-3.5 text-[11px] font-extrabold whitespace-nowrap text-white transition hover:brightness-105 active:translate-y-px ${canItemStop ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="stop-room" data-room-id="${escapeHtml(item.id)}" ${canItemStop ? '' : 'disabled'}>${svgIcon('pause')}停止</button>
+                  <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(255,124,124,0.28)] bg-[rgba(44,22,24,0.96)] px-3 text-[11px] font-bold whitespace-nowrap text-[#ffb0b0] transition hover:brightness-105 active:translate-y-px ${canItemDelete ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="delete-room" data-room-id="${escapeHtml(item.id)}" ${canItemDelete ? '' : 'disabled'}>${svgIcon('trash')}删除</button>
+                </div>
+              </div>
+
+              <div class="mt-3 grid gap-2 lg:grid-cols-2">
+                <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2">
+                  <div class="text-[10px] font-bold text-[#8ea3bf]">源组</div>
+                  <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(itemSourceText)}</div>
+                </div>
+                <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2">
+                  <div class="text-[10px] font-bold text-[#8ea3bf]">目标组</div>
+                  <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(itemTargetText)}</div>
+                </div>
+              </div>
+
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                ${makeChip(`状态 ${escapeHtml(statusText)}`, true)}
+                ${makeChip(`源组 ${normalizeNumber(item.source_group_ids?.length, 0)}`)}
+                ${makeChip(`目标组 ${normalizeNumber(item.target_group_ids?.length, 0)}`)}
+                ${makeChip(`矩阵 ${normalizeNumber(item.effect_rules?.length, 0)}`)}
+                ${makeChip(`感应 ${escapeHtml(itemSenseText)}`)}
+                ${makeChip(`计分 ${escapeHtml(itemScoreText)}`)}
+              </div>
+
+              <div class="mt-3 flex flex-wrap gap-2">
+                ${makeChip(`空闲 ${escapeHtml(itemIdleEffectText)}`)}
+                ${makeChip(`触发 ${escapeHtml(itemTriggerEffectText)}`)}
+                ${makeChip(`分组 ${normalizeNumber(item.group_ids?.length, 0)}`)}
+              </div>
+
+              <div class="mt-3 rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.55] text-[#9fb2c8]">
+                ${escapeHtml(item.notes || '这里记录本局的开始、结束和房间摘要。')}
+              </div>
+            </article>
+          `;
+        }).join('')
+      : '<div class="rounded-[18px] border border-dashed border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.86)] px-4 py-6 text-[12px] leading-[1.6] text-[#9fb2c8]">当前还没有房间。点击“向导开局”或在模板页使用“创建房间”开始一个新局。</div>';
+    return `
+      <div class="grid gap-3 xl:grid-cols-[minmax(0,1.28fr)_minmax(320px,0.72fr)]">
+        <section class="rounded-[20px] border border-[rgba(88,116,154,0.26)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-[17px] font-extrabold leading-none text-white">房间列表</div>
+              <div class="mt-1.5 text-[12px] leading-[1.5] text-[#aabbd1]">同一种模板可以同时开多个房间，只是设备组不同。这里显示的是本地所有草稿、已预备、进行中和已结束房间。</div>
+            </div>
+            <div class="flex flex-wrap justify-end gap-2">
+              <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px" type="button" data-action="toggle-room-sort">${svgIcon('arrow')}${sortOrder === 'asc' ? '正序' : '倒序'}</button>
+              <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border-0 bg-gradient-to-b from-[#4caeff] to-[#428fe0] px-3.5 text-[11px] font-extrabold whitespace-nowrap text-white transition hover:brightness-105 active:translate-y-px" type="button" data-action="open-wizard">${svgIcon('arrow')}向导开局</button>
+            </div>
+          </div>
+          <div class="mt-4 grid gap-3">
+            ${roomCards}
+          </div>
+        </section>
+        <aside class="rounded-[20px] border border-[rgba(88,116,154,0.26)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-[17px] font-extrabold leading-none text-white">当前房间</div>
+              <div class="mt-1.5 text-[12px] leading-[1.5] text-[#aabbd1]">这是当前选中的房间实例。开始前请确认模板、源组和目标组。</div>
+            </div>
+            ${makePill(`步骤 ${wizardState().step + 1}/5`, true)}
+          </div>
+          <div class="mt-3 grid gap-2.5">
+            <div class="rounded-[16px] border ${roomStatusClass} p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">名称</div>
+              <div class="mt-1 text-[14px] font-extrabold text-white">${escapeHtml(room?.name || '当前房间未创建')}</div>
+            </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">模板</div>
+              <div class="mt-1 text-[13px] font-extrabold text-white">${escapeHtml(room?.template_name || selectedTemplateName())}</div>
+            </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">状态</div>
+              <div class="mt-1 text-[13px] font-extrabold ${roomCountdown ? 'text-[#ffd88a]' : room?.status === 'running' ? 'text-[#8ff0b0]' : room?.status === 'published' ? 'text-[#cfe4ff]' : room?.status === 'ended' ? 'text-[#ffb0b0]' : 'text-white'}">${escapeHtml(currentRoomStatusLabel())}</div>
+            </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">源组 / 目标组</div>
+              <div class="mt-1 text-[11px] leading-[1.6] text-[#aabbd1]">${escapeHtml(roomSourceText)} / ${escapeHtml(roomTargetText)}</div>
+            </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">感应 / 灯效</div>
+              <div class="mt-1 text-[11px] leading-[1.6] text-[#aabbd1]">${escapeHtml(room?.sense_mode || '未设置')} · 空闲 ${escapeHtml(effectNameById(room?.idle_effect_id || ''))} · 触发 ${escapeHtml(effectNameById(room?.trigger_effect_id || ''))}</div>
+            </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">灯效矩阵</div>
+              <div class="mt-1 text-[13px] font-extrabold text-white">${escapeHtml(Array.isArray(room?.effect_rules) ? room.effect_rules.length : 0)} 条规则</div>
+            </div>
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">时长</div>
+                  <div class="mt-1 text-[13px] font-extrabold text-white">${escapeHtml(currentRoomDuration())}</div>
+                </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">摘要</div>
+              <div class="mt-1 text-[11px] leading-[1.6] text-[#aabbd1]">${escapeHtml(room?.notes || '这里记录本局的开始、结束和房间摘要。')}</div>
+            </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">本局统计</div>
+              <div class="mt-2 flex flex-wrap gap-2">
+                ${makeChip(`记录 ${state.roomRecords.length}`, true)}
+                ${makeChip(`设备 ${controllerDevices().length}`)}
+                ${makeChip(`分组 ${activeGroupsCount()}`)}
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2 pt-1">
+              <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px ${room?.status !== 'running' && validation.issues.length === 0 && !roomCountdown ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="prepare-room" ${room?.status !== 'running' && validation.issues.length === 0 && !roomCountdown ? '' : 'disabled'}>${svgIcon('save')}${room?.status === 'published' ? '重新预备' : '设备预备'}</button>
+              ${roomCountdown
+                ? `<button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(245,201,95,0.34)] bg-[rgba(42,32,12,0.96)] px-3 text-[11px] font-bold whitespace-nowrap text-[#ffd88a] transition hover:brightness-105 active:translate-y-px" type="button" data-action="cancel-room-countdown">${svgIcon('pause')}取消倒计时</button>`
+                : `<button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px ${room?.status === 'published' ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="start-room" ${room?.status === 'published' ? '' : 'disabled'}>${svgIcon('play')}开始游戏</button>`}
+              <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px ${room?.status === 'running' ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="stop-room" ${room?.status === 'running' ? '' : 'disabled'}>${svgIcon('pause')}停止游戏</button>
+              <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(255,124,124,0.28)] bg-[rgba(44,22,24,0.96)] px-3 text-[11px] font-bold whitespace-nowrap text-[#ffb0b0] transition hover:brightness-105 active:translate-y-px ${room && room.status !== 'running' ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="delete-room" ${room && room.status !== 'running' ? '' : 'disabled'}>${svgIcon('trash')}删除房间</button>
+            </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.55] text-[#99acc5]">
+              设备预备会先下发本局配置并检查参与分组设备是否在线。开始游戏会先倒计时 10 秒，期间可以取消。
+            </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.55] text-[#99acc5]">
+              ${validation.issues.length ? escapeHtml(validation.issues[0]) : roomCountdown ? `正在倒计时 ${roomCountdownRemainingText} 秒，点击取消可回到已预备状态。` : '当前房间配置已满足设备预备和开始条件。'}
+            </div>
+          </div>
+        </aside>
+      </div>
+    `;
+  }
+
+  function renderRoomPage() {
+    return `
+      <div class="page-section-head">
+        <div>
+          <h3>游戏房间</h3>
+          <p>房间是一次实际开局的运行实例。先保存草稿，再做设备预备，最后通过倒计时开始本局。同一种模板可以同时存在多个房间实例。</p>
+        </div>
+        <div class="pill-actions">
+          ${makePill('先保存草稿', true)}
+          ${makePill('再设备预备')}
+          ${makePill('开始 / 结束')}
+        </div>
+      </div>
+      <div class="page-section-body stack-col">
+        ${renderRoomPanel()}
+        <div class="room-panel">
+          <div class="room-toolbar">
+            <div>
+              <div class="room-title">房间历史</div>
+              <div class="room-meta">结束房间时会写入本地 JSONL，便于统计和回放。</div>
+            </div>
+            <button class="ghost-btn" type="button" data-action="refresh-records">${svgIcon('refresh')}刷新记录</button>
+          </div>
+          <div class="group-mini-list">
+            ${state.roomRecords.slice(0, 6).map((record) => `
+              <div class="group-mini-item">
+                <div>
+                  <div class="title">${escapeHtml(record.room_name || record.name || '未命名房间')}</div>
+                  <div class="desc">${escapeHtml(record.template_name || '')} · ${escapeHtml(record.status || 'ended')} · ${escapeHtml(record.duration || formatDuration(record.started_at, record.ended_at))}</div>
+                </div>
+                <span class="pill">${escapeHtml(formatTime(record.updated_at || record.ended_at || record.started_at))}</span>
+              </div>
+            `).join('') || '<div class="notice">暂无房间历史，先保存一个房间草稿，再进行设备预备和开始。</div>'}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderTemplatesPage() {
+    const templates = state.localState.templates || [];
+    const builtinTemplatesList = templates.filter((item) => item.builtIn === true);
+    const userTemplatesList = templates.filter((item) => !item.builtIn);
+    return `
+      <div class="page-section-head">
+        <div>
+          <h3>游戏设置</h3>
+          <p>这里管理的是本局玩法模板。默认模板和用户模板分开显示；模板只决定玩法逻辑，具体的源组和目标组在游戏房间里选择。</p>
+        </div>
+        <div class="pill-actions">
+          ${makePill('默认模板只读', true)}
+          ${makePill('用户模板可编辑')}
+          ${makePill('先选模板再开局')}
+        </div>
+      </div>
+      <div class="page-section-body">
+        <div class="stack-col">
+          <div class="mini-panel">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h4>默认模板</h4>
+                <div class="mt-1 text-[11px] leading-[1.5] text-[#9db0c8]">这些是系统自带的关键玩法模板，只能创建房间，不能删除。</div>
+              </div>
+            </div>
+            <div class="mt-3 grid gap-3 overflow-x-auto pb-1" style="grid-template-columns:repeat(4,minmax(240px,1fr));gap:10px;align-items:start;">
+              ${builtinTemplatesList.map((item) => renderTemplateCard(item, { mode: 'builtin' })).join('')}
+            </div>
+          </div>
+
+          <div class="mini-panel">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h4>我的模板</h4>
+                <div class="mt-1 text-[11px] leading-[1.5] text-[#9db0c8]">用户自己创建的模板可以编辑、创建房间和删除。</div>
+              </div>
+              <div class="pill-actions">
+                <button class="ghost-btn" type="button" data-action="create-template">${svgIcon('plus')}新建我的模板</button>
+              </div>
+            </div>
+            <div class="mt-3 grid gap-3 overflow-x-auto pb-1" style="grid-template-columns:repeat(4,minmax(240px,1fr));gap:10px;align-items:start;">
+              ${userTemplatesList.length ? userTemplatesList.map((item) => renderTemplateCard(item, { mode: 'user' })).join('') : '<div class="notice">还没有我的模板。可以先点击右上角“新建我的模板”。</div>'}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDebugPage() {
+    const serverLines = (state.serverLogText || '')
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-40)
+      .reverse();
+    return `
+      <div class="page-section-head">
+        <div>
+          <h3>调试</h3>
+          <p>把原始日志单独放这里，方便看请求、响应、错误和发布状态，不影响主页面操作。</p>
+        </div>
+        <div class="pill-actions">
+          ${makePill('读取 serve 日志', true)}
+          ${makePill('复制调试文本')}
+          ${makePill('清空页面调试')}
+        </div>
+      </div>
+      <div class="page-section-body debug-grid">
+        <div class="mini-panel">
+          <h4>调试选项</h4>
+          <div class="stack-col">
+            <div class="fake-input">控制端地址：${escapeHtml(state.controllerBase || '/api/controller')}</div>
+            <div class="fake-input">本地端口：${escapeHtml(portFromBase(state.apiBase, '8777'))}</div>
+            <div class="fake-input">页面状态：${escapeHtml(state.controllerOnline ? '已联机' : '离线编辑')}</div>
+            <div class="chip-row">
+              ${makeChip('显示原始错误', true)}
+              ${makeChip('轮询间隔 5s')}
+              ${makeChip('代理路径 /api/controller')}
+            </div>
+          </div>
+        </div>
+        <div class="raw-log">${escapeHtml((state.debugLines.join('\n') + '\n' + serverLines.join('\n')).trim() || '暂无调试日志。').replace(/\n/g, '<br>')}</div>
+      </div>
+    `;
+  }
+
+  function renderEffectPreviewPanel() {
+    const effect = selectedEffectPreset() || state.localState.effect_presets?.[0] || null;
+    return `
+      <div class="mini-panel">
+        <h4>灯效概览</h4>
+        ${effect ? renderPreviewBars(effect, { showControls: false, compact: true }) : '<div class="notice">暂无我的灯效。</div>'}
+      </div>
+    `;
+  }
+
+  function renderRoomPrepareModal() {
+    const modal = state.roomPrepareModal;
+    if (!modal) return '';
+    const offline = Array.isArray(modal.offlineDevices) ? modal.offlineDevices : [];
+    return `
+      <div class="fixed inset-0 z-[150] flex items-center justify-center bg-[rgba(3,6,12,0.88)] px-4 py-8 backdrop-blur-[3px]">
+        <div class="w-full overflow-auto rounded-[20px] border border-[rgba(103,130,169,0.42)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.72)]" style="width:min(800px,calc(100vw - 48px));max-height:calc(100vh - 64px);background:#0d1520;">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="m-0 text-[18px] font-extrabold leading-none text-white">设备预备检查</h3>
+              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">当前房间「${escapeHtml(modal.roomName || '未命名房间')}」里有设备暂时离线。你可以先检查并修复，也可以继续预备。</p>
+            </div>
+            <button class="ghost-btn" type="button" data-action="cancel-room-prepare">返回检查</button>
+          </div>
+          <div class="mt-4 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.55] text-[#99acc5]">
+            设备预备会把本局配置下发到设备，并检查源组和目标组中的设备是否在线。离线设备可能导致任务无法完成。
+          </div>
+          <div class="mt-3 grid gap-2">
+            ${offline.map((item) => `
+              <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.9)] px-3 py-2.5">
+                <div class="flex flex-wrap items-start justify-between gap-2">
+                  <div class="min-w-0">
+                    <div class="text-[12px] font-extrabold text-white">${escapeHtml(item.name || item.mac || '未知设备')}</div>
+                    <div class="mt-1 text-[11px] leading-[1.45] text-[#9fb2c8]">${escapeHtml(item.mac || '')}</div>
+                  </div>
+                  ${makePill('离线', true)}
+                </div>
+                <div class="mt-2 text-[11px] leading-[1.5] text-[#b8c7da]">所属分组：${escapeHtml((Array.isArray(item.groups) ? item.groups : []).join(' / ') || '无')}</div>
+                <div class="mt-1 text-[11px] leading-[1.5] text-[#8ea3bf]">RSSI ${escapeHtml(normalizeNumber(item.rssi, 0))} dBm · 最近上线 ${escapeHtml(normalizeNumber(item.seen_ms, 0))} ms 前</div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="mt-4 flex flex-wrap justify-end gap-2">
+            <button class="ghost-btn" type="button" data-action="cancel-room-prepare">取消预备</button>
+            <button class="ghost-btn bg-[linear-gradient(180deg,rgba(74,171,255,0.96),rgba(56,132,214,0.98))] text-white" type="button" data-action="confirm-room-prepare">继续预备</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderRoomCountdownOverlay() {
+    const countdown = state.roomStartCountdown;
+    if (!countdown) return '';
+    const room = roomById(countdown.roomId) || currentRoom();
+    const remaining = clamp(normalizeNumber(countdown.remaining, 0), 0, 10);
+    return `
+      <div class="fixed inset-0 z-[155] flex items-center justify-center bg-[rgba(3,6,12,0.9)] px-4 py-8 backdrop-blur-[4px]">
+        <div class="w-full rounded-[24px] border border-[rgba(103,130,169,0.42)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.78)]" style="width:min(760px,calc(100vw - 40px));background:#0d1520;">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="m-0 text-[20px] font-extrabold leading-none text-white">开始游戏倒计时</h3>
+              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">房间「${escapeHtml(room?.name || '未命名房间')}」即将在倒计时结束后开始。你可以随时取消。</p>
+            </div>
+            <button class="ghost-btn" type="button" data-action="cancel-room-countdown">取消开始</button>
+          </div>
+          <div class="mt-5 flex items-center justify-center rounded-[22px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.72)] py-8">
+            <div class="text-center">
+              <div class="text-[56px] font-black leading-none text-[#f7fbff]">${escapeHtml(remaining)}</div>
+              <div class="mt-2 text-[13px] font-bold text-[#9db0c8]">秒后开始</div>
+            </div>
+          </div>
+          <div class="mt-4 text-[11px] leading-[1.55] text-[#99acc5]">
+            倒计时结束后，系统会向控制端发送开始命令。取消后会回到已预备、未开始状态。
+          </div>
+          <div class="mt-4 flex flex-wrap justify-end gap-2">
+            <button class="ghost-btn" type="button" data-action="cancel-room-countdown">取消开始</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderTemplateDialogs() {
+    const form = state.templateFormModal ? ensureTemplateFormModal() : null;
+    if (!form) return '';
+    const featureOptions = (state.localState.feature_presets || []).map((preset) => `<option value="${escapeHtml(preset.id)}" ${String(form.feature_preset_id || '') === String(preset.id) ? 'selected' : ''}>${escapeHtml(preset.name)}</option>`).join('');
+    const effectOptions = effectChoiceOptions(form.idle_effect_id);
+    const triggerEffectOptions = effectChoiceOptions(form.trigger_effect_id);
+    const scoringOptions = [
+      { value: 'count_find', label: '寻宝计分' },
+      { value: 'shared_count', label: '组共享计分' },
+      { value: 'rssi_probe', label: '距离测试' },
+      { value: 'demo', label: '灯效演示' }
+    ].map((item) => `<option value="${escapeHtml(item.value)}" ${String(form.scoring_mode || 'count_find') === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('');
+    const step = clamp(normalizeNumber(form.step, 1), 1, 2);
+    const isEdit = String(form.templateId || '').trim();
+    return `
+      <div class="fixed inset-0 z-[128] flex items-center justify-center bg-[rgba(3,6,12,0.88)] px-4 py-8 backdrop-blur-[3px]">
+        <div class="w-full overflow-auto rounded-[20px] border border-[rgba(103,130,169,0.42)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.72)]" style="width:min(800px,calc(100vw - 48px));max-height:calc(100vh - 64px);background:#0d1520;">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="m-0 text-[18px] font-extrabold leading-none text-white">${isEdit ? '编辑我的模板' : '新建我的模板'}</h3>
+              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">两步填写：先写名称和备注，再设置玩法功能、灯效预设和单/多角色模式。保存后会自动关闭。</p>
+            </div>
+            <button class="ghost-btn" type="button" data-action="cancel-template-form">关闭</button>
+          </div>
+
+          <div class="mt-4 grid gap-2 sm:grid-cols-2">
+            <div class="${['rounded-[16px] border px-3 py-2.5 text-left transition', step === 1 ? 'border-transparent bg-[linear-gradient(180deg,rgba(64,119,208,0.92),rgba(45,89,163,0.96))] shadow-[0_12px_24px_rgba(0,0,0,0.18)]' : 'border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)]'].join(' ')}">
+              <div class="text-[11px] font-extrabold text-white">1. 名称与备注</div>
+              <div class="mt-1 text-[10.5px] leading-[1.4] ${step === 1 ? 'text-[#ecf4ff]/88' : 'text-[#92a6c3]'}">先给模板起名，后面好找。</div>
+            </div>
+            <div class="${['rounded-[16px] border px-3 py-2.5 text-left transition', step === 2 ? 'border-transparent bg-[linear-gradient(180deg,rgba(64,119,208,0.92),rgba(45,89,163,0.96))] shadow-[0_12px_24px_rgba(0,0,0,0.18)]' : 'border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)]'].join(' ')}">
+              <div class="text-[11px] font-extrabold text-white">2. 玩法参数</div>
+              <div class="mt-1 text-[10.5px] leading-[1.4] ${step === 2 ? 'text-[#ecf4ff]/88' : 'text-[#92a6c3]'}">配置模板的通用玩法逻辑。</div>
+            </div>
+          </div>
+          <div class="mt-3 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.55] text-[#99acc5]">
+            这里保存的是模板的通用玩法，不保存具体房间的成员名单；空闲灯效和触发灯效可以在游戏房间里单独覆盖。
+          </div>
+
+          ${step === 1 ? `
+            <div class="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div class="field">
+                <label>模板名称</label>
+                <input class="fake-input" data-role="template-form-input" data-template-form-field="name" value="${escapeHtml(form.name || '')}" placeholder="例如：我的魔杖模式">
+              </div>
+              <div class="field">
+                <label>模板备注</label>
+                <textarea class="fake-input" data-role="template-form-input" data-template-form-field="note" style="min-height:112px;resize:vertical" placeholder="写一点用途说明，方便后面快速复用">${escapeHtml(form.note || '')}</textarea>
+              </div>
+            </div>
+          ` : `
+            <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div class="field"><label>玩法功能包</label><select class="fake-select" data-role="template-form-input" data-template-form-field="feature_preset_id">${featureOptions}</select></div>
+              <div class="field"><label>感应模式</label><select class="fake-select" data-role="template-form-input" data-template-form-field="sense_mode"><option value="ring" ${String(form.sense_mode || 'ring') === 'ring' ? 'selected' : ''}>轮巡</option><option value="shared" ${String(form.sense_mode || '') === 'shared' ? 'selected' : ''}>组共享</option><option value="response" ${String(form.sense_mode || '') === 'response' ? 'selected' : ''}>纯响应</option></select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">轮巡：每个组里的人都可以依次找到，找到后先停留约 2 秒再触发灯效；触发后本人不能再次触发。组共享：每个组里只要有一个人找到，先停留约 2 秒再触发灯效；触发后本组所有人都不能再次触发。纯响应：任何人都可以找到，先停留约 2 秒再触发灯效；触发后仍然可以重复触发。</div></div>
+              <div class="field"><label>源组（单个 / 多个）</label><select class="fake-select" data-role="template-form-input" data-template-form-field="source_group_mode"><option value="single" ${roleModeValue(form.source_group_mode) === 'single' ? 'selected' : ''}>单个</option><option value="multi" ${roleModeValue(form.source_group_mode) === 'multi' ? 'selected' : ''}>多个</option></select></div>
+              <div class="field"><label>目标组（单个 / 多个）</label><select class="fake-select" data-role="template-form-input" data-template-form-field="target_group_mode"><option value="single" ${roleModeValue(form.target_group_mode) === 'single' ? 'selected' : ''}>单个</option><option value="multi" ${roleModeValue(form.target_group_mode) === 'multi' ? 'selected' : ''}>多个</option></select></div>
+              <div class="field"><label>空闲灯效</label><select class="fake-select" data-role="template-form-input" data-template-form-field="idle_effect_id">${effectOptions}</select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">这里选模板默认待机时用的灯效，进房间后可以单独覆盖。</div></div>
+              <div class="field"><label>触发灯效</label><select class="fake-select" data-role="template-form-input" data-template-form-field="trigger_effect_id">${triggerEffectOptions}</select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">这里选模板默认触发时用的灯效，进房间后可以单独覆盖。</div></div>
+              <div class="field"><label>计分模式</label><select class="fake-select" data-role="template-form-input" data-template-form-field="scoring_mode">${scoringOptions}</select></div>
+              <div class="field"><label>最大计数</label><input class="fake-input" data-role="template-form-input" data-template-form-field="scoring_max_find" value="${escapeHtml(form.scoring_max_find ?? 0)}"></div>
+            </div>
+          `}
+
+          <div class="mt-4 flex flex-wrap justify-end gap-2">
+            ${step > 1 ? `<button class="ghost-btn" type="button" data-action="template-form-prev-step">${svgIcon('arrow')}上一步</button>` : ''}
+            <button class="ghost-btn" type="button" data-action="cancel-template-form">取消</button>
+            ${step < 2 ? `<button class="ghost-btn" type="button" data-action="template-form-next-step">${svgIcon('arrow')}下一步</button>` : `<button class="ghost-btn" type="button" data-action="save-template-form">${svgIcon('save')}保存</button>`}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderWizardPage() {
+    const room = currentRoom() || ensureRoomDraft(state.selectedTemplateId || activeTemplate()?.id || builtinTemplates[0].id);
+    const template = state.localState.templates.find((item) => item.id === room.template_id)
+      || activeTemplate()
+      || state.localState.templates[0]
+      || builtinTemplates[0];
+    const groups = controllerGroups();
+    const sourceIds = new Set(Array.isArray(room.source_group_ids) ? room.source_group_ids : []);
+    const targetIds = new Set(Array.isArray(room.target_group_ids) ? room.target_group_ids : []);
+    syncRoomEffectRules(room);
+    const step = wizardState().step;
+    const templateSourceMode = roleModeValue(template.source_group_mode || (Array.isArray(template.default_source_group_ids) && template.default_source_group_ids.length > 1 ? 'multi' : 'single'));
+    const templateTargetMode = roleModeValue(template.target_group_mode || (Array.isArray(template.default_target_group_ids) && template.default_target_group_ids.length > 1 ? 'multi' : 'single'));
+    const templateSenseText = template.sense_mode || '未设置';
+    const templateIdleEffectText = effectNameById(template.idle_effect_id || 'builtin-silent');
+    const templateTriggerEffectText = effectNameById(template.trigger_effect_id || 'builtin-blink');
+    const templateSignalUi = featurePresetById(template.feature_preset_id)?.feature_ui?.signal_ui || {};
+    const templateScoreText = template.scoring && typeof template.scoring === 'object' && template.scoring.mode
+      ? String(template.scoring.mode)
+      : '未设置';
+    const steps = [
+      {
+        key: 'room',
+        label: '房间信息',
+        desc: '先给这一局起一个名字，方便后面统计和回放。',
+        icon: 'room',
+      },
+      {
+        key: 'template',
+        label: '选择模板',
+        desc: '从已经准备好的游戏模板里挑一个作为本局起点。',
+        icon: 'copy',
+      },
+      {
+        key: 'groups',
+        label: '设备分配',
+        desc: '只绑定本局参与的源组和目标组，不改底层规则。',
+        icon: 'group',
+      },
+      {
+        key: 'effects',
+        label: '灯效矩阵',
+        desc: '为每个源组和目标组的组合设置空闲灯效与触发灯效，并可直接预览。',
+        icon: 'effect',
+      },
+      {
+        key: 'confirm',
+        label: '确认保存',
+        desc: '最后检查一次摘要，确认后保存为本地房间草稿。',
+        icon: 'save',
+      }
+    ];
+    const summaryGroups = (ids) => {
+      const names = ids.map((gid) => groupNameById(gid));
+      return names.length ? names.join(' / ') : '未选择';
+    };
+    const roomNameMissing = !String(room.name || '').trim();
+    const selectedTemplateSelected = template.id === state.selectedTemplateId;
+    const footerBtnBase = 'inline-flex h-8 w-max flex-none min-w-[122px] items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-bold leading-none whitespace-nowrap transition hover:brightness-105 active:translate-y-px';
+    const footerBtnPrimary = 'inline-flex h-8 w-max flex-none min-w-[128px] items-center justify-center gap-1.5 rounded-full border-0 px-3.5 py-1.5 text-[11px] font-extrabold leading-none whitespace-nowrap text-white transition hover:brightness-105 active:translate-y-px';
+    const footerBtnLabel = (icon, text) => `<span class="inline-flex items-center gap-1.5 whitespace-nowrap leading-none">${svgIcon(icon)}<span>${escapeHtml(text)}</span></span>`;
+
+    const renderStepBadge = (idx, item) => {
+      const active = idx === step;
+      const done = idx < step;
+      return `
+        <div class="${[
+          'rounded-[16px] border px-3 py-2.5 text-left transition',
+          active
+            ? 'border-transparent bg-[linear-gradient(180deg,rgba(64,119,208,0.92),rgba(45,89,163,0.96))] shadow-[0_12px_24px_rgba(0,0,0,0.18)]'
+            : done
+              ? 'border-[rgba(104,183,255,0.42)] bg-[rgba(18,28,42,0.94)]'
+              : 'border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)]'
+        ].join(' ')}">
+          <div class="flex items-center gap-2">
+            <span class="inline-flex h-7 w-7 items-center justify-center rounded-full border text-[11px] font-extrabold ${active ? 'border-white/20 bg-white/12 text-white' : 'border-[rgba(88,116,154,0.24)] bg-[rgba(21,30,43,0.86)] text-[#c7d5eb]'}">${idx + 1}</span>
+            <div class="min-w-0">
+              <div class="truncate text-[12px] font-extrabold leading-none ${active ? 'text-white' : 'text-[#dce7f5]'}">${escapeHtml(item.label)}</div>
+              <div class="mt-1 text-[10.5px] leading-[1.4] ${active ? 'text-[#ecf4ff]/88' : 'text-[#92a6c3]'}">${escapeHtml(item.desc)}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    };
+
+    const renderGroupPick = (group, kind) => {
+      const checked = kind === 'source' ? sourceIds.has(group.id) : targetIds.has(group.id);
+      const action = kind === 'source' ? 'wizard-toggle-source-group' : 'wizard-toggle-target-group';
+      const selectedClass = checked
+        ? kind === 'source'
+          ? 'border-[#4ba9ff] bg-[linear-gradient(180deg,rgba(26,52,77,0.99),rgba(14,24,36,0.98))] shadow-[0_0_0_1px_rgba(75,169,255,0.24),0_16px_32px_rgba(0,0,0,0.24)] ring-1 ring-inset ring-[rgba(75,169,255,0.18)]'
+          : 'border-[#6be29d] bg-[linear-gradient(180deg,rgba(20,46,32,0.99),rgba(12,24,18,0.98))] shadow-[0_0_0_1px_rgba(107,226,157,0.22),0_16px_32px_rgba(0,0,0,0.24)] ring-1 ring-inset ring-[rgba(107,226,157,0.18)]'
+        : 'border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] hover:border-[rgba(120,167,224,0.34)]';
+      const accentText = checked
+        ? (kind === 'source' ? 'text-[#e4f2ff]' : 'text-[#e4ffef]')
+        : 'text-[#f3f7ff]';
+      const badgeBase = 'inline-flex shrink-0 items-center rounded-full border px-2.5 py-1.25 text-[10px] font-extrabold whitespace-nowrap transition';
+      const badgeClass = checked
+        ? (kind === 'source'
+          ? 'border-[#4ba9ff]/40 bg-[#4ba9ff]/22 text-[#d8ebff]'
+          : 'border-[#6be29d]/40 bg-[#6be29d]/22 text-[#dcffe8]')
+        : 'border-[rgba(88,116,154,0.26)] bg-[rgba(21,30,43,0.86)] text-[#9fb2c8]';
+      return `
+        <label class="${[
+          'group relative flex cursor-pointer flex-col gap-2 rounded-[16px] border px-3 py-3 text-[12px] text-[#d9e4f3] transition',
+          selectedClass
+        ].join(' ')}" data-action="${action}" data-gid="${group.id}">
+          <input class="peer sr-only" type="checkbox" data-gid="${group.id}" ${checked ? 'checked' : ''}>
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex min-w-0 items-start gap-2.5">
+              <span class="min-w-0">
+                <span class="${['block truncate font-bold text-[#f3f7ff] transition', accentText].join(' ')}">${escapeHtml(group.name)}</span>
+                <span class="mt-0.5 block text-[10.5px] leading-[1.35] text-[#9fb2c8]">${escapeHtml(group.note || '无备注')} · ${groupMemberCount(group.id)} 台设备</span>
+              </span>
+            </div>
+            <span class="${[badgeBase, badgeClass].join(' ')}">${checked ? '已选中' : '点击选择'}</span>
+          </div>
+        </label>
+      `;
+    };
+
+    const renderEffectRuleSelect = (rule, field, label) => `
+      <label class="min-w-0">
+        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">${escapeHtml(label)}</span>
+        ${(() => {
+          const previewKey = `${roomEffectRuleKey(rule.source_group_id, rule.target_group_id)}:${field}`;
+          const previewEffectId = String(rule[field] || '');
+          const previewEffect = effectDefinitionById(previewEffectId);
+          const previewRows = clamp(Array.isArray(previewEffect?.effect_ui?.tracks) ? previewEffect.effect_ui.tracks.length : 1, 1, EFFECT_TRACK_LIMIT);
+          const previewOpen = String(state.roomEffectPreviewKey || '') === previewKey;
+          return `
+        <div class="flex items-center gap-2">
+          <select class="fake-select h-8 min-w-0 flex-1 px-2 text-[11px]" data-role="wizard-effect-rule" data-source-gid="${escapeHtml(rule.source_group_id)}" data-target-gid="${escapeHtml(rule.target_group_id)}" data-rule-field="${escapeHtml(field)}">
+            ${effectChoiceOptions(rule[field])}
+          </select>
+          <button class="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-full border border-[rgba(88,116,154,0.26)] bg-[rgba(18,25,36,0.96)] px-2.5 text-[10px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px" type="button" data-action="preview-room-effect" data-source-gid="${escapeHtml(rule.source_group_id)}" data-target-gid="${escapeHtml(rule.target_group_id)}" data-rule-field="${escapeHtml(field)}" data-effect-id="${escapeHtml(previewEffectId)}">${svgIcon('play')}预览</button>
+        </div>
+        ${previewOpen ? `
+          <div class="mt-1.5 rounded-[12px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.72)] p-2">
+            ${renderPreviewBars(previewEffectId, { showControls: false, compact: true, rows: previewRows, previewKind: 'preview', clipOverflow: true })}
+          </div>
+        ` : ''}
+      `;
+        })()}
+      </label>
+    `;
+
+    const batchEffectValue = (field, fallback) => {
+      const rules = Array.isArray(room.effect_rules) ? room.effect_rules : [];
+      const firstValue = rules.find((rule) => String(rule?.[field] || '').trim())?.[field];
+      return String(firstValue || fallback || 'builtin-silent');
+    };
+
+    const renderEffectMatrix = () => {
+      const rules = Array.isArray(room.effect_rules) ? room.effect_rules : [];
+      if (!(Array.isArray(room.source_group_ids) && room.source_group_ids.length) || !(Array.isArray(room.target_group_ids) && room.target_group_ids.length)) {
+        return '<div class="rounded-[16px] border border-dashed border-[rgba(88,116,154,0.28)] bg-[rgba(9,14,22,0.68)] px-3 py-5 text-[12px] leading-[1.6] text-[#9fb2c8]">先在上一步选择源组和目标组，然后这里会自动生成灯效矩阵。</div>';
+      }
+      return (room.target_group_ids || []).map((targetId) => {
+        const targetRules = rules.filter((rule) => normalizeNumber(rule.target_group_id, -1) === normalizeNumber(targetId, -1));
+        return `
+          <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div class="text-[12px] font-extrabold text-white">目标组：${escapeHtml(groupNameById(targetId))}</div>
+                <div class="mt-1 text-[11px] leading-[1.45] text-[#9fb2c8]">目标组空闲默认静默；每个源组到这个目标组都可以单独覆盖。</div>
+              </div>
+              ${makePill(`${targetRules.length} 条规则`, true)}
+            </div>
+            <div class="mt-3 grid gap-2">
+              ${targetRules.map((rule) => `
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="text-[12px] font-extrabold text-[#eaf4ff]">${escapeHtml(groupNameById(rule.source_group_id))} <span class="text-[#7ba2cc]">-></span> ${escapeHtml(groupNameById(rule.target_group_id))}</div>
+                    ${makeChip('本局规则', true)}
+                  </div>
+                  <div class="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                    ${renderEffectRuleSelect(rule, 'source_idle_effect_id', '源组空闲')}
+                    ${renderEffectRuleSelect(rule, 'source_trigger_effect_id', '源组触发')}
+                    ${renderEffectRuleSelect(rule, 'target_idle_effect_id', '目标组空闲')}
+                    ${renderEffectRuleSelect(rule, 'target_trigger_effect_id', '目标组触发')}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }).join('');
+    };
+
+    return `
+      <div class="fixed inset-0 z-[80] overflow-auto bg-[rgba(8,13,20,0.94)] px-3 py-3 backdrop-blur-[4px]" data-wizard-scroll-root>
+        <div class="mx-auto flex min-h-[calc(100vh-1.5rem)] w-[min(1900px,100%)] flex-col gap-3">
+          <section class="rounded-[20px] border border-[rgba(88,116,154,0.26)] bg-[linear-gradient(180deg,rgba(21,30,43,0.98),rgba(16,22,33,0.96))] px-4 py-3.5 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-[19px] leading-none text-[#7ec6ff]">${svgIcon('room')}</span>
+                  <div>
+                    <h2 class="m-0 text-[19px] font-extrabold leading-[1.08]">向导开局</h2>
+                    <p class="mt-1 max-w-[920px] text-[11.5px] leading-[1.5] text-[#c4d1e3]">一步一步创建房间：先填名字，再选模板，接着选本局参与的设备组和目标组，最后保存为草稿。复杂规则留在游戏设置和模板里，这里只负责开局准备。</p>
+                  </div>
+                </div>
+              </div>
+              <div class="flex shrink-0 flex-nowrap items-center justify-end gap-2 overflow-x-auto pb-1">
+                <button class="${footerBtnBase} border-[rgba(88,116,154,0.3)] bg-[rgba(24,33,47,0.96)] px-3 text-[#dce8f7]" type="button" data-action="load-controller">${svgIcon('refresh')}读取控制端</button>
+                <button class="${footerBtnBase} border-[rgba(88,116,154,0.3)] bg-[rgba(24,33,47,0.96)] px-3 text-[#dce8f7]" type="button" data-action="wizard-close">${svgIcon('pause')}退出向导</button>
+              </div>
+            </div>
+            <div class="mt-4 grid gap-2 overflow-x-auto pb-1 sm:grid-cols-2" style="grid-template-columns:repeat(5,minmax(190px,1fr));">
+              ${steps.map((item, idx) => renderStepBadge(idx, item)).join('')}
+            </div>
+          </section>
+
+          <section class="grid gap-3 xl:grid-cols-[minmax(0,1.62fr)_minmax(340px,380px)]">
+            <div class="rounded-[20px] border border-[rgba(88,116,154,0.26)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <h3 class="m-0 text-[17px] font-extrabold leading-none">${escapeHtml(steps[step]?.label || '向导')}</h3>
+                  <p class="mt-1.5 max-w-[860px] text-[12px] leading-[1.45] text-[#aabbd1]">${escapeHtml(steps[step]?.desc || '')}</p>
+                </div>
+                <div class="flex flex-wrap justify-end gap-2">
+                  ${makePill(`步骤 ${step + 1}/5`, true)}
+                  ${makePill(`房间 ${escapeHtml(currentRoomStatusLabel())}`)}
+                  ${makePill(`模板 ${escapeHtml(selectedTemplateName())}`)}
+                </div>
+              </div>
+
+              <div class="mt-4 grid gap-3">
+                <section class="${step === 0 ? '' : 'hidden'} grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                    <div class="text-[11px] font-bold text-[#c7d5eb]">房间名称</div>
+                    <input class="mt-2 w-full rounded-[14px] border border-[rgba(88,116,154,0.28)] bg-[rgba(12,18,28,0.92)] px-3 py-2.5 text-[13px] font-semibold text-[#f5f8ff] outline-none transition placeholder:text-[#7184a1] focus:border-[rgba(103,174,254,0.5)]" type="text" data-role="wizard-room-name" value="${escapeHtml(room.name || '')}" placeholder="例如：多人寻宝混战-第一局">
+                  </div>
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                    <div class="text-[11px] font-bold text-[#c7d5eb]">房间备注</div>
+                    <textarea class="mt-2 min-h-[132px] w-full resize-y rounded-[14px] border border-[rgba(88,116,154,0.28)] bg-[rgba(12,18,28,0.92)] px-3 py-2.5 text-[12px] leading-[1.55] text-[#f5f8ff] outline-none transition placeholder:text-[#7184a1] focus:border-[rgba(103,174,254,0.5)]" data-role="wizard-room-notes" placeholder="记录本局说明、临时备注、NPC 提示等。">${escapeHtml(room.notes || '')}</textarea>
+                  </div>
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3.5 xl:col-span-2">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div class="text-[11px] font-bold text-[#c7d5eb]">当前房间草稿</div>
+                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">这里会保存到本地草稿，方便中途返回修改，不会影响控制端。</div>
+                      </div>
+                      <button class="inline-flex h-8 min-w-[96px] items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold leading-none whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px" type="button" data-action="wizard-save-draft">${svgIcon('save')}保存设置</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="${step === 1 ? '' : 'hidden'} grid gap-3">
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="text-[11px] font-bold text-[#c7d5eb]">当前选中模板</div>
+                      <div class="mt-1 text-[15px] font-extrabold leading-[1.1] text-white">${escapeHtml(template.name || '未选择模板')}</div>
+                      <div class="mt-1.5 max-w-[860px] text-[12px] leading-[1.5] text-[#aabbd1]">${escapeHtml(template.note || '无备注')}</div>
+                    </div>
+                    <div class="flex flex-wrap justify-end gap-2">
+                      ${makePill(selectedTemplateSelected ? '已选中' : '当前默认', true)}
+                      ${makePill(selectedTemplateSelected ? '可直接开局' : '可点击切换')}
+                    </div>
+                  </div>
+                    <div class="mt-3 flex flex-wrap gap-2">
+                      ${makeChip(`源组 ${escapeHtml(roleModeLabel(templateSourceMode))}`)}
+                      ${makeChip(`目标组 ${escapeHtml(roleModeLabel(templateTargetMode))}`)}
+                      ${makeChip(`感应 ${escapeHtml(templateSenseText)}`)}
+                      ${makeChip(`计分 ${escapeHtml(templateScoreText)}`)}
+                      ${makeChip(`空闲 ${escapeHtml(templateIdleEffectText)}`)}
+                      ${makeChip(`触发 ${escapeHtml(templateTriggerEffectText)}`)}
+                    </div>
+                </div>
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div class="text-[11px] font-bold text-[#c7d5eb]">可选模板</div>
+                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">点击模板卡即可切换本局模板，模板只记录玩法逻辑，具体分组在下一步房间里选。</div>
+                      </div>
+                      ${makePill(`共 ${state.localState.templates.length || 0} 个模板`, true)}
+                    </div>
+                    <div class="mt-3 grid gap-2 lg:grid-cols-2">
+                      ${renderTemplateCards({ compact: true, showActions: false }) || '<div class="text-[#93a6c2]">暂无模板。</div>'}
+                    </div>
+                    <div class="mt-3 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.5] text-[#99acc5]">
+                      选中后会直接作为这次房间的默认模板，后续还能在“游戏模板”里继续编辑和新增。
+                    </div>
+                  </div>
+                </section>
+
+                <section class="${step === 2 ? '' : 'hidden'} grid gap-3 xl:grid-cols-2">
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                    <div class="flex items-center justify-between gap-2">
+                      <div>
+                        <div class="text-[11px] font-bold text-[#c7d5eb]">源组</div>
+                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">负责发起感应的一方。</div>
+                      </div>
+                      ${makePill(`已选 ${room.source_group_ids?.length || 0}`, true)}
+                    </div>
+                    <div class="mt-3 grid gap-2">
+                      ${groups.length ? groups.map((group) => renderGroupPick(group, 'source')).join('') : '<div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.5] text-[#93a6c2]">暂无分组可选。</div>'}
+                    </div>
+                  </div>
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                    <div class="flex items-center justify-between gap-2">
+                      <div>
+                        <div class="text-[11px] font-bold text-[#c7d5eb]">目标组</div>
+                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">负责接收反馈的一方。</div>
+                      </div>
+                      ${makePill(`已选 ${room.target_group_ids?.length || 0}`, true)}
+                    </div>
+                    <div class="mt-3 grid gap-2">
+                      ${groups.length ? groups.map((group) => renderGroupPick(group, 'target')).join('') : '<div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.5] text-[#93a6c2]">暂无分组可选。</div>'}
+                    </div>
+                  </div>
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.5] text-[#b7c7db] xl:col-span-2">
+                    源组负责发起感应，目标组负责被感应反馈。这里仅绑定本局参与范围，不改底层感应规则。
+                  </div>
+                </section>
+
+                <section class="${step === 3 ? '' : 'hidden'} grid gap-3">
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                    <div class="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div class="text-[11px] font-bold text-[#c7d5eb]">批量应用</div>
+                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">先用这里统一设一遍，再单独微调某几个源组和目标组的组合。</div>
+                      </div>
+                      ${makePill(`${Array.isArray(room.effect_rules) ? room.effect_rules.length : 0} 条矩阵规则`, true)}
+                    </div>
+                    <div class="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">全部源组空闲</span>
+                        <select class="fake-select h-8 w-full px-2 text-[11px]" data-role="wizard-effect-batch" data-rule-field="source_idle_effect_id">${effectChoiceOptions(batchEffectValue('source_idle_effect_id', room.idle_effect_id || 'builtin-silent'))}</select>
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">全部源组触发</span>
+                        <select class="fake-select h-8 w-full px-2 text-[11px]" data-role="wizard-effect-batch" data-rule-field="source_trigger_effect_id">${effectChoiceOptions(batchEffectValue('source_trigger_effect_id', room.trigger_effect_id || 'builtin-blink'))}</select>
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">全部目标组空闲</span>
+                        <select class="fake-select h-8 w-full px-2 text-[11px]" data-role="wizard-effect-batch" data-rule-field="target_idle_effect_id">${effectChoiceOptions(batchEffectValue('target_idle_effect_id', 'builtin-silent'))}</select>
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">全部目标组触发</span>
+                        <select class="fake-select h-8 w-full px-2 text-[11px]" data-role="wizard-effect-batch" data-rule-field="target_trigger_effect_id">${effectChoiceOptions(batchEffectValue('target_trigger_effect_id', room.trigger_effect_id || 'builtin-blink'))}</select>
+                      </label>
+                    </div>
+                  </div>
+                  ${renderEffectMatrix()}
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                    <div class="text-[11px] font-bold text-[#c7d5eb]">预览说明</div>
+                    <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">点击每个灯效右侧的“预览”按钮，会在当前规则下方展开一行小预览；如果不想看预览，直接忽略即可。</div>
+                  </div>
+                </section>
+
+                <section class="${step === 4 ? '' : 'hidden'} grid gap-3 xl:grid-cols-2">
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                    <div class="text-[11px] font-bold text-[#c7d5eb]">本局摘要</div>
+                    <div class="mt-2 space-y-2 text-[12px] leading-[1.5] text-[#dbe5f6]">
+                      <div>房间：<span class="font-bold text-white">${escapeHtml(room.name || '未命名房间')}</span></div>
+                      <div>模板：<span class="font-bold text-white">${escapeHtml(template.name || '未选择模板')}</span></div>
+                      <div>源组：<span class="font-bold text-white">${escapeHtml(summaryGroups(room.source_group_ids || []))}</span></div>
+                      <div>目标组：<span class="font-bold text-white">${escapeHtml(summaryGroups(room.target_group_ids || []))}</span></div>
+                      <div>感应：<span class="font-bold text-white">${escapeHtml(room.sense_mode || templateSenseText || '未设置')}</span></div>
+                      <div>触发条件：<span class="font-bold text-white">≥ ${escapeHtml(normalizeNumber(room.trigger_signal_rssi ?? templateSignalUi.trigger_rssi_threshold, -10))} dBm / ${escapeHtml(normalizeNumber(room.trigger_hold_ms ?? templateSignalUi.trigger_hold_ms, 2000))} ms</span></div>
+                      <div>空闲灯效：<span class="font-bold text-white">${escapeHtml(effectNameById(room.idle_effect_id || template.idle_effect_id || ''))}</span></div>
+                      <div>触发灯效：<span class="font-bold text-white">${escapeHtml(effectNameById(room.trigger_effect_id || template.trigger_effect_id || ''))}</span></div>
+                      <div>灯效矩阵：<span class="font-bold text-white">${escapeHtml(Array.isArray(room.effect_rules) ? room.effect_rules.length : 0)} 条</span></div>
+                      <div>计分：<span class="font-bold text-white">${escapeHtml(room.scoring && room.scoring.mode ? String(room.scoring.mode) : templateScoreText)}</span></div>
+                      <div>保存状态：<span class="font-bold text-white">${escapeHtml(room.status === 'draft' ? '未保存，仅本地草稿' : '已保存为草稿')}</span></div>
+                      <div>备注：<span class="font-bold text-white">${escapeHtml(room.notes || '无')}</span></div>
+                    </div>
+                  </div>
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                    <div class="text-[11px] font-bold text-[#c7d5eb]">保存前检查</div>
+                    <div class="mt-2 space-y-2 text-[12px] leading-[1.5] text-[#dbe5f6]">
+                      <div>房间名称：${roomNameMissing ? '<span class="font-bold text-[#f5c95f]">未填写</span>' : '<span class="font-bold text-[#68d792]">已填写</span>'}</div>
+                      <div>模板：<span class="font-bold text-white">${escapeHtml(template.name || '未选择')}</span></div>
+                      <div>设备数量：<span class="font-bold text-white">${controllerDevices().length} 台</span></div>
+                      <div>分组数量：<span class="font-bold text-white">${groups.length} 个</span></div>
+                    </div>
+                    <div class="mt-3 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.5] text-[#99acc5]">
+                      先保存，再进行设备预备和开始。点击“保存设置”只会把当前配置写成本地草稿，不会下发到设备。
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="mt-4 flex flex-nowrap items-center justify-between gap-2 overflow-x-auto border-t border-[rgba(88,116,154,0.16)] pt-3">
+                <div class="flex flex-nowrap gap-2">
+                  <button class="${footerBtnBase} border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] text-[#dbe5f4] ${step === 0 ? 'opacity-40 pointer-events-none' : ''}" type="button" data-action="wizard-prev">${footerBtnLabel('refresh', '上一步')}</button>
+                  <button class="${footerBtnBase} border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] text-[#dbe5f4]" type="button" data-action="wizard-save-draft">${footerBtnLabel('save', '保存设置')}</button>
+                </div>
+                <div class="flex flex-nowrap gap-2">
+                  ${step < WIZARD_STEP_MAX ? `<button class="${footerBtnPrimary} bg-gradient-to-b from-[#4caeff] to-[#428fe0]" type="button" data-action="wizard-next">${footerBtnLabel('arrow', '下一步')}</button>` : `<button class="${footerBtnPrimary} bg-gradient-to-b from-[#62d89a] to-[#48bb7c] ${roomNameMissing ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="wizard-save-draft" ${roomNameMissing ? 'disabled' : ''}>${footerBtnLabel('save', '保存设置')}</button>`}
+                </div>
+              </div>
+            </div>
+
+            <aside class="flex flex-col gap-3 rounded-[20px] border border-[rgba(88,116,154,0.26)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <h3 class="m-0 text-[17px] font-extrabold leading-none">向导摘要</h3>
+                  <p class="mt-1.5 text-[12px] leading-[1.45] text-[#aabbd1]">这里展示当前选择，方便 NPC 快速确认本局配置。</p>
+                </div>
+                ${makePill(`步骤 ${step + 1}/5`, true)}
+              </div>
+              <div class="grid gap-2.5">
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">房间名称</div>
+                  <div class="mt-1 text-[13px] font-extrabold text-white">${escapeHtml(room.name || '未命名房间')}</div>
+                </div>
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">模板</div>
+                  <div class="mt-1 text-[13px] font-extrabold text-white">${escapeHtml(template.name || '未选择模板')}</div>
+                </div>
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">模板默认</div>
+                  <div class="mt-1 text-[11px] leading-[1.6] text-[#aabbd1]">${escapeHtml(roleModeLabel(templateSourceMode))} / ${escapeHtml(roleModeLabel(templateTargetMode))}</div>
+                </div>
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">源组</div>
+                  <div class="mt-1 text-[12px] leading-[1.5] text-white">${escapeHtml(summaryGroups(room.source_group_ids || []))}</div>
+                </div>
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">目标组</div>
+                  <div class="mt-1 text-[12px] leading-[1.5] text-white">${escapeHtml(summaryGroups(room.target_group_ids || []))}</div>
+                </div>
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">感应 / 灯效</div>
+                  <div class="mt-1 text-[12px] leading-[1.5] text-white">${escapeHtml(room.sense_mode || templateSenseText || '未设置')} / ${escapeHtml(effectNameById(room.idle_effect_id || template.idle_effect_id || ''))} / ${escapeHtml(effectNameById(room.trigger_effect_id || template.trigger_effect_id || ''))}</div>
+                </div>
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">状态</div>
+                  <div class="mt-1 text-[12px] leading-[1.5] text-white">${escapeHtml(currentRoomStatusLabel())}</div>
+                </div>
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">说明</div>
+                  <div class="mt-1 text-[11px] leading-[1.6] text-[#aabbd1]">向导只负责开局，不会把复杂规则重新堆一遍。模板和游戏设置仍然是高级编辑入口。</div>
+                </div>
+              </div>
+            </aside>
+          </section>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderApp() {
+    if (wizardState().open) return renderWizardPage();
+    const loadHint = state.controllerOnline
+      ? `页面当前已联机，可以继续扫描和点名。`
+      : `先连接到控制端所在网络，再点“从控制端读取”。如果暂时连不上，也可以继续离线编辑。`;
+    const tagText = `UI v0.8.2`;
+    return `
+      <div id="mw-app" class="mx-auto my-3 w-[min(1860px,calc(100vw-40px))] text-[12px] leading-[1.4]">
+        <section class="rounded-[18px] border border-[rgba(88,116,154,0.24)] bg-[linear-gradient(180deg,rgba(13,22,35,0.88),rgba(9,16,27,0.84))] px-3.5 py-3 shadow-[0_14px_36px_rgba(0,0,0,0.26)] backdrop-blur-sm">
+          <div class="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap">
+            <div class="flex shrink-0 items-center gap-2">
+              <div class="text-[16px] leading-none text-[#86cbff] drop-shadow-[0_0_10px_rgba(134,203,255,0.22)]">✦</div>
+              <h1 class="m-0 text-[19px] font-extrabold leading-none tracking-[0] text-[#f6fbff]">Magic Wand 局域网配置页</h1>
+            </div>
+            <p class="m-0 shrink-0 text-[11.5px] leading-none text-[#c4d1e3]">为电脑灯效控制系统提供局域网配置、分组管理与效果预览（桌面端操作）。</p>
+            <span class="inline-flex h-7 shrink-0 items-center justify-center rounded-full border border-[rgba(103,130,169,0.32)] bg-[rgba(10,17,27,0.58)] px-3 text-[11px] font-medium text-[#dbe6f8]">${escapeHtml(tagText)}</span>
+            <span class="inline-flex h-7 shrink-0 items-center justify-center rounded-full border border-[rgba(103,130,169,0.32)] bg-[rgba(10,17,27,0.58)] px-3 text-[11px] font-medium text-[#dbe6f8]">本地保存已启用</span>
+            <span class="inline-flex h-7 shrink-0 items-center justify-center rounded-full border ${state.controllerOnline ? 'border-[rgba(93,225,143,0.34)] bg-[rgba(20,40,30,0.68)] text-[#bdf4cf]' : 'border-[rgba(240,201,85,0.28)] bg-[rgba(42,32,12,0.56)] text-[#ffe2a2]'} px-3 text-[11px] font-medium">${state.controllerOnline ? '在线可编辑' : '离线可编辑'}</span>
+          </div>
+          <div class="mt-2.5">
+            ${renderTopActions()}
+          </div>
+        </section>
+
+        <section class="mt-3 rounded-[16px] border border-[rgba(88,116,154,0.24)] bg-[rgba(13,22,35,0.78)] px-3.5 py-2.5 text-[12px] leading-[1.55] text-[#dce8f8] shadow-[0_12px_28px_rgba(0,0,0,0.2)]">${escapeHtml(loadHint)}</section>
+
+        ${renderTabs()}
+      </div>
+    `;
+  }
+
+  function renderDialogs() {
+    const root = document.getElementById('mw-dialog-root');
+    if (!root) return;
+    root.innerHTML = `${renderRoomPrepareModal()}${renderRoomCountdownOverlay()}${renderGroupDialogs()}${renderEffectDialogs()}${renderTemplateDialogs()}`;
+  }
+
+  function render() {
+    const root = document.getElementById('mw-app-root');
+    if (!root) return;
+    const scrollTop = window.scrollY;
+    const wizardScrollRoot = document.querySelector('[data-wizard-scroll-root]');
+    const wizardScrollTop = wizardScrollRoot ? wizardScrollRoot.scrollTop : 0;
+    root.innerHTML = renderApp();
+    renderDialogs();
+    requestAnimationFrame(() => {
+      const nextWizardScrollRoot = document.querySelector('[data-wizard-scroll-root]');
+      if (nextWizardScrollRoot) nextWizardScrollRoot.scrollTop = wizardScrollTop;
+      window.scrollTo(0, Math.min(scrollTop, Math.max(0, document.documentElement.scrollHeight - window.innerHeight)));
+      requestAnimationFrame(() => {
+        const nextWizardScrollRoot2 = document.querySelector('[data-wizard-scroll-root]');
+        if (nextWizardScrollRoot2) nextWizardScrollRoot2.scrollTop = wizardScrollTop;
+        window.scrollTo(0, Math.min(scrollTop, Math.max(0, document.documentElement.scrollHeight - window.innerHeight)));
+      });
+    });
+    bindMediaQueryFixes();
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(String(value));
+    return String(value).replace(/["\\]/g, '\\$&');
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function bindMediaQueryFixes() {
+    // no-op placeholder for future responsive tweaks
+  }
+
+  async function loadInitialState() {
+    state.apiBase = await discoverApiBase();
+    state.controllerBase = '/api/controller';
+    try {
+      const [status, local, records, controller, logText] = await Promise.allSettled([
+        fetchStatus(),
+        fetchLocalState(),
+        fetchRecords(),
+        fetchControllerState(),
+        fetchServerLog()
+      ]);
+
+      if (status.status === 'fulfilled') {
+        state.serverStatus = status.value;
+      } else {
+        state.serverStatus = { ok: false, error: status.reason?.message || 'status failed' };
+      }
+
+      state.localState = normalizeLocalState(local.status === 'fulfilled' ? local.value : loadLocalBackupOrDefault());
+      state.localState.ui.expanded_group_id = -1;
+      state.roomRecords = normalizeRoomRecords(records.status === 'fulfilled' ? records.value?.records : loadRoomBackupOrDefault());
+      state.controllerState = normalizeControllerState(controller.status === 'fulfilled' ? controller.value : null, state.controllerState || buildOfflineControllerState());
+      state.controllerState = mergeDraftsIntoController(state.controllerState, state.localState);
+      state.controllerOnline = controller.status === 'fulfilled';
+      state.serverLogText = logText.status === 'fulfilled' ? logText.value : 'serve 日志暂时不可用。';
+      state.activeTab = state.localState.ui.active_tab || 'overview';
+      state.deviceFilterMode = state.localState.ui.device_filter_mode || 'ungrouped';
+      state.deviceFilterGroupId = normalizeNumber(state.localState.ui.device_filter_group_id, -1);
+      state.selectedTemplateId = state.localState.ui.selected_template_id || state.localState.templates[0]?.id || builtinTemplates[0].id;
+      state.currentRoomId = state.localState.active_room_id || state.localState.current_room?.id || sortedRoomList()[0]?.id || state.localState.rooms?.[0]?.id || '';
+      syncGroupEditorDraft(selectedGroup());
+      syncActiveRoomAlias(roomById(state.currentRoomId) || state.localState.current_room || state.localState.rooms?.[0] || null);
+      if (!state.controllerOnline && !controller.value) {
+        state.controllerState = mergeDraftsIntoController(buildOfflineControllerState(), state.localState);
+      }
+      if (!state.roomRecords.length) {
+        state.roomRecords = state.localState.room_history || [];
+      }
+      state.debugLines.unshift(`page init | ui=v0.8.2 launcher=${window.location.protocol !== 'file:'} controllerBase=${state.controllerBase}`);
+      state.debugLines = state.debugLines.slice(0, MAX_VISIBLE_LOG_LINES);
+      persistLocalCache();
+      persistRecordsCache();
+    } catch (err) {
+      state.localState = normalizeLocalState(loadLocalBackupOrDefault());
+      state.localState.ui.expanded_group_id = -1;
+      state.roomRecords = normalizeRoomRecords(loadRoomBackupOrDefault());
+      state.controllerState = mergeDraftsIntoController(buildOfflineControllerState(), state.localState);
+      state.controllerOnline = false;
+      state.serverLogText = `初始化失败：${err.message}`;
+      state.debugLines.unshift(`init failed | ${err.message}`);
+      state.debugLines = state.debugLines.slice(0, MAX_VISIBLE_LOG_LINES);
+      state.currentRoomId = state.localState.active_room_id || state.localState.current_room?.id || sortedRoomList()[0]?.id || state.localState.rooms?.[0]?.id || '';
+      syncGroupEditorDraft(selectedGroup());
+    }
+  }
+
+  function normalizeRoomRecords(raw) {
+    if (!raw) return [];
+    const source = Array.isArray(raw) ? raw : Array.isArray(raw.records) ? raw.records : [];
+    return source.map((item) => clone(item)).filter(Boolean);
+  }
+
+  function loadLocalBackupOrDefault() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.localState);
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return buildDefaultLocalState();
+  }
+
+  function loadRoomBackupOrDefault() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.roomRecords);
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return [];
+  }
+
+  async function refreshRecords() {
+    try {
+      setBusy('records', true);
+      const response = await fetchRecords();
+      state.roomRecords = normalizeRoomRecords(response);
+      persistRecordsCache();
+      render();
+      logDebug('刷新房间记录成功');
+    } catch (err) {
+      logDebug(`刷新房间记录失败 | ${err.message}`);
+    } finally {
+      setBusy('records', false);
+    }
+  }
+
+  async function copyDebugText() {
+    const text = [
+      `controllerOnline=${state.controllerOnline}`,
+      `controllerBase=${state.controllerBase}`,
+      `activeTab=${state.activeTab}`,
+      `selectedTemplate=${selectedTemplateName()}`,
+      ...state.debugLines.slice(0, 20),
+      '',
+      state.serverLogText ? state.serverLogText.split(/\r?\n/).slice(-20).join('\n') : ''
+    ].join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      logDebug('调试文本已复制');
+    } catch (err) {
+      alert('复制失败，浏览器可能禁止了剪贴板权限。');
+    }
+  }
+
+  function handleClick(event) {
+    const target = event.target.closest('[data-action]');
+    if (!target) return;
+    const action = target.dataset.action;
+    const mac = target.dataset.mac;
+    const idx = normalizeNumber(target.dataset.idx, -1);
+    const gid = normalizeNumber(target.dataset.gid, -1);
+    const tab = target.dataset.tab;
+    const templateId = target.dataset.templateId;
+    const effectId = target.dataset.effectId || target.dataset.presetId;
+    const roomId = target.dataset.roomId;
+
+    switch (action) {
+      case 'tab':
+        selectTab(tab);
+        break;
+      case 'open-debug':
+        selectTab('debug');
+        break;
+      case 'open-groups':
+        selectTab('groups');
+        break;
+      case 'open-templates':
+        selectTab('templates');
+        break;
+      case 'open-wizard':
+        openWizard(builtinTemplates[0].id, { forceNew: true });
+        break;
+      case 'load-controller':
+        loadFromController();
+        break;
+      case 'publish':
+        publishConfig();
+        break;
+      case 'scan-devices':
+        scanDevices();
+        break;
+      case 'identify-all':
+        identifyAllDevices();
+        break;
+      case 'identify-selected':
+        identifySelectedDevices();
+        break;
+      case 'restore-draft':
+        restoreDraft();
+        break;
+      case 'save-local':
+        saveLocalConfig();
+        break;
+      case 'load-serve-log':
+        reloadServerLog();
+        break;
+      case 'clear-serve-log':
+        clearServerLog();
+        break;
+      case 'copy-debug':
+        copyDebugText();
+        break;
+      case 'clear-debug':
+        state.debugLines = [];
+        render();
+        break;
+      case 'toggle-preview-play':
+        state.previewPlaying = !state.previewPlaying;
+        render();
+        break;
+      case 'reset-preview':
+        state.previewTick = 0;
+        render();
+        break;
+      case 'toggle-preview-shape':
+        setPreviewCellShape(previewCellShape() === 'square' ? 'circle' : 'square');
+        break;
+      case 'toggle-preview-effect-list':
+        state.localState.ui.preview_effect_list_collapsed = !state.localState.ui.preview_effect_list_collapsed;
+        persistStateToServer();
+        render();
+        break;
+      case 'toggle-template-preview': {
+        const id = String(target.dataset.templateId || '');
+        state.effectPreviewTemplateId = state.effectPreviewTemplateId === id ? '' : id;
+        updateEffectPreviewNodes();
+        break;
+      }
+      case 'edit-device-name':
+        beginEditDevice(mac);
+        break;
+      case 'cancel-device-name':
+        cancelEditDevice();
+        break;
+      case 'save-device-name':
+        saveDeviceName(mac);
+        break;
+      case 'save-device-row':
+        saveDeviceRow(mac);
+        break;
+      case 'identify-device':
+        identifyDevice(idx);
+        break;
+      case 'toggle-device-select': {
+        const input = event.target;
+        toggleDeviceSelect(mac, input.checked);
+        break;
+      }
+      case 'select-all-visible': {
+        const input = event.target;
+        toggleSelectAllVisible(input.checked);
+        break;
+      }
+      case 'clear-selection':
+        state.selectedDeviceIds.clear();
+        render();
+        break;
+      case 'toggle-show-offline':
+        state.localState.ui.show_offline_devices = !!event.target.checked;
+        persistStateToServer();
+        render();
+        break;
+      case 'toggle-device-groups-panel':
+        state.localState.ui.device_preview_collapsed = !state.localState.ui.device_preview_collapsed;
+        persistStateToServer();
+        render();
+        break;
+      case 'clear-selected-groups':
+        clearSelectedGroups();
+        break;
+      case 'toggle-device-group': {
+        const input = event.target;
+        toggleGroupMembership(mac, gid, input.checked);
+        break;
+      }
+      case 'device-filter-mode-all':
+        state.deviceFilterMode = 'all';
+        state.localState.ui.device_filter_mode = 'all';
+        persistStateToServer();
+        render();
+        break;
+      case 'device-filter-mode-ungrouped':
+        state.deviceFilterMode = 'ungrouped';
+        state.localState.ui.device_filter_mode = 'ungrouped';
+        persistStateToServer();
+        render();
+        break;
+      case 'device-filter-mode-group':
+        state.deviceFilterMode = 'group';
+        state.localState.ui.device_filter_mode = 'group';
+        persistStateToServer();
+        render();
+        break;
+      case 'select-group':
+        setExpandedGroupId(expandedGroupId() === gid ? -1 : gid);
+        state.activeTab = 'groups';
+        state.localState.ui.active_tab = 'groups';
+        persistStateToServer();
+        render();
+        break;
+      case 'edit-group':
+        editGroupDraft(gid);
+        state.activeTab = 'groups';
+        state.localState.ui.active_tab = 'groups';
+        persistStateToServer();
+        break;
+      case 'save-group':
+        saveGroupFromModal();
+        break;
+      case 'create-group':
+        createGroupDraft();
+        break;
+      case 'delete-group':
+        deleteGroupDraft(gid);
+        break;
+      case 'cancel-group-form':
+        closeGroupFormModal();
+        break;
+      case 'save-group-form':
+        saveGroupFromModal();
+        break;
+      case 'open-delete-group':
+        openGroupDeleteModal(gid);
+        break;
+      case 'confirm-delete-group':
+        confirmDeleteGroupDraft();
+        break;
+      case 'cancel-delete-group':
+        closeGroupDeleteModal();
+        break;
+      case 'device-filter-group':
+        state.deviceFilterGroupId = normalizeNumber(target.value, -1);
+        state.localState.ui.device_filter_group_id = state.deviceFilterGroupId;
+        persistStateToServer();
+        render();
+        break;
+      case 'delete-device':
+        deleteDevice(mac);
+        break;
+      case 'create-template':
+        createTemplateFromCurrent();
+        break;
+      case 'edit-template': {
+        const source = state.localState.templates.find((item) => String(item.id) === String(templateId || ''));
+        if (source) openTemplateFormModal(source, { mode: 'edit' });
+        break;
+      }
+      case 'create-room-from-template':
+        createRoomFromTemplate(templateId || state.selectedTemplateId || activeTemplate()?.id || builtinTemplates[0].id);
+        break;
+      case 'clone-template':
+        cloneTemplate(templateId || state.selectedTemplateId || activeTemplate()?.id);
+        break;
+      case 'load-template':
+        createRoomFromTemplate(templateId || state.selectedTemplateId || activeTemplate()?.id || builtinTemplates[0].id);
+        break;
+      case 'delete-template':
+        deleteTemplate(templateId || state.selectedTemplateId || activeTemplate()?.id);
+        break;
+      case 'create-room':
+        createRoomFromTemplate();
+        break;
+      case 'template-form-next-step':
+        if (state.templateFormModal) {
+          state.templateFormModal.step = 2;
+          render();
+        }
+        break;
+      case 'template-form-prev-step':
+        if (state.templateFormModal) {
+          state.templateFormModal.step = 1;
+          render();
+        }
+        break;
+      case 'cancel-template-form':
+        closeTemplateFormModal();
+        break;
+      case 'save-template-form':
+        saveTemplateFormModal();
+        break;
+      case 'start-room':
+        if (roomId) setActiveRoom(roomId);
+        startRoom();
+        break;
+      case 'end-room':
+        if (roomId) setActiveRoom(roomId);
+        endRoom();
+        break;
+      case 'stop-room':
+        if (roomId) setActiveRoom(roomId);
+        endRoom();
+        break;
+      case 'delete-room':
+        deleteRoom(roomId || activeRoomId());
+        break;
+      case 'publish-room':
+        if (roomId) setActiveRoom(roomId);
+        prepareRoom(currentRoom());
+        break;
+      case 'prepare-room':
+        if (roomId) setActiveRoom(roomId);
+        prepareRoom(currentRoom());
+        break;
+      case 'confirm-room-prepare':
+        if (state.roomPrepareModal?.roomId) setActiveRoom(state.roomPrepareModal.roomId);
+        prepareRoom(roomById(state.roomPrepareModal?.roomId) || currentRoom(), { force: true });
+        break;
+      case 'cancel-room-prepare':
+        state.roomPrepareModal = null;
+        renderDialogs();
+        break;
+      case 'cancel-room-countdown':
+        clearRoomCountdown();
+        break;
+      case 'toggle-room-sort':
+        setRoomSortOrder(roomSortOrder() === 'asc' ? 'desc' : 'asc');
+        break;
+      case 'select-room':
+        if (roomId) {
+          setActiveRoom(roomId);
+          state.currentRoomId = roomId;
+          render();
+        }
+        break;
+      case 'room-open-wizard':
+        if (roomId) {
+          const room = roomById(roomId);
+          if (room) {
+            if (room.status === 'running') {
+              alert('进行中的房间不能直接编辑，请先结束后再修改。');
+              break;
+            }
+            setActiveRoom(room);
+            state.selectedTemplateId = room.template_id || state.selectedTemplateId;
+            state.localState.ui.selected_template_id = state.selectedTemplateId;
+          }
+        }
+        openWizard(roomById(roomId)?.template_id || state.selectedTemplateId || activeTemplate()?.id || builtinTemplates[0].id);
+        break;
+      case 'refresh-records':
+        refreshRecords();
+        break;
+      case 'select-template':
+        if (wizardState().open) {
+          setWizardTemplate(templateId);
+        } else {
+          selectTemplate(templateId);
+        }
+        break;
+      case 'select-effect':
+      case 'select-effect-preset':
+      case 'select-custom-effect':
+        state.localState.ui.selected_effect_preset_id = effectId || target.dataset.presetId || state.localState.ui.selected_effect_preset_id;
+        state.selectedEffectId = state.localState.ui.selected_effect_preset_id;
+        persistStateToServer();
+        render();
+        break;
+      case 'preview-room-effect': {
+        const select = target.closest('label')?.querySelector('select[data-role="wizard-effect-rule"]');
+        const previewEffectId = String(select?.value || target.dataset.effectId || '').trim();
+        const previewRuleKey = `${roomEffectRuleKey(target.dataset.sourceGid, target.dataset.targetGid)}:${String(target.dataset.ruleField || '')}`;
+        if (previewEffectId) {
+          state.roomEffectPreviewKey = previewRuleKey;
+          state.roomEffectPreviewId = previewEffectId;
+          state.selectedEffectId = previewEffectId;
+          render();
+        }
+        break;
+      }
+      case 'create-effect-from-template':
+        openEffectFormModal(templateId || 'builtin-breath', { mode: 'create' });
+        break;
+      case 'create-custom-effect':
+        openEffectFormModal('builtin-breath', { mode: 'create' });
+        break;
+      case 'edit-custom-effect':
+        openEffectFormModal(effectId, { mode: 'edit' });
+        break;
+      case 'delete-custom-effect':
+        openEffectDeleteModal(effectId);
+        break;
+      case 'cancel-effect-form':
+        closeEffectFormModal();
+        break;
+      case 'effect-form-next-step':
+        if (state.effectFormModal) {
+          state.effectFormModal.step = 2;
+          renderDialogs();
+        }
+        break;
+      case 'effect-form-prev-step':
+        if (state.effectFormModal) {
+          state.effectFormModal.step = 1;
+          renderDialogs();
+        }
+        break;
+      case 'effect-form-switch-track':
+        if (state.effectFormModal) {
+          state.effectFormModal.activeTrackIndex = clamp(normalizeNumber(target.dataset.trackIndex, 0), 0, EFFECT_TRACK_LIMIT - 1);
+          renderDialogs();
+        }
+        break;
+      case 'save-effect-form':
+        saveEffectFormModal();
+        break;
+      case 'cancel-effect-delete':
+        closeEffectDeleteModal();
+        break;
+      case 'confirm-effect-delete':
+        confirmDeleteEffectModal();
+        break;
+      case 'select-feature-preset':
+        state.localState.ui.selected_feature_preset_id = target.dataset.presetId || state.localState.ui.selected_feature_preset_id;
+        persistStateToServer();
+        render();
+        break;
+      case 'wizard-close':
+        closeWizard();
+        break;
+      case 'wizard-next':
+        wizardNext();
+        break;
+      case 'wizard-prev':
+        wizardPrev();
+        break;
+      case 'wizard-save-draft':
+        saveWizardDraft();
+        break;
+      case 'wizard-publish':
+        saveWizardDraft();
+        break;
+      case 'wizard-start':
+        saveWizardDraft();
+        break;
+      case 'wizard-toggle-source-group':
+      case 'wizard-toggle-target-group': {
+        const room = currentRoom();
+        const sourceSet = new Set(Array.isArray(room?.source_group_ids) ? room.source_group_ids.map((value) => String(value)) : []);
+        const targetSet = new Set(Array.isArray(room?.target_group_ids) ? room.target_group_ids.map((value) => String(value)) : []);
+        const nextChecked = action === 'wizard-toggle-target-group'
+          ? !targetSet.has(String(gid))
+          : !sourceSet.has(String(gid));
+        toggleWizardGroup(action === 'wizard-toggle-target-group' ? 'target' : 'source', gid, nextChecked);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  function handleInput(event) {
+    const target = event.target;
+    if (target.matches('[data-role="device-name-input"]')) {
+      updateEditDraft('name', target.value);
+      return;
+    }
+    if (target.matches('[data-role="device-note-input"]')) {
+      updateEditDraft('note', target.value);
+      return;
+    }
+    if (target.matches('[data-role="group-form-input"]')) {
+      if (state.groupFormModal) {
+        if (target.dataset.groupFormField === 'name') state.groupFormModal.name = target.value;
+        if (target.dataset.groupFormField === 'note') state.groupFormModal.note = target.value;
+      }
+      return;
+    }
+    if (target.matches('[data-role="wizard-room-name"]')) {
+      const room = ensureRoomDraft();
+      room.name = target.value;
+      room.updated_at = nowIso();
+      persistLocalCache();
+      return;
+    }
+    if (target.matches('[data-role="wizard-room-notes"]')) {
+      const room = ensureRoomDraft();
+      room.notes = target.value;
+      room.updated_at = nowIso();
+      persistLocalCache();
+      return;
+    }
+    if (target.matches('[data-role="wizard-effect-rule"]')) {
+      updateWizardEffectRule(target.dataset.sourceGid, target.dataset.targetGid, target.dataset.ruleField, target.value);
+      return;
+    }
+    if (target.matches('[data-role="wizard-effect-batch"]')) {
+      applyWizardEffectRuleBatch(target.dataset.ruleField, target.value);
+      return;
+    }
+    if (target.matches('[data-role="template-form-input"]')) {
+      if (!state.templateFormModal) return;
+      const field = target.dataset.templateFormField;
+      if (field === 'name' || field === 'note' || field === 'feature_preset_id' || field === 'effect_preset_id' || field === 'source_group_mode' || field === 'target_group_mode' || field === 'sense_mode' || field === 'idle_effect_id' || field === 'trigger_effect_id' || field === 'scoring_mode' || field === 'scoring_max_find') {
+        state.templateFormModal[field] = target.value;
+      }
+      return;
+    }
+    if (target.matches('[data-role="template-field"]')) {
+      updateSelectedTemplateField(target.dataset.templateField, target.value);
+      return;
+    }
+    if (target.matches('[data-role="feature-preset-field"]')) {
+      updateSelectedFeaturePresetField(target.dataset.presetField, target.value);
+      return;
+    }
+    if (target.matches('[data-role="effect-form-input"]')) {
+      if (!state.effectFormModal) return;
+      const field = target.dataset.effectFormField;
+      if (field === 'name' || field === 'note') {
+        state.effectFormModal[field] = target.value;
+      } else if (field === 'source_template_id') {
+        state.effectFormModal.source_template_id = target.value;
+      }
+      return;
+    }
+    if (target.matches('[data-role="preview-effect-select"]')) {
+      state.localState.ui.selected_effect_preset_id = String(target.value || '');
+      state.selectedEffectId = state.localState.ui.selected_effect_preset_id;
+      persistStateToServer();
+      render();
+      return;
+    }
+    if (target.matches('[data-role="effect-preset-field"]')) {
+      updateSelectedEffectPresetField(target.dataset.presetField, target.value);
+    }
+    if (target.matches('[data-role="effect-form-track-field"]')) {
+      const trackIndex = normalizeNumber(target.dataset.trackIndex, 0);
+      const field = target.dataset.trackField;
+      const modal = ensureEffectFormModal();
+      if (!modal) return;
+      const tracks = Array.isArray(modal.tracks) ? modal.tracks : [];
+      const idx = clamp(normalizeNumber(trackIndex, 0), 0, EFFECT_TRACK_LIMIT - 1);
+      const track = tracks[idx] || buildDefaultEffectTrack('solid', idx);
+      if (field === 'enabled') {
+        track.enabled = !!target.checked;
+      } else if (field === 'port') {
+        track.port = clamp(normalizeNumber(target.value, track.port), 1, 3);
+      } else if (field === 'template_id') {
+        const nextTrack = effectTrackFromTemplate(target.value, idx, {
+          id: track.id,
+          enabled: track.enabled,
+          port: track.port,
+          led_count: track.led_count,
+          led_start: track.led_start,
+          led_end: track.led_end,
+          gap: track.gap,
+          brightness: track.brightness,
+          frequency_hz: track.frequency_hz,
+          period_ms: track.period_ms,
+          duty: track.duty,
+          repeat: track.repeat,
+          accel: track.accel,
+          pulse_speed_start: track.pulse_speed_start,
+          pulse_speed_end: track.pulse_speed_end,
+          pulse_duration_ms: track.pulse_duration_ms,
+          end_hold_ms: track.end_hold_ms,
+          end_behavior: track.end_behavior
+        });
+        nextTrack.enabled = track.enabled !== false;
+        nextTrack.port = clamp(normalizeNumber(track.port, idx + 1), 1, 3);
+        tracks[idx] = nextTrack;
+        modal.tracks = tracks.slice(0, EFFECT_TRACK_LIMIT);
+        renderDialogs();
+        return;
+      } else if (field === 'colorA' || field === 'colorB' || field === 'colorC') {
+        const colors = Array.isArray(track.colors) ? track.colors.slice(0, 3) : effectTrackPalette(idx);
+        const colorIndex = field === 'colorA' ? 0 : field === 'colorB' ? 1 : 2;
+        colors[colorIndex] = target.value;
+        track.colors = colors;
+      } else {
+        track[field] = target.value;
+      }
+      tracks[idx] = track;
+      modal.tracks = tracks.slice(0, EFFECT_TRACK_LIMIT);
+      updateEffectPreviewNodes();
+      return;
+    }
+    if (target.matches('[data-role="effect-track-field"]')) {
+      const trackIndex = normalizeNumber(target.dataset.trackIndex, 0);
+      const field = target.dataset.trackField;
+      if (target.type === 'checkbox') {
+        updateSelectedEffectTrackField(trackIndex, field, target.checked);
+      } else {
+        updateSelectedEffectTrackField(trackIndex, field, target.value);
+      }
+    }
+  }
+
+  function handleChange(event) {
+    const target = event.target;
+    if (target.matches('[data-action="device-filter-group"]')) {
+      state.deviceFilterMode = 'group';
+      state.deviceFilterGroupId = normalizeNumber(target.value, -1);
+      state.localState.ui.device_filter_mode = 'group';
+      state.localState.ui.device_filter_group_id = state.deviceFilterGroupId;
+      persistStateToServer();
+      render();
+      return;
+    }
+    if (target.matches('[data-role="template-field"]')) {
+      updateSelectedTemplateField(target.dataset.templateField, target.value);
+      return;
+    }
+    if (target.matches('[data-role="wizard-effect-rule"]')) {
+      updateWizardEffectRule(target.dataset.sourceGid, target.dataset.targetGid, target.dataset.ruleField, target.value);
+      return;
+    }
+    if (target.matches('[data-role="wizard-effect-batch"]')) {
+      applyWizardEffectRuleBatch(target.dataset.ruleField, target.value);
+      return;
+    }
+    if (target.matches('[data-role="template-form-input"]')) {
+      if (!state.templateFormModal) return;
+      const field = target.dataset.templateFormField;
+      if (field === 'name' || field === 'note' || field === 'feature_preset_id' || field === 'effect_preset_id' || field === 'source_group_mode' || field === 'target_group_mode' || field === 'sense_mode' || field === 'idle_effect_id' || field === 'trigger_effect_id' || field === 'scoring_mode' || field === 'scoring_max_find') {
+        state.templateFormModal[field] = target.value;
+      }
+      return;
+    }
+    if (target.matches('[data-role="feature-preset-field"]')) {
+      updateSelectedFeaturePresetField(target.dataset.presetField, target.value);
+      return;
+    }
+    if (target.matches('[data-role="effect-preset-field"]')) {
+      updateSelectedEffectPresetField(target.dataset.presetField, target.value);
+      return;
+    }
+    if (target.matches('[data-role="effect-form-input"]')) {
+      if (!state.effectFormModal) return;
+      const field = target.dataset.effectFormField;
+      if (field === 'name' || field === 'note') {
+        state.effectFormModal[field] = target.value;
+      } else if (field === 'source_template_id') {
+        state.effectFormModal.source_template_id = target.value;
+      }
+      return;
+    }
+    if (target.matches('[data-role="preview-effect-select"]')) {
+      state.localState.ui.selected_effect_preset_id = String(target.value || '');
+      state.selectedEffectId = state.localState.ui.selected_effect_preset_id;
+      persistStateToServer();
+      render();
+      return;
+    }
+    if (target.matches('[data-role="effect-form-track-field"]')) {
+      const trackIndex = normalizeNumber(target.dataset.trackIndex, 0);
+      const field = target.dataset.trackField;
+      const modal = ensureEffectFormModal();
+      if (!modal) return;
+      const tracks = Array.isArray(modal.tracks) ? modal.tracks : [];
+      const idx = clamp(normalizeNumber(trackIndex, 0), 0, EFFECT_TRACK_LIMIT - 1);
+      const track = tracks[idx] || buildDefaultEffectTrack('solid', idx);
+      if (target.type === 'checkbox') {
+        track[field] = target.checked;
+      } else if (field === 'port') {
+        track[field] = clamp(normalizeNumber(target.value, track[field]), 1, 3);
+      } else if (field === 'template_id') {
+        const nextTrack = effectTrackFromTemplate(target.value, idx, {
+          id: track.id,
+          enabled: track.enabled,
+          port: track.port,
+          led_count: track.led_count,
+          led_start: track.led_start,
+          led_end: track.led_end,
+          gap: track.gap,
+          brightness: track.brightness,
+          frequency_hz: track.frequency_hz,
+          period_ms: track.period_ms,
+          duty: track.duty,
+          repeat: track.repeat,
+          accel: track.accel,
+          pulse_speed_start: track.pulse_speed_start,
+          pulse_speed_end: track.pulse_speed_end,
+          pulse_duration_ms: track.pulse_duration_ms,
+          end_hold_ms: track.end_hold_ms,
+          end_behavior: track.end_behavior
+        });
+        nextTrack.enabled = track.enabled !== false;
+        nextTrack.port = clamp(normalizeNumber(track.port, idx + 1), 1, 3);
+        tracks[idx] = nextTrack;
+        modal.tracks = tracks.slice(0, EFFECT_TRACK_LIMIT);
+        renderDialogs();
+        return;
+      } else if (field === 'colorA' || field === 'colorB' || field === 'colorC') {
+        const colors = Array.isArray(track.colors) ? track.colors.slice(0, 3) : effectTrackPalette(idx);
+        const colorIndex = field === 'colorA' ? 0 : field === 'colorB' ? 1 : 2;
+        colors[colorIndex] = target.value;
+        track.colors = colors;
+      } else {
+        track[field] = target.value;
+      }
+      tracks[idx] = track;
+      modal.tracks = tracks.slice(0, EFFECT_TRACK_LIMIT);
+      updateEffectPreviewNodes();
+      return;
+    }
+    if (target.matches('[data-role="effect-track-field"]')) {
+      const trackIndex = normalizeNumber(target.dataset.trackIndex, 0);
+      const field = target.dataset.trackField;
+      if (target.type === 'checkbox') {
+        updateSelectedEffectTrackField(trackIndex, field, target.checked);
+      } else {
+        updateSelectedEffectTrackField(trackIndex, field, target.value);
+      }
+      return;
+    }
+  }
+
+  function setupBody() {
+    document.body.innerHTML = '<div id="mw-app-root"></div><div id="mw-dialog-root"></div>';
+    const appRoot = document.getElementById('mw-app-root');
+    const dialogRoot = document.getElementById('mw-dialog-root');
+    for (const root of [appRoot, dialogRoot]) {
+      root.addEventListener('click', handleClick);
+      root.addEventListener('change', handleChange);
+      root.addEventListener('input', handleInput);
+    }
+  }
+
+  function installKeyboardShortcuts() {
+    window.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        saveLocalConfig();
+      }
+      if (event.key === 'Escape' && state.editingMac) {
+        cancelEditDevice();
+      }
+    });
+  }
+
+  async function init() {
+    document.title = 'Magic Wand 局域网配置页';
+    setupBody();
+    installKeyboardShortcuts();
+    state.localState = normalizeLocalState(loadLocalBackupOrDefault());
+    state.localState.ui.expanded_group_id = -1;
+    state.roomRecords = normalizeRoomRecords(loadRoomBackupOrDefault());
+    state.controllerState = mergeDraftsIntoController(buildOfflineControllerState(), state.localState);
+    state.selectedTemplateId = state.localState.ui.selected_template_id || builtinTemplates[0].id;
+    state.activeTab = state.localState.ui.active_tab || 'overview';
+    state.deviceFilterMode = state.localState.ui.device_filter_mode || 'ungrouped';
+    state.deviceFilterGroupId = normalizeNumber(state.localState.ui.device_filter_group_id, -1);
+    render();
+    await loadInitialState();
+    render();
+    setInterval(() => {
+      if (state.previewPlaying) state.previewTick++;
+      updateEffectPreviewNodes();
+    }, PREVIEW_FRAME_MS);
+  }
+
+  window.__mwRebuild = {
+    state,
+    render,
+    loadFromController,
+    publishConfig,
+    saveLocalConfig,
+    restoreDraft,
+    createTemplateFromCurrent,
+    startRoom,
+    endRoom
+  };
+
+  init().catch((err) => {
+    console.error(err);
+      document.body.innerHTML = `<pre style="color:#fff;background:#111;padding:20px">初始化失败：${escapeHtml(err.message)}</pre>`;
+  });
+})();
+
+
+

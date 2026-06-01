@@ -1,0 +1,4133 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Magic Wand 局域网配置页</title>
+<style>
+:root{
+  --bg:#0b1117;
+  --panel:#131b24;
+  --panel-2:#0f1620;
+  --line:#233243;
+  --line-2:#2f4359;
+  --text:#eaf1f8;
+  --muted:#98a9bd;
+  --good:#63d48f;
+  --blue:#69c9ff;
+  --yellow:#f4cb63;
+  --red:#ff9090;
+  --gray:#91a6ba;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;
+  color:var(--text);
+  background:linear-gradient(180deg,#081018 0%,#0b141e 40%,#0d1823 100%);
+}
+body::before{
+  content:'';
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  background:
+    linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.012) 1px, transparent 1px);
+  background-size:100% 66px,66px 100%;
+  opacity:.22;
+}
+header,main{
+  max-width:1980px;
+  margin:0 auto;
+  padding:20px 24px 0;
+  position:relative;
+  z-index:1;
+}
+header{
+  display:grid;
+  grid-template-columns:minmax(600px,31.5%) minmax(0,1fr);
+  gap:16px 18px;
+  align-items:start;
+}
+h1{
+  margin:0 0 8px;
+  font-size:48px;
+  line-height:1.03;
+  letter-spacing:0;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  white-space:nowrap;
+}
+.brand-icon{
+  font-size:46px;
+  line-height:1;
+  width:48px;
+  display:inline-flex;
+  justify-content:center;
+}
+h2{margin:0;font-size:22px;line-height:1.15}
+p{margin:0;color:#b4c0cf;font-size:15px;line-height:1.45}
+label{
+  display:block;
+  margin:0 0 6px;
+  color:#9aaabf;
+  font-size:13px;
+  font-weight:600;
+}
+input,select,textarea,button{
+  font:inherit;
+  box-sizing:border-box;
+}
+input,select,textarea{
+  width:100%;
+  border:1px solid var(--line-2);
+  border-radius:10px;
+  background:#0b121b;
+  color:var(--text);
+  padding:12px 14px;
+  font-size:16px;
+}
+textarea{resize:vertical;min-height:96px}
+button{
+  border:0;
+  border-radius:11px;
+  min-height:56px;
+  padding:0 14px;
+  font-weight:800;
+  font-size:16px;
+  color:#07121e;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  white-space:nowrap;
+  line-height:1;
+  cursor:pointer;
+}
+button:disabled{opacity:.55;cursor:not-allowed}
+button:active{transform:translateY(1px)}
+.btn-blue{background:var(--blue)}
+.btn-green{background:var(--good)}
+.btn-yellow{background:var(--yellow)}
+.btn-red{background:var(--red)}
+.btn-gray,.ghost{background:var(--gray)}
+.btn-icon{width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center}
+.btn-icon svg{width:17px;height:17px;display:block}
+.btn-label{display:inline-flex;align-items:center}
+.small{min-height:49px;font-size:14px;border-radius:10px}
+
+.hero-copy{
+  grid-column:1;
+  display:grid;
+  gap:8px;
+  padding-top:4px;
+}
+.hero-copy p{
+  font-size:17px;
+  line-height:1.55;
+  max-width:740px;
+}
+.hero-copy .pill-row{margin-top:8px}
+.hero-stack{display:contents}
+.pill-row{display:flex;flex-wrap:wrap;gap:8px}
+.chip{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 12px;
+  border-radius:999px;
+  font-size:12px;
+  color:#dce5ef;
+  background:#0f1620;
+  border:1px solid #2b3f55;
+}
+.chip.shared{background:#1d4056}
+.chip.indep{background:#4a3d1c}
+
+.toolbar{
+  grid-column:2;
+  display:grid;
+  grid-template-columns:1.35fr 1.05fr 1.3fr .9fr;
+  gap:12px;
+}
+.action-group{
+  min-width:0;
+  min-height:118px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.018));
+  box-shadow:0 10px 26px rgba(0,0,0,.24);
+  padding:12px 14px;
+  display:grid;
+  align-content:start;
+  gap:10px;
+}
+.toolbar .action-group:nth-child(1){border-color:rgba(106,201,255,.28)}
+.toolbar .action-group:nth-child(2){border-color:rgba(102,211,148,.24)}
+.toolbar .action-group:nth-child(3){border-color:rgba(246,201,95,.24)}
+.toolbar .action-group:nth-child(4){border-color:rgba(144,164,184,.24)}
+.action-title{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  color:#c7d4e3;
+  font-size:14px;
+  font-weight:700;
+}
+.action-row{display:grid;gap:9px}
+.action-row.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.action-row.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.status-group{
+  grid-template-rows:auto auto auto;
+  padding:10px 10px;
+}
+.status-group .action-title{display:none}
+.status-top{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.status-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  color:#dbe7f4;
+  font-size:13px;
+  font-weight:700;
+}
+.status-pill .dot{
+  width:11px;height:11px;border-radius:999px;
+  background:#49d583;
+  box-shadow:0 0 0 3px rgba(73,213,131,.17);
+}
+.status-url{
+  font-size:13px;
+  color:#c4d1df;
+  font-weight:600;
+}
+.icon-btn{
+  width:34px;height:34px;
+  border:1px solid #3a4f67;
+  border-radius:10px;
+  background:#0f1620;
+  color:#dce8f4;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:none;
+}
+.icon-btn svg{width:15px;height:15px;display:block}
+
+.card,.item,.status,.summary,.runtime-tip,details{
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:var(--panel);
+}
+.card{padding:14px;margin:12px 0}
+.item{padding:12px;margin-top:10px}
+.summary,.status,.runtime-tip{padding:13px 14px}
+.status{border-color:rgba(102,211,148,.3)}
+.runtime-tip{border-style:dashed;color:#b8c5d5;background:var(--panel-2)}
+.item-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:10px;
+}
+.item-title{font-size:16px;font-weight:800}
+.muted{color:var(--muted);font-size:13px;line-height:1.55}
+.tab-note{color:var(--muted);font-size:13px;line-height:1.55}
+.notice{
+  border:1px dashed #425364;
+  border-radius:10px;
+  background:var(--panel-2);
+  padding:12px;
+  color:#aebccd;
+  line-height:1.6;
+}
+.workspace-note{
+  border:1px dashed #425364;
+  border-radius:10px;
+  background:var(--panel-2);
+  padding:12px;
+  color:#aebccd;
+  line-height:1.6;
+}
+.top-actions,.grid2,.grid3,.group-checks,.action-rows{display:grid;gap:10px}
+.grid2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.grid3{grid-template-columns:repeat(3,minmax(0,1fr))}
+
+main{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:12px;
+  padding-bottom:28px;
+}
+.workspace-shell{
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:var(--panel);
+  padding:10px 12px 12px;
+}
+.workspace-nav{
+  margin-bottom:10px;
+}
+#guideCard{display:none}
+.tab-bar{
+  display:flex;
+  align-items:flex-end;
+  gap:12px;
+  border-bottom:1px solid #2a3a4d;
+  padding:0 4px;
+}
+.tab-btn{
+  min-height:0;
+  height:38px;
+  padding:0 8px;
+  background:transparent;
+  border:0;
+  border-bottom:2px solid transparent;
+  border-radius:0;
+  color:#c8d4e2;
+  font-size:17px;
+  font-weight:700;
+}
+.tab-btn.active{
+  color:#eef5ff;
+  border-bottom-color:#4caef0;
+}
+.workspace-panels{
+  display:grid;
+  gap:10px;
+}
+.tab-panel{display:none;margin:0!important}
+.tab-panel.active{display:block}
+
+.summary-grid{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:12px;
+}
+.summary-metric{
+  grid-column:span 3;
+  min-height:92px;
+  padding:13px 14px;
+  border:1px solid #2c3f56;
+  border-radius:14px;
+  background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.014));
+  display:grid;
+  gap:6px;
+}
+.summary-metric span{
+  font-size:14px;
+  font-weight:700;
+  color:#b7c6d6;
+}
+.summary-metric b{font-size:42px;line-height:1}
+.summary-metric small{font-size:13px;color:#94a5b9}
+.summary-metric.wide{grid-column:span 6}
+.summary-metric.blue{border-color:rgba(106,201,255,.34)}
+.summary-metric.green{border-color:rgba(102,211,148,.32)}
+.summary-metric.yellow{border-color:rgba(246,201,95,.34)}
+.summary-metric.purple{border-color:rgba(176,120,255,.30)}
+.summary-metric.red{border-color:rgba(255,141,141,.30)}
+.summary-metric.gray{border-color:rgba(144,164,184,.28)}
+
+.device-layout{
+  display:grid;
+  grid-template-columns:minmax(0,1.72fr) minmax(320px,.92fr);
+  gap:12px;
+  align-items:start;
+}
+.device-main,.device-side{
+  border:1px solid #2c3f55;
+  border-radius:12px;
+  background:rgba(255,255,255,.015);
+  padding:10px;
+}
+.device-toolbar,.group-toolbar,.preset-toolbar,.effect-toolbar{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.device-toolbar .left,.group-toolbar .left,.preset-toolbar .left,.effect-toolbar .left{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+}
+.device-filter{display:grid;grid-template-columns:180px 180px minmax(220px,1fr);gap:10px;align-items:end;margin:10px 0}
+.device-filter .wide{grid-column:span 1}
+
+.device-table-wrap{
+  border:1px solid #2d4056;
+  border-radius:12px;
+  overflow:auto;
+  background:#0f1620;
+}
+.device-table{
+  width:100%;
+  border-collapse:collapse;
+  min-width:1180px;
+}
+.device-table th,.device-table td{
+  border-bottom:1px solid #233548;
+  padding:10px 12px;
+  text-align:left;
+  font-size:13px;
+  color:#d8e2ef;
+  vertical-align:top;
+}
+.device-table th{
+  font-size:12px;
+  color:#9fb0c4;
+  font-weight:700;
+  background:rgba(255,255,255,.02);
+}
+.device-name-main{
+  font-size:16px;
+  font-weight:800;
+  color:#f1f7ff;
+}
+.device-sub{
+  display:block;
+  margin-top:2px;
+  font-size:12px;
+  color:#9fb1c6;
+}
+.rssi-good{color:#3fe07d;font-weight:700}
+.rssi-mid{color:#f7cf66;font-weight:700}
+.rssi-off{color:#8f9db0}
+.table-groups{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px 12px;
+}
+.table-groups label{
+  margin:0;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size:13px;
+  color:#d9e5f3;
+}
+.table-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.table-actions button{min-height:32px;font-size:12px;padding:0 10px}
+
+.group-preview-list{display:grid;gap:10px}
+.group-preview-card{
+  border:1px solid #2d4056;
+  border-radius:12px;
+  padding:10px;
+  background:rgba(255,255,255,.02);
+}
+.group-preview-top{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:8px;
+}
+.group-preview-name{
+  font-size:16px;
+  font-weight:800;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.group-dot{
+  width:12px;height:12px;border-radius:999px;display:inline-block
+}
+.group-dot.blue{background:#41a5ff}
+.group-dot.green{background:#4ad58b}
+.group-dot.yellow{background:#f4c95f}
+.group-dot.purple{background:#b170ff}
+.group-preview-meta{
+  margin-top:5px;
+  font-size:13px;
+  color:#afbed0;
+}
+
+.group-list,.device-list,.record-list{display:grid;gap:10px}
+.group-library{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+.group-tile,.fx-tile,.preset-tile,.compact-card{
+  padding:12px;
+  border:1px solid #2f4258;
+  border-radius:11px;
+  background:rgba(255,255,255,.02);
+}
+.compact-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.compact-card.selected-card,.group-tile.selected-card,.fx-tile.selected-card,.preset-tile.selected-card{
+  outline:2px solid #57b8f6;
+}
+
+.group-checks{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:8px}
+.group-checks label{
+  margin:0;
+  display:grid;
+  grid-template-columns:18px minmax(0,1fr);
+  align-items:center;
+  gap:8px;
+  padding:9px 10px;
+  border:1px solid #2f4258;
+  border-radius:9px;
+  background:rgba(255,255,255,.01);
+}
+.group-checks label span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.panel-split{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr);gap:12px}
+.panel-stack{display:grid;gap:12px}
+.fx-library{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px}
+.fx-preview-mini{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:4px;
+  padding:8px;
+  border:1px solid rgba(255,255,255,.06);
+  border-radius:10px;
+  background:#0d1217;
+  margin-top:8px;
+}
+.fx-mini-led{aspect-ratio:1;border-radius:999px;background:#111820;border:1px solid rgba(255,255,255,.06);opacity:.22}
+.fx-mini-led.on{opacity:1}
+.preset-library{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px}
+.preset-preview{display:grid;gap:8px;margin-top:8px}
+.preset-preview .summary-box{
+  padding:10px 12px;
+  border:1px solid #2f4258;
+  border-radius:10px;
+  background:rgba(255,255,255,.02);
+  color:#dce4ee;
+  line-height:1.55;
+}
+.preset-header{display:grid;gap:10px}
+.preset-create{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:end}
+
+.preview-lab{display:grid;gap:12px}
+.preview-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.preview-stage{display:grid;gap:10px;padding:12px;border:1px solid #2f4258;border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01))}
+.preview-stage.paused{opacity:.8}
+.preview-strip{display:grid;grid-template-columns:56px minmax(0,1fr);gap:12px;align-items:center}
+.preview-strip .strip-label{font-size:12px;color:var(--muted);font-weight:700;display:flex;flex-direction:column;gap:2px}
+.preview-strip .strip-label b{font-size:14px;color:var(--text)}
+.preview-leds{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:4px;padding:8px;border:1px solid rgba(255,255,255,.06);border-radius:10px;background:#0d1217}
+.preview-led{aspect-ratio:1;border-radius:999px;background:#111820;border:1px solid rgba(255,255,255,.06);opacity:.18}
+.preview-led.on{opacity:1;transform:scale(1.03)}
+.preview-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.preview-summary .summary-box{padding:10px 12px;border:1px solid #2f4258;border-radius:10px;background:rgba(255,255,255,.02)}
+
+textarea.preview{width:100%;min-height:240px;background:#0f1419}
+summary{cursor:pointer;font-weight:700}
+
+@media (max-width:1600px){
+  h1{font-size:44px}
+  .brand-icon{font-size:36px;width:40px}
+  header{grid-template-columns:minmax(460px,35%) minmax(0,1fr)}
+  .toolbar{grid-template-columns:1.15fr 1fr 1.2fr .95fr}
+}
+@media (max-width:1280px){
+  header{grid-template-columns:1fr}
+  .toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .device-layout{grid-template-columns:1fr}
+  .summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .summary-metric,.summary-metric.wide{grid-column:auto}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="hero-copy">
+    <h1><span class="brand-icon" aria-hidden="true">🪄</span><span>Magic Wand 局域网配置页</span></h1>
+    <p>为电脑灯效控制系统提供局域网配置、分组管理与效果预览（桌面端操作）</p>
+    <div class="pill-row">
+      <span class="chip">UI v0.8.0</span>
+      <span class="chip">本地保存已启用</span>
+      <span class="chip">离线可编辑</span>
+    </div>
+  </div>
+  <div class="hero-stack">
+    <div class="toolbar">
+      <div class="action-group wide">
+        <div class="action-title">快速发布</div>
+        <div class="action-row cols-2">
+          <button id="loadBtn" class="btn-blue small">
+            <span class="btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v6h-6"/></svg></span>
+            <span class="btn-label">读取控制端</span>
+          </button>
+          <button id="publishBtn" class="btn-green small">
+            <span class="btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h14"/><path d="M13 5l7 7-7 7"/></svg></span>
+            <span class="btn-label">一键发布</span>
+          </button>
+        </div>
+      </div>
+      <div class="action-group">
+        <div class="action-title">设备操作</div>
+        <div class="action-row cols-2">
+          <button id="scanBtn" class="btn-yellow small">
+            <span class="btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
+            <span class="btn-label">扫描设备</span>
+          </button>
+          <button id="identifySelectedBtn" class="btn-blue small">
+            <span class="btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><path d="M12 8v4l3 2"/><path d="M12 3v2"/><path d="M21 12h-2"/><path d="M5 12H3"/><path d="M12 19v2"/></svg></span>
+            <span class="btn-label">点名</span>
+          </button>
+        </div>
+      </div>
+      <div class="action-group">
+        <div class="action-title">配置管理</div>
+        <div class="action-row cols-3">
+          <button id="restoreDraftBtn" class="btn-gray small">
+            <span class="btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5"/><path d="M8 7h8"/><path d="M8 11h6"/></svg></span>
+            <span class="btn-label">草稿</span>
+          </button>
+          <button id="saveLocalBtn" class="btn-green small">
+            <span class="btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12H4z"/><path d="M8 4v6h8V4"/><path d="M8 20v-6h8v6"/></svg></span>
+            <span class="btn-label">保存本地</span>
+          </button>
+          <button id="presetBtn" class="btn-gray small">
+            <span class="btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/><path d="M8 6v.01"/><path d="M8 12v.01"/><path d="M8 18v.01"/></svg></span>
+            <span class="btn-label">预设</span>
+          </button>
+        </div>
+      </div>
+      <div class="action-group status-group">
+        <div class="action-title">控制端地址</div>
+        <div class="status-top">
+          <div class="status-pill"><span class="dot"></span><span>控制端：已连接</span></div>
+          <button id="controllerSettingsBtn" class="icon-btn" type="button" aria-label="控制端设置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.04.04a2 2 0 0 1-1.42 3.42h-.06a2 2 0 0 1-1.41-.59 1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.46V21a2 2 0 0 1-2 2h-.1a2 2 0 0 1-1.9-1.4 1.6 1.6 0 0 0-1.42-1.08 1.6 1.6 0 0 0-1.77.32l-.04.04A2 2 0 0 1 4.1 19.9v-.06a2 2 0 0 1 .59-1.41 1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.46-.97H4a2 2 0 0 1-2-2v-.1a2 2 0 0 1 1.4-1.9 1.6 1.6 0 0 0 1.08-1.42 1.6 1.6 0 0 0-.32-1.77l-.04-.04A2 2 0 0 1 4.1 4.1h.06a2 2 0 0 1 1.41.59 1.6 1.6 0 0 0 1.77.32 1.6 1.6 0 0 0 .97-1.46V4a2 2 0 0 1 2-2h.1a2 2 0 0 1 1.9 1.4 1.6 1.6 0 0 0 1.42 1.08 1.6 1.6 0 0 0 1.77-.32l.04-.04A2 2 0 0 1 19.9 4.1v.06a2 2 0 0 1-.59 1.41 1.6 1.6 0 0 0-.32 1.77 1.6 1.6 0 0 0 1.46.97H20a2 2 0 0 1 2 2v.1a2 2 0 0 1-1.4 1.9 1.6 1.6 0 0 0-1.08 1.42Z"/></svg>
+          </button>
+        </div>
+        <div class="status-url">http://192.168.4.1</div>
+        <input id="controllerUrl" value="http://192.168.4.1" aria-label="控制端 API 地址">
+      </div>
+    </div>
+    <div hidden aria-hidden="true">
+      <button id="identifyAllBtn" type="button">全部点名</button>
+      <button id="loadLocalBtn" type="button">读取本地配置</button>
+      <button id="clearDraftBtn" type="button">清除草稿</button>
+      <button id="newGroupBtn" type="button">新建分组</button>
+      <button id="exportBtn" type="button">导出 JSON</button>
+    </div>
+    <div id="status" class="status">请先连接到控制端所在网络，再点“从控制端读取”。如果暂时连不上，也可以直接离线编辑。</div>
+    <div id="runtimeTip" class="runtime-tip"></div>
+    <div class="card" style="margin-top:10px">
+      <div class="item-head">
+        <h2>总览</h2>
+        <div class="pill-row">
+          <span class="chip">桌面端导航布局</span>
+          <span class="chip">默认显示未分组设备</span>
+        </div>
+      </div>
+      <div id="overview" class="summary"></div>
+    </div>
+    <details class="card">
+      <summary>调试日志（原始错误）</summary>
+      <div class="top-actions" style="margin-top:10px">
+        <button id="refreshLogBtn" class="btn-gray small">读取 serve 日志</button>
+        <button id="clearLogBtn" class="btn-gray small">清空 serve 日志</button>
+        <button id="copyDebugBtn" class="btn-yellow small">复制调试文本</button>
+        <button id="clearDebugBtn" class="btn-gray small">清空页面调试</button>
+      </div>
+      <textarea id="debugOutput" class="preview" readonly style="margin-top:10px;min-height:180px"></textarea>
+    </details>
+    <input id="localFileInput" type="file" accept="application/json" hidden>
+  </div>
+</header>
+
+<main>
+  <section class="workspace-shell">
+    <div class="workspace-nav">
+      <div class="tab-bar">
+        <button class="tab-btn active" data-tab="devices">设备</button>
+        <button class="tab-btn" data-tab="groups">分组</button>
+        <button class="tab-btn" data-tab="game">游戏功能</button>
+        <button class="tab-btn" data-tab="effects">灯效库</button>
+        <button class="tab-btn" data-tab="preview">预览台</button>
+        <button class="tab-btn" data-tab="presets">游戏预设</button>
+        <button class="tab-btn" data-tab="debug">调试</button>
+      </div>
+      <details class="card" id="guideCard">
+        <summary>使用说明</summary>
+        <div class="workspace-note" style="margin-top:10px">
+          <p><b>1. 首页看状态。</b> 先确认总览里的设备、分组和当前预设，再看日志是否有报错。</p>
+          <p><b>2. 设备页做分配。</b> 这里负责命名、筛选、选中设备、批量取消分组和单个点名。</p>
+          <p><b>3. 分组页只管标签。</b> 名称、备注、目标关系都在这里，复杂行为放到游戏功能里。</p>
+          <p><b>4. 先预览再发布。</b> 灯效库、预览台和游戏预设都能先看效果，再把配置发给控制端。</p>
+        </div>
+      </details>
+    </div>
+
+    <div class="workspace-panels">
+    <section class="card tab-panel active" id="devicesCard" data-tab-panel="devices"></section>
+
+    <section class="card tab-panel" id="groupsCard" data-tab-panel="groups">
+      <div class="item-head">
+        <div>
+          <h2>分组</h2>
+          <div class="tab-note">分组现在只负责标签和目标关系，复杂行为已经下沉到“游戏功能”页。</div>
+        </div>
+        <button id="newGroupBtn2" class="btn-gray small">新建分组</button>
+      </div>
+      <div id="groups" class="group-library"></div>
+    </section>
+
+    <section class="card tab-panel" id="gameFunctionCard" data-tab-panel="game">
+      <div class="item-head">
+        <div>
+          <h2>游戏功能</h2>
+          <div class="tab-note">这里承接感应方式、RSSI 阈值、保持时间、计分和灯效绑定。</div>
+        </div>
+        <div class="pill-row">
+          <span class="chip">行为</span>
+          <span class="chip">RSSI</span>
+          <span class="chip">灯效绑定</span>
+        </div>
+      </div>
+      <div id="gameFunction"></div>
+    </section>
+
+    <section class="card tab-panel" id="effectsCard" data-tab-panel="effects">
+      <div class="item-head">
+        <div>
+          <h2>灯效库</h2>
+          <div class="tab-note">把灯效做成独立模板，分组和游戏功能只引用它们，不再重复堆参数。</div>
+        </div>
+        <div class="pill-row">
+          <button id="newEffectBtn" class="btn-gray small">新建灯效</button>
+          <button id="copyCurrentEffectBtn" class="btn-yellow small">从当前效果新建</button>
+        </div>
+      </div>
+      <div id="effectsLibrary" class="fx-library"></div>
+    </section>
+
+    <section class="card tab-panel" id="previewLabCard" data-tab-panel="preview">
+      <div id="previewLab"></div>
+    </section>
+
+    <section class="card tab-panel" id="presetsCard" data-tab-panel="presets">
+      <div class="preset-header">
+        <div class="item-head">
+          <div>
+            <h2>游戏预设</h2>
+            <div class="tab-note">预设是可直接开局的模板，可以先预览，再把当前配置存成新的玩法。</div>
+          </div>
+          <div class="pill-row">
+            <span class="chip">当前预设 <strong id="activePresetName">自定义</strong></span>
+          </div>
+        </div>
+        <div class="preset-create">
+          <div>
+            <label for="presetNameInput">新预设名称</label>
+            <input id="presetNameInput" placeholder="例如：魔杖寻宝 - 亲子版">
+          </div>
+          <button id="applyGamePresetBtn" class="btn-blue">套用预设</button>
+          <button id="saveMyPresetBtn" class="btn-green">从当前创建</button>
+        </div>
+      </div>
+      <div class="workspace-note" style="margin-top:10px">下面的卡片既是可执行模板，也是可保存的游戏方案。你可以先套用，再把不同的组绑定进去，然后发布。</div>
+      <div id="presetLibrary" class="preset-library" style="margin-top:12px"></div>
+    </section>
+
+    <section class="card tab-panel" id="debugCard" data-tab-panel="debug">
+      <div class="item-head">
+        <div>
+          <h2>调试</h2>
+          <div class="tab-note">这里主要放发现记录和 JSON 预览，方便核对当前草稿和发布内容。</div>
+        </div>
+        <div class="pill-row">
+          <span class="chip">记录</span>
+          <span class="chip">JSON</span>
+        </div>
+      </div>
+      <div class="panel-stack">
+        <div class="card" style="margin:0">
+          <h2>发现记录</h2>
+          <div id="records" class="record-list"></div>
+        </div>
+        <details class="card" id="previewCard">
+          <summary>JSON 预览</summary>
+          <textarea id="preview" class="preview" readonly></textarea>
+        </details>
+      </div>
+    </section>
+    </div>
+  </section>
+</main>
+
+<script>
+const MAX_GROUPS = 16;
+const controllerUrlEl = document.getElementById('controllerUrl');
+const statusEl = document.getElementById('status');
+const runtimeTipEl = document.getElementById('runtimeTip');
+const overviewEl = document.getElementById('overview');
+const devicesEl = document.getElementById('devicesCard');
+const groupsEl = document.getElementById('groups');
+const gameFunctionEl = document.getElementById('gameFunction');
+const effectsLibraryEl = document.getElementById('effectsLibrary');
+const presetLibraryEl = document.getElementById('presetLibrary');
+const activePresetNameEl = document.getElementById('activePresetName');
+const recordsEl = document.getElementById('records');
+const previewEl = document.getElementById('preview');
+const loadBtn = document.getElementById('loadBtn');
+const loadLocalBtn = document.getElementById('loadLocalBtn');
+const saveLocalBtn = document.getElementById('saveLocalBtn');
+const restoreDraftBtn = document.getElementById('restoreDraftBtn');
+const clearDraftBtn = document.getElementById('clearDraftBtn');
+const newGroupBtn = document.getElementById('newGroupBtn');
+const newGroupBtn2 = document.getElementById('newGroupBtn2');
+const scanBtn = document.getElementById('scanBtn');
+const identifyAllBtn = document.getElementById('identifyAllBtn');
+const identifySelectedBtn = document.getElementById('identifySelectedBtn');
+const publishBtn = document.getElementById('publishBtn');
+const exportBtn = document.getElementById('exportBtn');
+const localFileInput = document.getElementById('localFileInput');
+const presetNameInput = document.getElementById('presetNameInput');
+const applyGamePresetBtn = document.getElementById('applyGamePresetBtn');
+const saveMyPresetBtn = document.getElementById('saveMyPresetBtn');
+const newEffectBtn = document.getElementById('newEffectBtn');
+const copyCurrentEffectBtn = document.getElementById('copyCurrentEffectBtn');
+const refreshLogBtn = document.getElementById('refreshLogBtn');
+const clearLogBtn = document.getElementById('clearLogBtn');
+const copyDebugBtn = document.getElementById('copyDebugBtn');
+const clearDebugBtn = document.getElementById('clearDebugBtn');
+const debugOutputEl = document.getElementById('debugOutput');
+const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
+const tabPanels = Array.from(document.querySelectorAll('[data-tab-panel]'));
+
+const DRAFT_KEY = 'magic_wand_lan_config_draft_v1';
+const UI_STATE_KEY = 'magic_wand_lan_config_ui_state_v1';
+let draftTimer = 0;
+let controllerRefreshTimer = 0;
+let localConfigName = 'magic_wand_config.json';
+let controllerOnline = false;
+let state = emptyState();
+let debugLines = [];
+let activeTab = 'devices';
+let selectedGroupId = 0;
+let selectedPresetId = 'solo_hunt';
+let selectedEffectId = '';
+let previewSourceType = 'group';
+let previewSelectionId = '0';
+let deviceFilterMode = 'ungrouped';
+let deviceFilterGroupId = 0;
+let selectedDeviceSet = new Set();
+const CONTROLLER_URL_KEY = 'magic_wand_controller_url_v1';
+const LOCAL_PROXY_BASE = '/api/controller';
+const DEFAULT_CONTROLLER_BASE = 'http://192.168.4.1';
+const PREVIEW_LED_COUNT = 24;
+let previewPlaying = true;
+let previewStartTs = performance.now();
+let previewPauseOffset = 0;
+let previewPauseStarted = 0;
+let previewFrameHandle = 0;
+let previewSignalUiOverride = defaultSignalUi();
+let previewCells = [];
+let previewStageEl = null;
+let previewSummaryEl = null;
+let previewGroupSelectEl = null;
+let previewRssiRangeEl = null;
+let previewRssiValueEl = null;
+let previewPlayBtnEl = null;
+let previewResetBtnEl = null;
+function isLocalLauncher() {
+  return window.location.protocol === 'http:' && (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost');
+}
+try { const savedControllerUrl = localStorage.getItem(CONTROLLER_URL_KEY); if (savedControllerUrl) controllerUrlEl.value = savedControllerUrl; } catch (_) {}
+controllerUrlEl.addEventListener('input', () => { try { localStorage.setItem(CONTROLLER_URL_KEY, controllerUrlEl.value.trim()); } catch (_) {} });
+
+if (isLocalLauncher()) {
+  controllerUrlEl.value = LOCAL_PROXY_BASE;
+  controllerUrlEl.readOnly = true;
+  controllerUrlEl.title = '本地端固定通过 serve.ps1 代理到控制端 http://192.168.4.1';
+} else if (!controllerUrlEl.value.trim() || controllerUrlEl.value === LOCAL_PROXY_BASE) {
+  controllerUrlEl.value = DEFAULT_CONTROLLER_BASE;
+}
+
+function defaultScoreConfig() {
+  return { enabled: false, port: 0, start: 0, count: 10, empty: '#FFD24D', full: '#FFD700', brightness: 50 };
+}
+
+function defaultSignalUi() {
+  return {
+    weak_rssi: -85,
+    strong_rssi: -45,
+    reverse: false,
+    output: 'brightness',
+    min_value: 10,
+    max_value: 100,
+    preview_rssi: -58
+  };
+}
+
+function normalizeSignalUi(fields, fallback = defaultSignalUi()) {
+  const source = fields && typeof fields === 'object' ? fields : {};
+  const fb = fallback && typeof fallback === 'object' ? fallback : defaultSignalUi();
+  const outputAllowed = new Set(['brightness', 'speed', 'period']);
+  let minValue = clampInt(source.min_value, 0, 5000, fb.min_value ?? 10);
+  let maxValue = clampInt(source.max_value, 0, 5000, fb.max_value ?? 100);
+  if (maxValue < minValue) [minValue, maxValue] = [maxValue, minValue];
+  return {
+    weak_rssi: clampInt(source.weak_rssi, -120, -10, fb.weak_rssi ?? -85),
+    strong_rssi: clampInt(source.strong_rssi, -120, -10, fb.strong_rssi ?? -45),
+    reverse: source.reverse === true || source.reverse === 1 || source.reverse === '1' || source.reverse === 'true',
+    output: outputAllowed.has(String(source.output ?? fb.output ?? 'brightness').toLowerCase()) ? String(source.output ?? fb.output ?? 'brightness').toLowerCase() : 'brightness',
+    min_value: minValue,
+    max_value: maxValue,
+    preview_rssi: clampInt(source.preview_rssi, -120, -10, fb.preview_rssi ?? -58)
+  };
+}
+
+function signalUiFromGroup(g) {
+  return normalizeSignalUi(g?.signal_ui, g?.signal_ui || defaultSignalUi());
+}
+
+function signalUiFromDom(gid) {
+  const current = state.groups[gid] || emptyGroup(gid);
+  const fallback = signalUiFromGroup(current);
+  const weakEl = document.getElementById(`grp_sig_weak_${gid}`);
+  const strongEl = document.getElementById(`grp_sig_strong_${gid}`);
+  const reverseEl = document.getElementById(`grp_sig_reverse_${gid}`);
+  const outputEl = document.getElementById(`grp_sig_output_${gid}`);
+  const minEl = document.getElementById(`grp_sig_min_${gid}`);
+  const maxEl = document.getElementById(`grp_sig_max_${gid}`);
+  return normalizeSignalUi({
+    weak_rssi: weakEl ? weakEl.value : fallback.weak_rssi,
+    strong_rssi: strongEl ? strongEl.value : fallback.strong_rssi,
+    reverse: reverseEl ? reverseEl.checked : fallback.reverse,
+    output: outputEl ? outputEl.value : fallback.output,
+    min_value: minEl ? minEl.value : fallback.min_value,
+    max_value: maxEl ? maxEl.value : fallback.max_value,
+    preview_rssi: fallback.preview_rssi
+  }, fallback);
+}
+
+function mapSignalValue(signalUi, rssi) {
+  const ui = normalizeSignalUi(signalUi);
+  const weak = ui.weak_rssi;
+  const strong = ui.strong_rssi;
+  const low = Math.min(weak, strong);
+  const high = Math.max(weak, strong);
+  const rawT = high === low ? 1 : (normalizeNumber(rssi, low) - low) / (high - low);
+  const t = Math.max(0, Math.min(1, rawT));
+  const mapped = ui.reverse ? 1 - t : t;
+  const value = ui.min_value + (ui.max_value - ui.min_value) * mapped;
+  return {
+    ratio: mapped,
+    value: Math.round(value),
+    weak,
+    strong
+  };
+}
+
+function signalOutputLabel(output) {
+  if (output === 'speed') return '呼吸速度';
+  if (output === 'period') return '周期';
+  return '亮度';
+}
+
+function emptyRule(id = 0) {
+  return {
+    id,
+    name: `Rule${id + 1}`,
+    source_group: 0,
+    target_group: 1,
+    mode: 'round_robin',
+    once: true,
+    target_action: 'target',
+    trigger: { type: 'threshold', operator: 'gte', threshold: -55, hold_ms: 2000 },
+    effect: 'pulse2|7|0|25|0|FFD24D|FFFFFF|600|10|100|20|70|3000',
+    score: defaultScoreConfig()
+  };
+}
+
+function emptyGroup(id) {
+  return {
+    id,
+    valid: false,
+    name: `Group${id + 1}`,
+    note: '',
+    template: '',
+    effect_template_id: '',
+    effect: 'selftest',
+    effect_ui: defaultEffectFields(),
+    idle_effect: 'selftest',
+    silence: '',
+    target: 255,
+    mode: 0,
+    sense_mode: 'group_shared',
+    rssi: -70,
+    hold: 2000,
+    signal_ui: defaultSignalUi(),
+    score: defaultScoreConfig()
+  };
+}
+
+function emptyState() {
+  return {
+    schema_version: 2,
+    devices: [],
+    groups: Array.from({ length: MAX_GROUPS }, (_, i) => emptyGroup(i)),
+    records: [],
+    rules: [],
+    presets: [],
+    effects: builtInEffectTemplates(),
+    active_preset: '自定义'
+  };
+}
+
+function esc(v) {
+  return String(v).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+function scrollToSection(id) {
+  const el = document.getElementById(id);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function setStatus(text) {
+  statusEl.textContent = text;
+}
+
+function setRuntimeTip(text) {
+  runtimeTipEl.innerHTML = text || '';
+}
+
+function appendDebug(message, extra = null) {
+  const ts = new Date().toISOString();
+  const line = extra ? `[${ts}] ${message} | ${extra}` : `[${ts}] ${message}`;
+  debugLines.push(line);
+  if (debugLines.length > 300) debugLines = debugLines.slice(-300);
+  if (debugOutputEl) debugOutputEl.value = debugLines.join('\n');
+}
+
+function errorText(err) {
+  if (!err) return '';
+  if (typeof err === 'string') return err;
+  if (err.stack) return String(err.stack);
+  if (err.message) return String(err.message);
+  try { return JSON.stringify(err); } catch (_) { return String(err); }
+}
+
+function controllerBase() {
+  const raw = controllerUrlEl.value.trim().replace(/\/+$/, '');
+  if (isLocalLauncher()) {
+    return LOCAL_PROXY_BASE;
+  }
+  if (!raw) {
+    return DEFAULT_CONTROLLER_BASE;
+  }
+  if (raw === LOCAL_PROXY_BASE || raw.includes('/api/controller')) {
+    return DEFAULT_CONTROLLER_BASE;
+  }
+  return raw;
+}
+
+function loadUiState() {
+  try {
+    const text = localStorage.getItem(UI_STATE_KEY);
+    if (!text) return;
+    const data = JSON.parse(text);
+    if (data && typeof data === 'object') {
+      if (data.activeTab) activeTab = String(data.activeTab);
+      if (data.selectedGroupId !== undefined) selectedGroupId = normalizeNumber(data.selectedGroupId, selectedGroupId);
+      if (data.selectedPresetId !== undefined) selectedPresetId = String(data.selectedPresetId || selectedPresetId);
+      if (data.selectedEffectId !== undefined) selectedEffectId = String(data.selectedEffectId || selectedEffectId);
+      if (data.previewSourceType) previewSourceType = String(data.previewSourceType);
+      if (data.previewSelectionId !== undefined) previewSelectionId = String(data.previewSelectionId ?? previewSelectionId);
+      if (data.deviceFilterMode) deviceFilterMode = String(data.deviceFilterMode);
+      if (data.deviceFilterGroupId !== undefined) deviceFilterGroupId = normalizeNumber(data.deviceFilterGroupId, deviceFilterGroupId);
+    }
+  } catch (_) {}
+}
+
+function saveUiState() {
+  try {
+    localStorage.setItem(UI_STATE_KEY, JSON.stringify({
+      activeTab,
+      selectedGroupId,
+      selectedPresetId,
+      selectedEffectId,
+      previewSourceType,
+      previewSelectionId,
+      deviceFilterMode,
+      deviceFilterGroupId
+    }));
+  } catch (_) {}
+}
+
+function setActiveTab(tab) {
+  activeTab = String(tab || 'devices');
+  saveUiState();
+  renderTabState();
+}
+
+function renderTabState() {
+  for (const btn of tabButtons) {
+    btn.classList.toggle('active', String(btn.dataset.tab || '') === activeTab);
+  }
+  for (const panel of tabPanels) {
+    panel.classList.toggle('active', String(panel.dataset.tabPanel || '') === activeTab);
+  }
+}
+
+function validEffects() {
+  return Array.isArray(state.effects) ? state.effects.filter(item => item && item.id) : [];
+}
+
+function effectById(id) {
+  const key = String(id ?? '').trim();
+  return validEffects().find(item => String(item.id) === key) || null;
+}
+
+function selectedDeviceIndexes() {
+  return Array.from(selectedDeviceSet).filter(idx => idx >= 0 && idx < state.devices.length);
+}
+
+function countBits32(value) {
+  let n = value >>> 0;
+  let count = 0;
+  while (n) {
+    n &= n - 1;
+    count += 1;
+  }
+  return count;
+}
+
+function deviceGroupCount(mask) {
+  return countBits32(mask >>> 0);
+}
+
+function deviceMatchesFilter(device) {
+  const mask = device.group_mask >>> 0;
+  const groups = validGroups();
+  if (deviceFilterMode === 'all') return true;
+  if (deviceFilterMode === 'group') {
+    const bit = 1 << normalizeNumber(deviceFilterGroupId, 0);
+    return !!(mask & bit);
+  }
+  return !groups.some(g => (mask & (1 << g.id)) !== 0);
+}
+
+function filteredDeviceIndexes() {
+  return state.devices
+    .map((d, idx) => (deviceMatchesFilter(d) ? idx : -1))
+    .filter(idx => idx >= 0);
+}
+
+function deviceMembersOfGroup(gid) {
+  const bit = 1 << gid;
+  return state.devices
+    .map((d, idx) => (((d.group_mask >>> 0) & bit) !== 0 ? idx : -1))
+    .filter(idx => idx >= 0);
+}
+
+function deviceNameAt(idx) {
+  const d = state.devices[idx];
+  return d ? d.name : `设备${idx + 1}`;
+}
+
+function ensureSelectedGroupSelection() {
+  const groups = validGroups();
+  if (!groups.length) {
+    selectedGroupId = -1;
+    return -1;
+  }
+  if (!groups.some(g => g.id === selectedGroupId)) {
+    selectedGroupId = groups[0].id;
+  }
+  return selectedGroupId;
+}
+
+function ensureSelectedEffectSelection() {
+  const effects = validEffects();
+  if (!effects.length) {
+    selectedEffectId = '';
+    return '';
+  }
+  if (!effects.some(e => String(e.id) === String(selectedEffectId))) {
+    selectedEffectId = String(effects[0].id);
+  }
+  return selectedEffectId;
+}
+
+function ensurePreviewSelection() {
+  if (previewSourceType === 'effect') {
+    const effects = validEffects();
+    if (!effects.length) {
+      previewSelectionId = '';
+      return '';
+    }
+    if (!effects.some(e => String(e.id) === String(previewSelectionId))) {
+      previewSelectionId = String(selectedEffectId || effects[0].id);
+    }
+    return previewSelectionId;
+  }
+  const groups = validGroups();
+  if (!groups.length) {
+    previewSelectionId = '';
+    return '';
+  }
+  const gid = normalizeNumber(previewSelectionId || selectedGroupId, groups[0].id);
+  if (!groups.some(g => g.id === gid)) {
+    previewSelectionId = String(groups[0].id);
+  } else {
+    previewSelectionId = String(gid);
+  }
+  return previewSelectionId;
+}
+
+function currentPreviewGroup() {
+  if (previewSourceType !== 'group') return null;
+  const sel = ensurePreviewSelection();
+  const gid = normalizeNumber(sel, -1);
+  return groupById(gid);
+}
+
+function currentPreviewEffect() {
+  if (previewSourceType !== 'effect') return null;
+  const sel = ensurePreviewSelection();
+  return effectById(sel);
+}
+
+const PROXY_FALLBACK_STATUSES = new Set([404, 502, 503, 504]);
+const DEFAULT_FETCH_TIMEOUT_MS = 12000;
+
+function joinControllerPath(base, path) {
+  const p = String(path || '').startsWith('/') ? String(path) : `/${String(path || '')}`;
+  return `${base}${p}`;
+}
+
+async function fetchController(path, options = {}) {
+  const opts = { cache: 'no-store', ...options };
+  const timeoutMs = normalizeNumber(opts.timeoutMs, DEFAULT_FETCH_TIMEOUT_MS);
+  delete opts.timeoutMs;
+  const directUrl = joinControllerPath(DEFAULT_CONTROLLER_BASE, path);
+
+  if (!isLocalLauncher()) {
+    const url = joinControllerPath(controllerBase(), path);
+    appendDebug(`request direct ${opts.method || 'GET'} ${url}`, `timeout=${timeoutMs}ms`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res;
+    try {
+      res = await fetch(url, { ...opts, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+    appendDebug(`response direct ${res.status} ${url}`);
+    return { res, route: 'direct' };
+  }
+
+  const proxyUrl = joinControllerPath(LOCAL_PROXY_BASE, path);
+  let proxyErr = null;
+  try {
+    appendDebug(`request proxy ${opts.method || 'GET'} ${proxyUrl}`, `timeout=${timeoutMs}ms`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let proxyRes;
+    try {
+      proxyRes = await fetch(proxyUrl, { ...opts, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+    appendDebug(`response proxy ${proxyRes.status} ${proxyUrl}`);
+    if (!PROXY_FALLBACK_STATUSES.has(proxyRes.status)) {
+      return { res: proxyRes, route: 'proxy' };
+    }
+    let bodyPreview = '';
+    try {
+      const clone = proxyRes.clone();
+      bodyPreview = (await clone.text()).slice(0, 400);
+    } catch (_) {}
+    appendDebug(`proxy fallback status=${proxyRes.status}`, bodyPreview);
+  } catch (err) {
+    proxyErr = err;
+    appendDebug(`proxy fetch error ${proxyUrl}`, errorText(err));
+  }
+
+  appendDebug(`request fallback direct ${opts.method || 'GET'} ${directUrl}`, `timeout=${timeoutMs}ms`);
+  const directController = new AbortController();
+  const directTimer = setTimeout(() => directController.abort(), timeoutMs);
+  let directRes;
+  try {
+    directRes = await fetch(directUrl, { ...opts, signal: directController.signal });
+  } finally {
+    clearTimeout(directTimer);
+  }
+  appendDebug(`response fallback direct ${directRes.status} ${directUrl}`);
+  return { res: directRes, route: proxyErr ? 'direct-fallback' : 'direct-after-proxy' };
+}
+
+function defaultDeviceName(idx) {
+  return `Fragment${idx + 1}`;
+}
+
+function normalizeDeviceName(name, idx) {
+  const value = String(name ?? '').trim();
+  return value || defaultDeviceName(idx);
+}
+
+function normalizeNumber(v, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function clampInt(v, min, max, fallback) {
+  const n = normalizeNumber(v, fallback);
+  if (n < min) return min;
+  if (n > max) return max;
+  return Math.trunc(n);
+}
+
+function hexColorToSpec(value, fallback = '000000') {
+  const raw = String(value ?? '').trim().replace(/^#/, '');
+  if (/^[0-9a-fA-F]{6}$/.test(raw)) {
+    return raw.toUpperCase();
+  }
+  const fallbackRaw = String(fallback ?? '000000').trim().replace(/^#/, '');
+  return /^[0-9a-fA-F]{6}$/.test(fallbackRaw) ? fallbackRaw.toUpperCase() : '000000';
+}
+
+function specToHexColor(value, fallback = '#000000') {
+  const raw = String(value ?? '').trim().replace(/^#/, '');
+  if (/^[0-9a-fA-F]{6}$/.test(raw)) {
+    return `#${raw.toUpperCase()}`;
+  }
+  return fallback;
+}
+
+function defaultEffectFields() {
+  return {
+    mode: 'selftest',
+    ports: [true, true, true],
+    start: 0,
+    length: 25,
+    gap: 0,
+    colors: ['#500000', '#005AFF', '#00AA78'],
+    endColor: '#FFFFFF',
+    speed: 45,
+    brightness: 100,
+    startBrightness: 10,
+    endBrightness: 100,
+    period: 500,
+    duty: 50,
+    count: 0,
+    accel: 0,
+    endHold: 0
+  };
+}
+
+function builtInEffectTemplates() {
+  const base = defaultEffectFields();
+  const item = (id, name, note, fields, builtIn = true) => ({
+    id,
+    name,
+    note,
+    builtIn,
+    effect_ui: normalizeEffectFields(fields, base),
+    updated_at: new Date(0).toISOString()
+  });
+  return [
+    item('builtin-selftest', '自检', '默认三路呼吸，自检和回退使用。', { ...base, mode: 'selftest' }),
+    item('builtin-silent', '静默', '不发光，只保留状态。', { ...base, mode: 'silent', ports: [false, false, false] }),
+    item('builtin-solid', '常亮', '固定颜色常亮。', { ...base, mode: 'solid', ports: [true, true, true], brightness: 60, colors: ['#FFD24D', '#34B3FF', '#61E09A'] }),
+    item('builtin-breath', '呼吸', '亮度起伏，适合常驻提示。', { ...base, mode: 'breath', ports: [true, false, false], speed: 45, brightness: 35, colors: ['#FFD24D', '#34B3FF', '#61E09A'] }),
+    item('builtin-blink', '闪烁', '按周期亮灭。', { ...base, mode: 'blink', ports: [true, true, true], period: 700, duty: 50, brightness: 100, colors: ['#FFD24D', '#34B3FF', '#FFFFFF'] }),
+    item('builtin-cycle', '多色循环', '三色轮换。', { ...base, mode: 'cycle', ports: [true, true, true], period: 900, brightness: 80, colors: ['#FFD24D', '#34B3FF', '#61E09A'] }),
+    item('builtin-chase', '跑马灯', '单灯位移动。', { ...base, mode: 'chase', ports: [true, true, true], period: 420, brightness: 100, colors: ['#FFD24D', '#34B3FF', '#61E09A'] }),
+    item('builtin-pulse', '脉冲跑马', '渐变、加速、结束停留。', { ...base, mode: 'pulse', ports: [true, true, true], period: 600, startBrightness: 10, endBrightness: 100, count: 20, accel: 70, endHold: 3000, colors: ['#FFD24D', '#34B3FF', '#61E09A'], endColor: '#FFFFFF' })
+  ];
+}
+
+function normalizeEffectLibrary(raw, existing = null) {
+  const fallback = Array.isArray(existing) && existing.length ? existing : builtInEffectTemplates();
+  const source = Array.isArray(raw) ? raw : [];
+  const map = new Map();
+  for (const item of fallback) {
+    const id = String(item.id || '').trim();
+    if (!id) continue;
+    map.set(id, {
+      id,
+      name: String(item.name || id),
+      note: String(item.note || ''),
+      builtIn: item.builtIn === true,
+      effect_ui: normalizeEffectFields(item.effect_ui || item.fields || defaultEffectFields()),
+      updated_at: String(item.updated_at || new Date(0).toISOString())
+    });
+  }
+  for (const item of source) {
+    if (!item || typeof item !== 'object') continue;
+    const id = String(item.id || '').trim();
+    if (!id) continue;
+    map.set(id, {
+      id,
+      name: String(item.name || id),
+      note: String(item.note || ''),
+      builtIn: item.builtIn === true,
+      effect_ui: normalizeEffectFields(item.effect_ui || item.fields || item.effect || defaultEffectFields()),
+      updated_at: String(item.updated_at || new Date().toISOString())
+    });
+  }
+  return Array.from(map.values());
+}
+
+function defaultPresetLibrary() {
+  return [
+    {
+      id: 'solo_hunt',
+      name: '魔杖寻宝-单人轮巡',
+      note: '每支魔杖独立记录宝箱。',
+      source_group_hint: '魔杖组',
+      target_group_hint: '宝箱组'
+    },
+    {
+      id: 'team_hunt',
+      name: '魔杖寻宝-双人组共享',
+      note: '同组共享找到记录。',
+      source_group_hint: '双人魔杖组',
+      target_group_hint: '宝箱组'
+    },
+    {
+      id: 'distance_test',
+      name: '距离提示测试',
+      note: 'RSSI 越强越明显。',
+      source_group_hint: '测试组',
+      target_group_hint: '任意'
+    },
+    {
+      id: 'effect_demo',
+      name: '灯效演示',
+      note: '展示加速脉冲和循环效果。',
+      source_group_hint: '灯效组',
+      target_group_hint: '任意'
+    }
+  ];
+}
+
+function builtInPresetById(id) {
+  return defaultPresetLibrary().find(p => p.id === id) || null;
+}
+
+function normalizePresetLibrary(raw, existing = null) {
+  const fallback = Array.isArray(existing) ? existing : [];
+  const source = Array.isArray(raw) ? raw : [];
+  const map = new Map();
+  const toItem = item => {
+    if (!item || typeof item !== 'object') return null;
+    const id = String(item.id || item.name || '').trim();
+    if (!id) return null;
+    return {
+      id,
+      name: String(item.name || id),
+      note: String(item.note || ''),
+      builtIn: item.builtIn === true,
+      saved_at: String(item.saved_at || ''),
+      config: item.config && typeof item.config === 'object' ? item.config : null
+    };
+  };
+  for (const item of fallback) {
+    const next = toItem(item);
+    if (next) map.set(next.id, next);
+  }
+  for (const item of source) {
+    const next = toItem(item);
+    if (next) map.set(next.id, next);
+  }
+  return Array.from(map.values());
+}
+
+function allPresetItems() {
+  const builtIns = defaultPresetLibrary().map(item => ({
+    ...item,
+    builtIn: true,
+    saved_at: '',
+    config: null
+  }));
+  return builtIns.concat(normalizePresetLibrary(state.presets, []));
+}
+
+function presetById(id) {
+  const key = String(id ?? '').trim();
+  if (!key) return null;
+  const item = allPresetItems().find(p => String(p.id) === key);
+  if (item) return item;
+  return builtInPresetById(key);
+}
+
+function ensureSelectedPresetSelection() {
+  const presets = allPresetItems();
+  if (!presets.length) {
+    selectedPresetId = '';
+    return '';
+  }
+  if (!presets.some(p => String(p.id) === String(selectedPresetId))) {
+    selectedPresetId = String(presets[0].id);
+  }
+  return selectedPresetId;
+}
+
+function selectedPresetMeta() {
+  const preset = presetById(selectedPresetId);
+  if (preset) return preset;
+  return { id: 'custom', name: state.active_preset || '自定义', note: '', builtIn: false, config: null };
+}
+
+function applyPresetById(id) {
+  const preset = presetById(id);
+  if (!preset) return;
+  applyPresetConfig(preset);
+}
+
+function scoreConfigFromGroup(g) {
+  return { ...defaultScoreConfig(), ...(g?.score || {}) };
+}
+
+function scoreConfigFromDom(gid) {
+  const current = state.groups[gid] || emptyGroup(gid);
+  const fallback = scoreConfigFromGroup(current);
+  const enabledEl = document.getElementById(`grp_score_enabled_${gid}`);
+  const portEl = document.getElementById(`grp_score_port_${gid}`);
+  const startEl = document.getElementById(`grp_score_start_${gid}`);
+  const countEl = document.getElementById(`grp_score_count_${gid}`);
+  const emptyEl = document.getElementById(`grp_score_empty_${gid}`);
+  const fullEl = document.getElementById(`grp_score_full_${gid}`);
+  const brightEl = document.getElementById(`grp_score_brightness_${gid}`);
+  return {
+    enabled: enabledEl ? enabledEl.checked : fallback.enabled,
+    port: clampInt(portEl ? portEl.value : fallback.port, 0, 2, fallback.port),
+    start: clampInt(startEl ? startEl.value : fallback.start, 0, 999, fallback.start),
+    count: clampInt(countEl ? countEl.value : fallback.count, 0, 999, fallback.count),
+    empty: String(emptyEl ? emptyEl.value : fallback.empty || '#FFD24D'),
+    full: String(fullEl ? fullEl.value : fallback.full || '#FFD700'),
+    brightness: clampInt(brightEl ? brightEl.value : fallback.brightness, 0, 100, fallback.brightness)
+  };
+}
+
+function setDeviceFilterMode(mode) {
+  deviceFilterMode = String(mode || 'ungrouped');
+  if (deviceFilterMode !== 'group') {
+    deviceFilterGroupId = normalizeNumber(deviceFilterGroupId, 0);
+  }
+  saveUiState();
+  renderDevices();
+}
+
+function setDeviceFilterGroupId(value) {
+  deviceFilterGroupId = normalizeNumber(value, deviceFilterGroupId);
+  saveUiState();
+  renderDevices();
+}
+
+function toggleDeviceSelection(idx, checked) {
+  idx = normalizeNumber(idx, -1);
+  if (idx < 0 || idx >= state.devices.length) return;
+  if (checked) selectedDeviceSet.add(idx);
+  else selectedDeviceSet.delete(idx);
+  renderDevices();
+}
+
+function clearDeviceSelection() {
+  selectedDeviceSet.clear();
+  renderDevices();
+}
+
+function toggleVisibleSelection(force = null) {
+  const visible = filteredDeviceIndexes();
+  if (!visible.length) return;
+  const allSelected = visible.every(idx => selectedDeviceSet.has(idx));
+  const next = typeof force === 'boolean' ? force : !allSelected;
+  for (const idx of visible) {
+    if (next) selectedDeviceSet.add(idx);
+    else selectedDeviceSet.delete(idx);
+  }
+  renderDevices();
+}
+
+function clearSelectedDevicesGroups() {
+  const selected = selectedDeviceIndexes();
+  if (!selected.length) {
+    setStatus('请先选择要取消分组的设备。');
+    return;
+  }
+  if (!confirm(`确定清除这 ${selected.length} 台设备的全部分组吗？`)) return;
+  for (const idx of selected) {
+    const d = state.devices[idx];
+    if (!d) continue;
+    state.devices[idx] = { ...d, group_mask: 0 };
+  }
+  selectedDeviceSet.clear();
+  queueRenderAndDraft('已清除所选设备的分组。');
+}
+
+async function identifySelectedDevices() {
+  const selected = selectedDeviceIndexes();
+  if (!selected.length) {
+    setStatus('请先在设备页勾选要点名的设备。');
+    return;
+  }
+  try {
+    for (const idx of selected) {
+      const { res } = await fetchController(`/identify?idx=${encodeURIComponent(idx)}&t=${Date.now()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    }
+    setStatus(`已向 ${selected.length} 台选中设备发送点名命令。`);
+    scheduleControllerRefresh(800);
+  } catch (err) {
+    appendDebug('identifySelectedDevices failed', errorText(err));
+    controllerOnline = false;
+    renderAll();
+    setStatus(`点名选中失败：${controllerErrorHint(err)}`);
+  }
+}
+
+function selectGroupForGame(gid) {
+  selectedGroupId = normalizeNumber(gid, selectedGroupId);
+  saveUiState();
+  setActiveTab('game');
+  renderAll();
+  scrollToSection('gameFunctionCard');
+}
+
+function selectEffectTemplate(id) {
+  selectedEffectId = String(id || '');
+  previewSourceType = 'effect';
+  previewSelectionId = selectedEffectId;
+  saveUiState();
+  renderAll();
+  scrollToSection('effectsCard');
+}
+
+function selectPreset(id) {
+  selectedPresetId = String(id || '');
+  saveUiState();
+  renderAll();
+}
+
+function effectTemplateLabel(item) {
+  return `${item.name || item.id}${item.builtIn ? ' · 内置' : ''}`;
+}
+
+function effectTemplateSummary(item) {
+  const fx = normalizeEffectFields(item?.effect_ui || defaultEffectFields());
+  return [
+    `模式 ${esc(fx.mode)}`,
+    `端口 ${fx.ports.map((v, i) => v ? `${i + 1}` : '').filter(Boolean).join('、') || '无'}`,
+    `颜色 ${esc(fx.colors.join(' / '))}`
+  ].join(' · ');
+}
+
+function makeCustomEffectId(base = 'effect') {
+  const slug = String(base || 'effect').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'effect';
+  return `${slug}-${Date.now().toString(36)}-${Math.floor(Math.random() * 900 + 100)}`;
+}
+
+function addEffectTemplate(item) {
+  const next = normalizeEffectLibrary([item], state.effects);
+  state.effects = normalizeEffectLibrary(state.effects.concat(next), []);
+  selectedEffectId = String(item.id);
+  previewSourceType = 'effect';
+  previewSelectionId = selectedEffectId;
+  saveUiState();
+  queueRenderAndDraft(`已新增灯效模板：${item.name || item.id}`);
+}
+
+function updateEffectTemplate(id, fields = {}) {
+  const key = String(id || '').trim();
+  if (!key) return false;
+  const idx = validEffects().findIndex(item => String(item.id) === key);
+  if (idx < 0) return false;
+  const current = validEffects()[idx];
+  const next = {
+    ...current,
+    ...fields,
+    id: key,
+    effect_ui: normalizeEffectFields(fields.effect_ui || current.effect_ui || defaultEffectFields(), current.effect_ui || defaultEffectFields())
+  };
+  state.effects = validEffects().map(item => String(item.id) === key ? next : item);
+  return true;
+}
+
+function deleteEffectTemplate(id) {
+  const item = effectById(id);
+  if (!item) return;
+  if (item.builtIn) {
+    setStatus('内置灯效模板不能删除，可以先复制一份再改。');
+    return;
+  }
+  if (!confirm(`确定删除灯效模板「${item.name}」吗？`)) return;
+  state.effects = validEffects().filter(e => String(e.id) !== String(id));
+  if (String(selectedEffectId) === String(id)) {
+    selectedEffectId = state.effects[0] ? String(state.effects[0].id) : '';
+  }
+  queueRenderAndDraft(`已删除灯效模板：${item.name}`);
+}
+
+function duplicateEffectTemplate(id, nameSuffix = '副本') {
+  const item = effectById(id);
+  if (!item) return;
+  const newId = makeCustomEffectId(item.id);
+  const next = {
+    id: newId,
+    name: `${item.name}${nameSuffix}`,
+    note: item.note || '',
+    builtIn: false,
+    effect_ui: normalizeEffectFields(item.effect_ui || defaultEffectFields()),
+    updated_at: new Date().toISOString()
+  };
+  state.effects = normalizeEffectLibrary(state.effects.concat([next]), []);
+  selectedEffectId = newId;
+  previewSourceType = 'effect';
+  previewSelectionId = newId;
+  saveUiState();
+  queueRenderAndDraft(`已复制灯效模板：${next.name}`);
+}
+
+function makeCustomPresetId(base = 'preset') {
+  const slug = String(base || 'preset').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-').replace(/^-+|-+$/g, '') || 'preset';
+  return `${slug}-${Date.now().toString(36)}-${Math.floor(Math.random() * 900 + 100)}`;
+}
+
+function createEffectTemplate() {
+  const name = prompt('灯效模板名称', '新灯效');
+  if (!name) return;
+  const id = makeCustomEffectId(name);
+  addEffectTemplate({
+    id,
+    name: name.trim() || '新灯效',
+    note: '由本地端新建。',
+    builtIn: false,
+    effect_ui: defaultEffectFields(),
+    updated_at: new Date().toISOString()
+  });
+  selectedEffectId = id;
+  previewSourceType = 'effect';
+  previewSelectionId = id;
+  saveUiState();
+  renderAll();
+  scrollToSection('effectsCard');
+}
+
+function createEffectTemplateFromCurrent() {
+  const currentEffect = effectById(selectedEffectId);
+  const currentGroup = groupById(selectedGroupId);
+  if (currentEffect) {
+    duplicateEffectTemplate(currentEffect.id, '副本');
+    scrollToSection('effectsCard');
+    return;
+  }
+  const sourceFx = currentGroup ? effectFieldsFromGroup(currentGroup) : defaultEffectFields();
+  const name = prompt('灯效模板名称', currentGroup ? `${currentGroup.name || '当前组'} 灯效` : '从当前创建的灯效');
+  if (!name) return;
+  const id = makeCustomEffectId(name);
+  addEffectTemplate({
+    id,
+    name: name.trim() || '从当前创建的灯效',
+    note: currentGroup ? `${currentGroup.name || '当前组'} 的灯效快照。` : '从当前状态创建。',
+    builtIn: false,
+    effect_ui: normalizeEffectFields(sourceFx, defaultEffectFields()),
+    updated_at: new Date().toISOString()
+  });
+  selectedEffectId = id;
+  previewSourceType = 'effect';
+  previewSelectionId = id;
+  saveUiState();
+  renderAll();
+  scrollToSection('effectsCard');
+}
+
+function effectMiniStyle(fx, idx, total) {
+  const effect = normalizeEffectFields(fx);
+  const palette = Array.isArray(effect.colors) && effect.colors.length ? effect.colors : defaultEffectFields().colors;
+  const active = buildPreviewActiveIndices(effect);
+  if (effect.mode === 'silent' || effect.ports.every(v => !v)) {
+    return { background: '#111820', opacity: 0.18 };
+  }
+  if (effect.mode === 'solid') {
+    return { background: palette[idx % palette.length], opacity: Math.max(0.18, effect.brightness / 100) };
+  }
+  if (effect.mode === 'cycle') {
+    return { background: palette[idx % palette.length], opacity: Math.max(0.18, effect.brightness / 100) };
+  }
+  if (effect.mode === 'chase') {
+    return active.includes(idx % total) ? { background: palette[0], opacity: Math.max(0.18, effect.brightness / 100) } : { background: '#111820', opacity: 0.14 };
+  }
+  if (effect.mode === 'pulse') {
+    const ratio = total <= 1 ? 1 : idx / (total - 1);
+    return { background: mixHexColor(effect.colors[0], effect.endColor || '#FFFFFF', ratio), opacity: Math.max(0.18, effect.startBrightness / 100 + ratio * ((effect.endBrightness || 100) - (effect.startBrightness || 10)) / 100) };
+  }
+  if (effect.mode === 'blink') {
+    return idx % 2 === 0 ? { background: palette[0], opacity: Math.max(0.18, effect.brightness / 100) } : { background: '#111820', opacity: 0.12 };
+  }
+  if (effect.mode === 'breath') {
+    return { background: palette[0], opacity: Math.max(0.18, effect.brightness / 100) };
+  }
+  return active.includes(idx) ? { background: palette[0], opacity: Math.max(0.18, effect.brightness / 100) } : { background: '#111820', opacity: 0.14 };
+}
+
+function presetSummary(item) {
+  const config = item?.config && typeof item.config === 'object' ? item.config : null;
+  if (!config) {
+    return `内置模板 · ${esc(item.note || '直接套用即可开始。')}`;
+  }
+  const devices = Array.isArray(config.devices) ? config.devices.length : 0;
+  const groups = Array.isArray(config.groups) ? config.groups.filter(g => g && g.valid).length : 0;
+  const effects = Array.isArray(config.effects) ? config.effects.length : 0;
+  return `设备 ${devices} · 分组 ${groups} · 灯效 ${effects}`;
+}
+
+function applyPresetConfig(preset) {
+  if (!preset) return;
+  if (preset.builtIn) {
+    applyGamePreset(preset.id);
+    return;
+  }
+  if (preset.config && typeof preset.config === 'object') {
+    state = normalizeState(preset.config, state);
+    selectedPresetId = String(preset.id);
+    state.active_preset = String(preset.name || preset.id);
+    saveUiState();
+    queueRenderAndDraft(`已套用预设：${preset.name}`);
+  }
+}
+
+function applyEffectTemplateToGroup(gid, effectId) {
+  gid = normalizeNumber(gid, -1);
+  const tpl = effectById(effectId);
+  if (gid < 0 || gid >= MAX_GROUPS || !tpl) return;
+  const current = state.groups[gid] || emptyGroup(gid);
+  state.groups[gid] = {
+    ...current,
+    valid: true,
+    effect_template_id: String(tpl.id),
+    effect_ui: normalizeEffectFields(tpl.effect_ui || defaultEffectFields()),
+    effect: buildEffectSpecFromFields(tpl.effect_ui || defaultEffectFields())
+  };
+  refreshEffectPreview(gid);
+  queueRenderAndDraft(`已把灯效模板「${tpl.name}」应用到分组 #${gid}。`);
+}
+
+function renderScoreEditor(gid, g) {
+  const score = scoreConfigFromGroup(g);
+  return `
+    <details class="fx-advanced" open>
+      <summary>计分灯</summary>
+      <div class="muted">这里控制魔杖的计分灯。默认会记录进度，不会被临时提示灯效覆盖。</div>
+      <div class="grid2">
+        <label style="display:flex;align-items:center;gap:8px;margin:0">
+          <input id="grp_score_enabled_${gid}" type="checkbox" ${score.enabled ? 'checked' : ''} style="width:auto">启用计分灯
+        </label>
+        <div></div>
+      </div>
+      <div class="grid3">
+        <div>
+          <label>计分灯路</label>
+          <input id="grp_score_port_${gid}" type="number" min="0" max="2" value="${normalizeNumber(score.port, 0)}">
+        </div>
+        <div>
+          <label>起点</label>
+          <input id="grp_score_start_${gid}" type="number" min="0" max="999" value="${normalizeNumber(score.start, 0)}">
+        </div>
+        <div>
+          <label>数量</label>
+          <input id="grp_score_count_${gid}" type="number" min="0" max="999" value="${normalizeNumber(score.count, 10)}">
+        </div>
+      </div>
+      <div class="grid3">
+        <div>
+          <label>未满颜色</label>
+          <input id="grp_score_empty_${gid}" type="color" value="${specToHexColor(score.empty, '#FFD24D')}">
+        </div>
+        <div>
+          <label>满格颜色</label>
+          <input id="grp_score_full_${gid}" type="color" value="${specToHexColor(score.full, '#FFD700')}">
+        </div>
+        <div>
+          <label>亮度</label>
+          <input id="grp_score_brightness_${gid}" type="number" min="0" max="100" value="${normalizeNumber(score.brightness, 50)}">
+        </div>
+      </div>
+    </details>`;
+}
+
+
+function portMaskFromFields(fields) {
+  const ports = Array.isArray(fields?.ports) ? fields.ports : [true, true, true];
+  return (ports[0] ? 1 : 0) | (ports[1] ? 2 : 0) | (ports[2] ? 4 : 0);
+}
+
+function portsFromMask(mask) {
+  const m = normalizeNumber(mask, 7) >>> 0;
+  return [(m & 1) !== 0, (m & 2) !== 0, (m & 4) !== 0];
+}
+
+
+function parseEffectSpec(spec) {
+  const fallback = defaultEffectFields();
+  const text = String(spec ?? '').trim();
+  if (!text || text === 'selftest') {
+    return { ...fallback, raw: 'selftest', valid: true };
+  }
+  if (text === 'silent') {
+    return { ...fallback, mode: 'silent', ports: [false, false, false], raw: text, valid: true };
+  }
+
+  const parts = text.split('|').map(s => s.trim());
+  const mode = (parts[0] || '').toLowerCase();
+  const parsed = { ...fallback, raw: text, valid: false };
+  const readCommonV2 = () => {
+    parsed.ports = portsFromMask(parts[1]);
+    parsed.start = clampInt(parts[2], 0, 200, fallback.start);
+    parsed.length = clampInt(parts[3], 0, 200, fallback.length);
+    parsed.gap = clampInt(parts[4], 0, 20, fallback.gap);
+  };
+
+  if (mode === 'solid') {
+    parsed.mode = 'solid';
+    parsed.colors = [specToHexColor(parts[1], fallback.colors[0]), specToHexColor(parts[2], fallback.colors[1]), specToHexColor(parts[3], fallback.colors[2])];
+    parsed.brightness = clampInt(parts[4], 0, 100, fallback.brightness);
+    parsed.valid = true;
+    return parsed;
+  }
+  if (mode === 'breath') {
+    parsed.mode = 'breath';
+    parsed.colors = [specToHexColor(parts[1], fallback.colors[0]), specToHexColor(parts[2], fallback.colors[1]), specToHexColor(parts[3], fallback.colors[2])];
+    parsed.speed = clampInt(parts[4], 1, 5000, fallback.speed);
+    parsed.brightness = clampInt(parts[5], 0, 100, fallback.brightness);
+    parsed.valid = true;
+    return parsed;
+  }
+  if (mode === 'blink') {
+    parsed.mode = 'blink';
+    parsed.colors = [specToHexColor(parts[1], fallback.colors[0]), specToHexColor(parts[2], fallback.colors[1]), specToHexColor(parts[3], fallback.colors[2])];
+    parsed.period = clampInt(parts[4], 50, 20000, fallback.period);
+    parsed.duty = clampInt(parts[5], 1, 99, fallback.duty);
+    parsed.brightness = clampInt(parts[6], 0, 100, fallback.brightness);
+    parsed.valid = true;
+    return parsed;
+  }
+
+  if (mode === 'solid2') {
+    readCommonV2();
+    parsed.mode = 'solid';
+    parsed.colors[0] = specToHexColor(parts[5], fallback.colors[0]);
+    parsed.brightness = clampInt(parts[6], 0, 100, fallback.brightness);
+    parsed.valid = true;
+    return parsed;
+  }
+  if (mode === 'breath2') {
+    readCommonV2();
+    parsed.mode = 'breath';
+    parsed.colors[0] = specToHexColor(parts[5], fallback.colors[0]);
+    parsed.speed = clampInt(parts[6], 1, 5000, fallback.speed);
+    parsed.brightness = clampInt(parts[7], 0, 100, fallback.brightness);
+    parsed.count = clampInt(parts[8], 0, 9999, fallback.count);
+    parsed.accel = clampInt(parts[9], -100, 100, fallback.accel);
+    parsed.endHold = clampInt(parts[10], 0, 30000, fallback.endHold);
+    parsed.valid = true;
+    return parsed;
+  }
+  if (mode === 'blink2') {
+    readCommonV2();
+    parsed.mode = 'blink';
+    parsed.colors[0] = specToHexColor(parts[5], fallback.colors[0]);
+    parsed.period = clampInt(parts[6], 50, 20000, fallback.period);
+    parsed.duty = clampInt(parts[7], 1, 99, fallback.duty);
+    parsed.brightness = clampInt(parts[8], 0, 100, fallback.brightness);
+    parsed.count = clampInt(parts[9], 0, 9999, fallback.count);
+    parsed.accel = clampInt(parts[10], -100, 100, fallback.accel);
+    parsed.endHold = clampInt(parts[11], 0, 30000, fallback.endHold);
+    parsed.valid = true;
+    return parsed;
+  }
+  if (mode === 'cycle2') {
+    readCommonV2();
+    parsed.mode = 'cycle';
+    parsed.colors = [specToHexColor(parts[5], fallback.colors[0]), specToHexColor(parts[6], fallback.colors[1]), specToHexColor(parts[7], fallback.colors[2])];
+    parsed.period = clampInt(parts[8], 50, 20000, fallback.period);
+    parsed.brightness = clampInt(parts[9], 0, 100, fallback.brightness);
+    parsed.count = clampInt(parts[10], 0, 9999, fallback.count);
+    parsed.accel = clampInt(parts[11], -100, 100, fallback.accel);
+    parsed.endHold = clampInt(parts[12], 0, 30000, fallback.endHold);
+    parsed.valid = true;
+    return parsed;
+  }
+  if (mode === 'chase2') {
+    readCommonV2();
+    parsed.mode = 'chase';
+    parsed.colors[0] = specToHexColor(parts[5], fallback.colors[0]);
+    parsed.period = clampInt(parts[6], 50, 20000, fallback.period);
+    parsed.brightness = clampInt(parts[7], 0, 100, fallback.brightness);
+    parsed.count = clampInt(parts[8], 0, 9999, fallback.count);
+    parsed.accel = clampInt(parts[9], -100, 100, fallback.accel);
+    parsed.endHold = clampInt(parts[10], 0, 30000, fallback.endHold);
+    parsed.valid = true;
+    return parsed;
+  }
+  if (mode === 'pulse2') {
+    readCommonV2();
+    parsed.mode = 'pulse';
+    parsed.colors[0] = specToHexColor(parts[5], fallback.colors[0]);
+    parsed.endColor = specToHexColor(parts[6], fallback.endColor);
+    parsed.period = clampInt(parts[7], 50, 20000, fallback.period);
+    parsed.startBrightness = clampInt(parts[8], 0, 100, fallback.startBrightness);
+    parsed.endBrightness = clampInt(parts[9], 0, 100, fallback.endBrightness);
+    parsed.count = clampInt(parts[10], 0, 9999, fallback.count);
+    parsed.accel = clampInt(parts[11], -100, 100, fallback.accel);
+    parsed.endHold = clampInt(parts[12], 0, 30000, fallback.endHold);
+    parsed.valid = true;
+    return parsed;
+  }
+
+  return parsed;
+}
+
+
+function normalizeEffectFields(fields, fallback = defaultEffectFields()) {
+  const source = fields && typeof fields === 'object' ? fields : {};
+  const fallbackColors = Array.isArray(fallback.colors) ? fallback.colors : defaultEffectFields().colors;
+  const sourceColors = Array.isArray(source.colors) ? source.colors : [];
+  const allowedModes = new Set(['selftest', 'silent', 'solid', 'breath', 'blink', 'cycle', 'chase', 'pulse']);
+  const requestedMode = String(source.mode ?? fallback.mode ?? 'selftest').toLowerCase();
+  return {
+    mode: allowedModes.has(requestedMode) ? requestedMode : 'selftest',
+    ports: Array.isArray(source.ports) ? [!!source.ports[0], !!source.ports[1], !!source.ports[2]] : (Array.isArray(fallback.ports) ? fallback.ports : [true, true, true]),
+    start: clampInt(source.start, 0, 200, fallback.start ?? 0),
+    length: clampInt(source.length, 0, 200, fallback.length ?? 25),
+    gap: clampInt(source.gap, 0, 20, fallback.gap ?? 0),
+    colors: [
+      specToHexColor(sourceColors[0], fallbackColors[0]),
+      specToHexColor(sourceColors[1], fallbackColors[1]),
+      specToHexColor(sourceColors[2], fallbackColors[2])
+    ],
+    endColor: specToHexColor(source.endColor, fallback.endColor ?? '#FFFFFF'),
+    speed: clampInt(source.speed, 1, 5000, fallback.speed ?? 45),
+    brightness: clampInt(source.brightness, 0, 100, fallback.brightness ?? 100),
+    startBrightness: clampInt(source.startBrightness, 0, 100, fallback.startBrightness ?? 10),
+    endBrightness: clampInt(source.endBrightness, 0, 100, fallback.endBrightness ?? 100),
+    period: clampInt(source.period, 50, 20000, fallback.period ?? 500),
+    duty: clampInt(source.duty, 1, 99, fallback.duty ?? 50),
+    count: clampInt(source.count, 0, 9999, fallback.count ?? 0),
+    accel: clampInt(source.accel, -100, 100, fallback.accel ?? 0),
+    endHold: clampInt(source.endHold, 0, 30000, fallback.endHold ?? 0)
+  };
+}
+
+function buildEffectSpecFromFields(fields) {
+  const fx = normalizeEffectFields(fields);
+  const mode = String(fx.mode || 'selftest');
+  const c1 = hexColorToSpec(fx.colors[0], defaultEffectFields().colors[0]);
+  const c2 = hexColorToSpec(fx.colors[1], defaultEffectFields().colors[1]);
+  const c3 = hexColorToSpec(fx.colors[2], defaultEffectFields().colors[2]);
+  const endColor = hexColorToSpec(fx.endColor, '#FFFFFF');
+  const mask = portMaskFromFields(fx);
+  const start = clampInt(fx.start, 0, 200, 0);
+  const len = clampInt(fx.length, 0, 200, 25);
+  const gap = clampInt(fx.gap, 0, 20, 0);
+  const speed = clampInt(fx.speed, 1, 5000, 45);
+  const brightness = clampInt(fx.brightness, 0, 100, 100);
+  const period = clampInt(fx.period, 50, 20000, 500);
+  const duty = clampInt(fx.duty, 1, 99, 50);
+  const count = clampInt(fx.count, 0, 9999, 0);
+  const accel = clampInt(fx.accel, -100, 100, 0);
+  const endHold = clampInt(fx.endHold, 0, 30000, 0);
+  const startB = clampInt(fx.startBrightness, 0, 100, 10);
+  const endB = clampInt(fx.endBrightness, 0, 100, 100);
+
+  if (mode === 'selftest') return 'selftest';
+  if (mode === 'silent' || mask === 0 || len === 0) return 'silent';
+  if (mode === 'solid') return `solid2|${mask}|${start}|${len}|${gap}|${c1}|${brightness}`;
+  if (mode === 'breath') return `breath2|${mask}|${start}|${len}|${gap}|${c1}|${speed}|${brightness}|${count}|${accel}|${endHold}`;
+  if (mode === 'blink') return `blink2|${mask}|${start}|${len}|${gap}|${c1}|${period}|${duty}|${brightness}|${count}|${accel}|${endHold}`;
+  if (mode === 'cycle') return `cycle2|${mask}|${start}|${len}|${gap}|${c1}|${c2}|${c3}|${period}|${brightness}|${count}|${accel}|${endHold}`;
+  if (mode === 'chase') return `chase2|${mask}|${start}|${len}|${gap}|${c1}|${period}|${brightness}|${count}|${accel}|${endHold}`;
+  if (mode === 'pulse') return `pulse2|${mask}|${start}|${len}|${gap}|${c1}|${endColor}|${period}|${startB}|${endB}|${count}|${accel}|${endHold}`;
+  return 'selftest';
+}
+
+function effectFieldsFromGroup(g) {
+  const parsed = parseEffectSpec(g?.effect);
+  return normalizeEffectFields(g?.effect_ui, parsed);
+}
+
+function effectFieldsFromDom(gid) {
+  const modeEl = document.getElementById(`grp_fx_mode_${gid}`);
+  const c1El = document.getElementById(`grp_fx_c1_${gid}`);
+  const c2El = document.getElementById(`grp_fx_c2_${gid}`);
+  const c3El = document.getElementById(`grp_fx_c3_${gid}`);
+  const speedEl = document.getElementById(`grp_fx_speed_${gid}`);
+  const brightEl = document.getElementById(`grp_fx_brightness_${gid}`);
+  const periodEl = document.getElementById(`grp_fx_period_${gid}`);
+  const dutyEl = document.getElementById(`grp_fx_duty_${gid}`);
+  const startEl = document.getElementById(`grp_fx_start_${gid}`);
+  const lengthEl = document.getElementById(`grp_fx_length_${gid}`);
+  const gapEl = document.getElementById(`grp_fx_gap_${gid}`);
+  const endColorEl = document.getElementById(`grp_fx_end_color_${gid}`);
+  const startBrightEl = document.getElementById(`grp_fx_start_brightness_${gid}`);
+  const endBrightEl = document.getElementById(`grp_fx_end_brightness_${gid}`);
+  const countEl = document.getElementById(`grp_fx_count_${gid}`);
+  const accelEl = document.getElementById(`grp_fx_accel_${gid}`);
+  const endHoldEl = document.getElementById(`grp_fx_end_hold_${gid}`);
+  const portEls = [0, 1, 2].map(i => document.getElementById(`grp_fx_port_${gid}_${i}`));
+  const current = state.groups[gid] || {};
+  const fallback = effectFieldsFromGroup(current);
+  return normalizeEffectFields({
+    mode: modeEl ? modeEl.value : 'selftest',
+    colors: [
+      c1El ? c1El.value : fallback.colors[0],
+      c2El ? c2El.value : fallback.colors[1],
+      c3El ? c3El.value : fallback.colors[2]
+    ],
+    speed: speedEl ? speedEl.value : fallback.speed,
+    brightness: brightEl ? brightEl.value : fallback.brightness,
+    period: periodEl ? periodEl.value : fallback.period,
+    duty: dutyEl ? dutyEl.value : fallback.duty,
+    ports: portEls.map((el, i) => el ? el.checked : fallback.ports[i]),
+    start: startEl ? startEl.value : fallback.start,
+    length: lengthEl ? lengthEl.value : fallback.length,
+    gap: gapEl ? gapEl.value : fallback.gap,
+    endColor: endColorEl ? endColorEl.value : fallback.endColor,
+    startBrightness: startBrightEl ? startBrightEl.value : fallback.startBrightness,
+    endBrightness: endBrightEl ? endBrightEl.value : fallback.endBrightness,
+    count: countEl ? countEl.value : fallback.count,
+    accel: accelEl ? accelEl.value : fallback.accel,
+    endHold: endHoldEl ? endHoldEl.value : fallback.endHold
+  }, fallback);
+}
+
+function refreshEffectPreview(gid) {
+  const previewEl = document.getElementById(`grp_fx_preview_${gid}`);
+  if (!previewEl) return;
+  previewEl.value = buildEffectSpecFromFields(effectFieldsFromDom(gid));
+  const stateEl = document.getElementById(`grp_fx_state_${gid}`);
+  if (stateEl) stateEl.textContent = '待保存到本地';
+  refreshPreviewPanel();
+}
+
+function setEffectFields(gid, fields) {
+  const fx = normalizeEffectFields(fields);
+  const setValue = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = String(value);
+  };
+  setValue(`grp_fx_mode_${gid}`, fx.mode);
+  const colors = fx.colors;
+  setValue(`grp_fx_c1_${gid}`, specToHexColor(colors[0], defaultEffectFields().colors[0]));
+  setValue(`grp_fx_c2_${gid}`, specToHexColor(colors[1], defaultEffectFields().colors[1]));
+  setValue(`grp_fx_c3_${gid}`, specToHexColor(colors[2], defaultEffectFields().colors[2]));
+  setValue(`grp_fx_speed_${gid}`, fx.speed);
+  setValue(`grp_fx_brightness_${gid}`, fx.brightness);
+  setValue(`grp_fx_period_${gid}`, fx.period);
+  setValue(`grp_fx_duty_${gid}`, fx.duty);
+  setValue(`grp_fx_start_${gid}`, fx.start);
+  setValue(`grp_fx_length_${gid}`, fx.length);
+  setValue(`grp_fx_gap_${gid}`, fx.gap);
+  setValue(`grp_fx_end_color_${gid}`, specToHexColor(fx.endColor, '#FFFFFF'));
+  setValue(`grp_fx_start_brightness_${gid}`, fx.startBrightness);
+  setValue(`grp_fx_end_brightness_${gid}`, fx.endBrightness);
+  setValue(`grp_fx_count_${gid}`, fx.count);
+  setValue(`grp_fx_accel_${gid}`, fx.accel);
+  setValue(`grp_fx_end_hold_${gid}`, fx.endHold);
+  for (let i = 0; i < 3; i++) { const el = document.getElementById(`grp_fx_port_${gid}_${i}`); if (el) el.checked = !!fx.ports[i]; }
+  refreshEffectPreview(gid);
+  const stateEl = document.getElementById(`grp_fx_state_${gid}`);
+  if (stateEl) stateEl.textContent = '已从配置加载';
+}
+
+function renderEffectEditor(gid, g) {
+  const fx = effectFieldsFromGroup(g);
+  const spec = buildEffectSpecFromFields(fx);
+  const modeOptions = [
+    ['selftest', '自检'],
+    ['silent', '静默'],
+    ['solid', '常亮'],
+    ['breath', '呼吸'],
+    ['blink', '闪烁'],
+    ['cycle', '多色循环'],
+    ['chase', '跑马灯'],
+    ['pulse', '脉冲跑马']
+  ].map(([value, label]) => `<option value="${value}" ${String(fx.mode || 'selftest') === value ? 'selected' : ''}>${label}</option>`).join('');
+  return `
+    <div class="fx-box" style="margin-top:10px">
+      <label>灯效模板</label>
+      <select id="grp_fx_mode_${gid}" onchange="refreshEffectPreview(${gid})">${modeOptions}</select>
+      <div class="muted" style="margin-top:6px">模板说明：自检=默认三路呼吸；静默=不发光；常亮=固定颜色；呼吸=明暗起伏；闪烁=按周期亮灭；多色循环=三色轮换；跑马灯=单灯位移动；脉冲跑马=颜色和亮度可渐变，还能设置次数和结束停留。未被当前模板使用的参数也会保存在本地端，切换模板时不会丢失。</div>
+      <div class="fx-port-row">
+        <label title="只作用在第 1 路 LED"><input id="grp_fx_port_${gid}_0" type="checkbox" ${fx.ports[0] ? 'checked' : ''}>1 路</label>
+        <label title="只作用在第 2 路 LED"><input id="grp_fx_port_${gid}_1" type="checkbox" ${fx.ports[1] ? 'checked' : ''}>2 路</label>
+        <label title="只作用在第 3 路 LED"><input id="grp_fx_port_${gid}_2" type="checkbox" ${fx.ports[2] ? 'checked' : ''}>3 路</label>
+      </div>
+      <div class="grid3" style="margin-top:10px">
+        <div>
+          <label>起始灯位</label>
+          <input id="grp_fx_start_${gid}" type="number" min="0" max="200" value="${normalizeNumber(fx.start, 0)}" onchange="refreshEffectPreview(${gid})">
+          <div class="muted">从第几个灯开始作用。</div>
+        </div>
+        <div>
+          <label>长度</label>
+          <input id="grp_fx_length_${gid}" type="number" min="0" max="200" value="${normalizeNumber(fx.length, 25)}" onchange="refreshEffectPreview(${gid})">
+          <div class="muted">作用的灯数量。0 会自动静默。</div>
+        </div>
+        <div>
+          <label>间隔</label>
+          <input id="grp_fx_gap_${gid}" type="number" min="0" max="20" value="${normalizeNumber(fx.gap, 0)}" onchange="refreshEffectPreview(${gid})">
+          <div class="muted">例如 1=隔 1 个亮 1 个；2=隔 2 个亮 1 个。</div>
+        </div>
+      </div>
+      <details class="fx-advanced" open>
+        <summary>高级参数</summary>
+        <div class="muted">这些参数会保存在本地配置里。选择不同灯效模板时，只是隐藏或优先使用其中一部分，不会把其它参数清掉。</div>
+        <div class="grid3" style="margin-top:10px">
+          <div>
+            <label>灯 1 颜色</label>
+            <input id="grp_fx_c1_${gid}" type="color" value="${specToHexColor(fx.colors[0])}" onchange="refreshEffectPreview(${gid})">
+          </div>
+          <div>
+            <label>灯 2 颜色</label>
+            <input id="grp_fx_c2_${gid}" type="color" value="${specToHexColor(fx.colors[1])}" onchange="refreshEffectPreview(${gid})">
+          </div>
+          <div>
+            <label>灯 3 颜色</label>
+            <input id="grp_fx_c3_${gid}" type="color" value="${specToHexColor(fx.colors[2])}" onchange="refreshEffectPreview(${gid})">
+          </div>
+        </div>
+        <div class="grid3" style="margin-top:10px">
+          <div>
+            <label>终止色</label>
+            <input id="grp_fx_end_color_${gid}" type="color" value="${specToHexColor(fx.endColor, '#FFFFFF')}" onchange="refreshEffectPreview(${gid})">
+            <div class="muted">只对“脉冲跑马”模板生效。</div>
+          </div>
+          <div>
+            <label>呼吸速度</label>
+            <input id="grp_fx_speed_${gid}" type="number" min="1" max="5000" value="${normalizeNumber(fx.speed, 45)}" onchange="refreshEffectPreview(${gid})">
+            <div class="muted">只对“呼吸”模板生效。数字越大，呼吸越快。</div>
+          </div>
+          <div>
+            <label>亮度</label>
+            <input id="grp_fx_brightness_${gid}" type="number" min="0" max="100" value="${normalizeNumber(fx.brightness, 100)}" onchange="refreshEffectPreview(${gid})">
+            <div class="muted">0 是最暗，100 是最亮。</div>
+          </div>
+        </div>
+        <div class="grid3" style="margin-top:10px">
+          <div>
+            <label>闪烁周期</label>
+            <input id="grp_fx_period_${gid}" type="number" min="50" max="20000" value="${normalizeNumber(fx.period, 500)}" onchange="refreshEffectPreview(${gid})">
+            <div class="muted">只对“闪烁 / 跑马 / 循环 / 脉冲”模板生效。1000 表示 1 秒一轮。</div>
+          </div>
+          <div>
+            <label>亮起比例</label>
+            <input id="grp_fx_duty_${gid}" type="number" min="1" max="99" value="${normalizeNumber(fx.duty, 50)}" onchange="refreshEffectPreview(${gid})">
+            <div class="muted">只对“闪烁”模板生效。50 表示亮一半、灭一半。</div>
+          </div>
+          <div>
+            <label>执行次数</label>
+            <input id="grp_fx_count_${gid}" type="number" min="0" max="9999" value="${normalizeNumber(fx.count, 0)}" onchange="refreshEffectPreview(${gid})">
+            <div class="muted">0 = 无限制，适合常驻效果。</div>
+          </div>
+        </div>
+        <div class="grid3" style="margin-top:10px">
+          <div>
+            <label>加速度</label>
+            <input id="grp_fx_accel_${gid}" type="number" min="-100" max="100" value="${normalizeNumber(fx.accel, 0)}" onchange="refreshEffectPreview(${gid})">
+            <div class="muted">正数会越跑越快，负数会越跑越慢。</div>
+          </div>
+          <div>
+            <label>开始亮度</label>
+            <input id="grp_fx_start_brightness_${gid}" type="number" min="0" max="100" value="${normalizeNumber(fx.startBrightness, 10)}" onchange="refreshEffectPreview(${gid})">
+            <div class="muted">只对“脉冲跑马”模板生效。</div>
+          </div>
+          <div>
+            <label>结束亮度</label>
+            <input id="grp_fx_end_brightness_${gid}" type="number" min="0" max="100" value="${normalizeNumber(fx.endBrightness, 100)}" onchange="refreshEffectPreview(${gid})">
+            <div class="muted">只对“脉冲跑马”模板生效。</div>
+          </div>
+        </div>
+        <div class="grid2" style="margin-top:10px">
+          <div>
+            <label>结束保持(ms)</label>
+            <input id="grp_fx_end_hold_${gid}" type="number" min="0" max="30000" value="${normalizeNumber(fx.endHold, 0)}" onchange="refreshEffectPreview(${gid})">
+            <div class="muted">执行次数结束后，停留多久再回到默认效果。</div>
+          </div>
+          <div>
+            <label>最终下发指令</label>
+            <input id="grp_fx_preview_${gid}" value="${esc(spec)}" readonly>
+          </div>
+        </div>
+      </details>
+      <div class="muted" style="margin-top:8px">“最终下发指令”会真正发给接收端；完整编辑值会保存在本地配置里。</div>
+      <div class="grid2" style="margin-top:10px">
+        <button class="btn-blue small" onclick="saveEffect(${gid})">保存灯效</button>
+        <button class="btn-gray small" onclick="refreshEffectPreview(${gid})">刷新预览</button>
+      </div>
+      <div class="muted" style="margin-top:6px">当前灯效状态：<span id="grp_fx_state_${gid}">已保存到本地</span></div>
+    </div>`;
+}
+
+function renderSignalEditor(gid, g) {
+  const sig = signalUiFromGroup(g);
+  const mapped = mapSignalValue(sig, sig.preview_rssi);
+  const outputOptions = ['brightness', 'speed', 'period']
+    .map(value => `<option value="${value}" ${sig.output === value ? 'selected' : ''}>${signalOutputLabel(value)}</option>`)
+    .join('');
+  return `
+    <details class="fx-advanced signal-box" open>
+      <summary>RSSI 映射与预览入口</summary>
+      <div class="muted">这里是本地端的两端点映射。它只影响草稿和浏览器预览，不会破坏控制端现有的兼容格式。</div>
+      <div class="grid3">
+        <div>
+          <label>弱端 RSSI</label>
+          <input id="grp_sig_weak_${gid}" type="number" min="-120" max="-10" value="${normalizeNumber(sig.weak_rssi, -85)}" onchange="refreshPreviewPanel()">
+        </div>
+        <div>
+          <label>强端 RSSI</label>
+          <input id="grp_sig_strong_${gid}" type="number" min="-120" max="-10" value="${normalizeNumber(sig.strong_rssi, -45)}" onchange="refreshPreviewPanel()">
+        </div>
+        <div>
+          <label>输出目标</label>
+          <select id="grp_sig_output_${gid}" onchange="refreshPreviewPanel()">${outputOptions}</select>
+        </div>
+      </div>
+      <div class="grid3">
+        <div>
+          <label>输出最小值</label>
+          <input id="grp_sig_min_${gid}" type="number" min="0" max="5000" value="${normalizeNumber(sig.min_value, 10)}" onchange="refreshPreviewPanel()">
+        </div>
+        <div>
+          <label>输出最大值</label>
+          <input id="grp_sig_max_${gid}" type="number" min="0" max="5000" value="${normalizeNumber(sig.max_value, 100)}" onchange="refreshPreviewPanel()">
+        </div>
+        <div>
+          <label>反向映射</label>
+          <div class="fx-port-row" style="margin-top:0">
+            <label title="弱端和强端的映射方向反过来"><input id="grp_sig_reverse_${gid}" type="checkbox" ${sig.reverse ? 'checked' : ''} onchange="refreshPreviewPanel()">反向</label>
+          </div>
+        </div>
+      </div>
+      <div class="signal-chip-row">
+        <span class="chip">预览 RSSI <strong id="grp_sig_preview_${gid}">${normalizeNumber(sig.preview_rssi, -58)}</strong> dBm</span>
+        <span class="chip">输出 <strong id="grp_sig_out_${gid}">${esc(signalOutputLabel(sig.output))}</strong> · 当前值 <strong id="grp_sig_mapped_${gid}">${mapped.value}</strong></span>
+        <span class="chip">弱端 ${normalizeNumber(sig.weak_rssi, -85)} · 强端 ${normalizeNumber(sig.strong_rssi, -45)}</span>
+      </div>
+      <div class="grid2" style="margin-top:10px">
+        <button class="btn-blue small" onclick="previewGroup(${gid})">在预览区查看</button>
+        <button class="btn-green small" onclick="saveGroup(${gid})">保存映射</button>
+      </div>
+    </details>`;
+}
+
+function hexToRgbTuple(hex) {
+  const raw = String(hex ?? '').trim().replace(/^#/, '');
+  if (!/^[0-9a-fA-F]{6}$/.test(raw)) return [0, 0, 0];
+  const n = parseInt(raw, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function rgbaFromHex(hex, alpha = 1) {
+  const [r, g, b] = hexToRgbTuple(hex);
+  const a = Math.max(0, Math.min(1, Number(alpha)));
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+function mixHexColor(a, b, t) {
+  const c1 = hexToRgbTuple(a);
+  const c2 = hexToRgbTuple(b);
+  const m = Math.max(0, Math.min(1, Number(t)));
+  const blend = idx => Math.round(c1[idx] + (c2[idx] - c1[idx]) * m);
+  return `#${[blend(0), blend(1), blend(2)].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+}
+
+function easeInOut(t) {
+  const x = Math.max(0, Math.min(1, Number(t)));
+  return 0.5 - 0.5 * Math.cos(Math.PI * x);
+}
+
+function buildPreviewActiveIndices(fx) {
+  const start = clampInt(fx.start, 0, PREVIEW_LED_COUNT - 1, 0);
+  const length = clampInt(fx.length, 0, PREVIEW_LED_COUNT, 0);
+  const gap = clampInt(fx.gap, 0, 20, 0);
+  const indices = [];
+  let pos = start;
+  for (let i = 0; i < length && pos < PREVIEW_LED_COUNT; i++, pos += gap + 1) {
+    indices.push(pos);
+  }
+  return indices;
+}
+
+function previewBaseDuration(fx) {
+  const mode = String(fx?.mode || 'selftest');
+  if (mode === 'breath') {
+    return Math.max(300, 3000 - clampInt(fx.speed, 1, 5000, 45) * 20);
+  }
+  if (mode === 'selftest') {
+    return 2200;
+  }
+  return clampInt(fx.period, 50, 20000, 500);
+}
+
+function previewRuntime(fx, elapsed) {
+  const baseMs = previewBaseDuration(fx);
+  const maxCycles = clampInt(fx.count, 0, 9999, 0) > 0 ? clampInt(fx.count, 0, 9999, 0) : 9999;
+  const accel = clampInt(fx.accel, -100, 100, 0);
+  let remaining = Math.max(0, elapsed);
+  let cycleIndex = 0;
+  let cycleMs = baseMs;
+  while (remaining >= cycleMs && cycleIndex < maxCycles - 1) {
+    remaining -= cycleMs;
+    cycleIndex += 1;
+    cycleMs = Math.max(80, Math.min(30000, Math.round(baseMs / Math.max(0.2, 1 + (cycleIndex * accel / 100)))));
+  }
+  return {
+    baseMs,
+    cycleIndex,
+    cycleMs,
+    phase: cycleMs > 0 ? Math.max(0, Math.min(1, remaining / cycleMs)) : 0,
+    finished: clampInt(fx.count, 0, 9999, 0) > 0 && cycleIndex >= clampInt(fx.count, 0, 9999, 0) - 1 && remaining >= cycleMs
+  };
+}
+
+function previewEffectForSignal(fx, signalUi, mappedValue) {
+  const out = normalizeEffectFields(fx);
+  const mode = String(out.mode || 'selftest');
+  const output = String(signalUi?.output || 'brightness');
+  if (output === 'brightness') {
+    if (mode === 'pulse') {
+      out.startBrightness = clampInt(out.startBrightness, 0, 100, 10);
+      out.endBrightness = mappedValue;
+    } else {
+      out.brightness = mappedValue;
+    }
+  } else if (output === 'speed') {
+    if (mode === 'breath') {
+      out.speed = mappedValue;
+    } else {
+      out.period = mappedValue;
+    }
+  } else {
+    out.period = mappedValue;
+  }
+  return out;
+}
+
+function refreshPreviewPanel() {
+  updatePreviewPanel(performance.now());
+}
+
+function selectPreviewSourceType(value) {
+  previewSourceType = String(value || 'group');
+  if (previewSourceType === 'effect') {
+    ensureSelectedEffectSelection();
+    previewSelectionId = String(selectedEffectId || previewSelectionId || '');
+    previewSignalUiOverride = defaultSignalUi();
+  } else {
+    ensureSelectedGroupSelection();
+    previewSelectionId = String(normalizeNumber(previewSelectionId, selectedGroupId));
+  }
+  saveUiState();
+  renderPreviewLab();
+}
+
+function selectPreviewItem(value) {
+  previewSelectionId = String(value ?? '');
+  if (previewSourceType === 'effect') {
+    selectedEffectId = previewSelectionId;
+  } else {
+    selectedGroupId = normalizeNumber(previewSelectionId, selectedGroupId);
+  }
+  saveUiState();
+  renderPreviewLab();
+}
+
+function previewGroup(gid) {
+  previewSourceType = 'group';
+  previewSelectionId = String(normalizeNumber(gid, -1));
+  selectedGroupId = normalizeNumber(gid, selectedGroupId);
+  saveUiState();
+  renderTabState();
+  renderPreviewLab();
+  scrollToSection('previewLabCard');
+}
+
+function previewEffectTemplate(id) {
+  previewSourceType = 'effect';
+  previewSelectionId = String(id || '');
+  selectedEffectId = String(id || selectedEffectId || '');
+  saveUiState();
+  renderTabState();
+  renderPreviewLab();
+  scrollToSection('previewLabCard');
+}
+
+function togglePreviewPlaying(force) {
+  const next = typeof force === 'boolean' ? force : !previewPlaying;
+  if (next === previewPlaying) return;
+  const now = performance.now();
+  if (!next) {
+    previewPauseStarted = now;
+  } else if (previewPauseStarted) {
+    previewPauseOffset += now - previewPauseStarted;
+    previewPauseStarted = 0;
+  }
+  previewPlaying = next;
+  updatePreviewPanel(now);
+}
+
+function resetPreviewPlayback() {
+  previewStartTs = performance.now();
+  previewPauseOffset = 0;
+  previewPauseStarted = 0;
+  previewPlaying = true;
+  updatePreviewPanel(previewStartTs);
+}
+
+function setPreviewRssi(value) {
+  const selection = ensurePreviewSelection();
+  if (!selection) return;
+  if (previewSourceType === 'group') {
+    const gid = normalizeNumber(selection, -1);
+    const current = groupById(gid);
+    if (!current) return;
+    const sig = signalUiFromDom(gid);
+    sig.preview_rssi = clampInt(value, -120, -10, sig.preview_rssi);
+    state.groups[gid] = { ...current, signal_ui: sig };
+    if (previewRssiRangeEl) previewRssiRangeEl.value = String(sig.preview_rssi);
+  } else {
+    previewSignalUiOverride = normalizeSignalUi({
+      ...previewSignalUiOverride,
+      preview_rssi: clampInt(value, -120, -10, previewSignalUiOverride.preview_rssi)
+    }, previewSignalUiOverride);
+    if (previewRssiRangeEl) previewRssiRangeEl.value = String(previewSignalUiOverride.preview_rssi);
+  }
+  queueDraftSave();
+  updatePreviewPanel(performance.now());
+}
+
+function renderPreviewLab() {
+  const host = document.getElementById('previewLab');
+  if (!host) return;
+  const groups = validGroups();
+  const effects = validEffects();
+  if (!groups.length && !effects.length) {
+    host.innerHTML = '<div class="notice">当前还没有可预览的分组或灯效。先创建一个分组或者灯效，再回来查看预览。</div>';
+    previewCells = [];
+    previewStageEl = null;
+    previewSummaryEl = null;
+    previewGroupSelectEl = null;
+    previewRssiRangeEl = null;
+    previewRssiValueEl = null;
+    previewPlayBtnEl = null;
+    previewResetBtnEl = null;
+    previewSelectionId = '';
+    return;
+  }
+
+  ensurePreviewSelection();
+  const sourceType = previewSourceType === 'effect' && effects.length ? 'effect' : 'group';
+  const showEffects = sourceType === 'effect';
+  const current = showEffects ? currentPreviewEffect() : currentPreviewGroup();
+  const fallbackGroup = groups[0] || emptyGroup(0);
+  const fallbackEffect = effects[0] || builtInEffectTemplates()[0];
+  const previewFx = showEffects ? effectFieldsFromGroup({ effect_ui: current?.effect_ui || fallbackEffect.effect_ui, effect: buildEffectSpecFromFields(current?.effect_ui || fallbackEffect.effect_ui) }) : effectFieldsFromGroup(current || fallbackGroup);
+  const sig = showEffects ? normalizeSignalUi(previewSignalUiOverride) : signalUiFromGroup(current || fallbackGroup);
+  const mapped = mapSignalValue(sig, sig.preview_rssi);
+  const viewFx = previewEffectForSignal(previewFx, sig, mapped.value);
+  const now = performance.now();
+  const runtime = previewRuntime(viewFx, previewPlaying ? Math.max(0, now - previewStartTs - previewPauseOffset) : Math.max(0, previewPauseStarted - previewStartTs - previewPauseOffset));
+  const activeIndices = buildPreviewActiveIndices(viewFx);
+  const palettes = Array.isArray(viewFx.colors) && viewFx.colors.length ? viewFx.colors : defaultEffectFields().colors;
+  const brightness = clampInt(viewFx.brightness, 0, 100, 100) / 100;
+  const itemOptions = (showEffects ? effects : groups).map(item => {
+    const label = showEffects
+      ? `${esc(item.name)}${item.builtIn ? ' · 内置' : ''}`
+      : `#${item.id} · ${esc(item.name)}`;
+    const value = showEffects ? esc(String(item.id)) : String(item.id);
+    const selected = String(item.id) === String(previewSelectionId) ? 'selected' : '';
+    return `<option value="${value}" ${selected}>${label}</option>`;
+  }).join('');
+  const stageMarkup = Array.from({ length: 3 }, (_, port) => `
+      <div class="preview-strip">
+        <div class="strip-label"><b>${port + 1} 路</b><span>${viewFx.ports[port] ? '启用' : '关闭'}</span></div>
+        <div class="preview-leds">
+          ${Array.from({ length: PREVIEW_LED_COUNT }, (_, idx) => `<span class="preview-led" id="preview_led_${port}_${idx}"></span>`).join('')}
+        </div>
+      </div>`).join('');
+
+  host.innerHTML = `
+    <div class="preview-lab">
+      <div class="preview-toolbar">
+        <div>
+          <div class="item-title">灯效预览台</div>
+          <div class="muted">可以按分组看，也可以直接切到灯效模板看。这里会直接预览当前参数，不会改坏控制端数据。</div>
+        </div>
+        <div class="pill-row">
+          <button id="previewPlayBtn" class="btn-blue small" onclick="togglePreviewPlaying()">${previewPlaying ? '暂停预览' : '继续预览'}</button>
+          <button id="previewResetBtn" class="btn-gray small" onclick="resetPreviewPlayback()">重置</button>
+        </div>
+      </div>
+      <div class="grid3">
+        <div>
+          <label>预览来源</label>
+          <select id="previewSourceSelect" onchange="selectPreviewSourceType(this.value)">
+            <option value="group" ${sourceType === 'group' ? 'selected' : ''}>分组</option>
+            <option value="effect" ${sourceType === 'effect' ? 'selected' : ''}>灯效</option>
+          </select>
+        </div>
+        <div>
+          <label>${showEffects ? '预览灯效' : '预览分组'}</label>
+          <select id="previewGroupSelect" onchange="selectPreviewItem(this.value)">${itemOptions}</select>
+        </div>
+        <div>
+          <label>模拟 RSSI</label>
+          <input id="previewRssiRange" type="range" min="-120" max="-10" step="1" value="${normalizeNumber(sig.preview_rssi, -58)}" oninput="setPreviewRssi(this.value)">
+        </div>
+      </div>
+      <div class="signal-chip-row">
+        <span class="chip">当前 RSSI <strong id="previewRssiValue">${normalizeNumber(sig.preview_rssi, -58)}</strong> dBm</span>
+        <span class="chip">输出 <strong>${esc(signalOutputLabel(sig.output))}</strong></span>
+        <span class="chip">反向 ${sig.reverse ? '是' : '否'}</span>
+      </div>
+      <div id="previewSummary" class="preview-summary"></div>
+      <div id="previewStage" class="preview-stage ${previewPlaying ? '' : 'paused'}">${stageMarkup}</div>
+    </div>`;
+
+  previewStageEl = document.getElementById('previewStage');
+  previewSummaryEl = document.getElementById('previewSummary');
+  previewGroupSelectEl = document.getElementById('previewGroupSelect');
+  previewRssiRangeEl = document.getElementById('previewRssiRange');
+  previewRssiValueEl = document.getElementById('previewRssiValue');
+  previewPlayBtnEl = document.getElementById('previewPlayBtn');
+  previewResetBtnEl = document.getElementById('previewResetBtn');
+  previewCells = Array.from({ length: 3 }, (_, port) =>
+    Array.from({ length: PREVIEW_LED_COUNT }, (_, idx) => document.getElementById(`preview_led_${port}_${idx}`))
+  );
+  updatePreviewPanel(performance.now());
+}
+
+function updatePreviewPanel(now = performance.now()) {
+  const host = document.getElementById('previewLab');
+  if (!host) return;
+  const groups = validGroups();
+  const effects = validEffects();
+  if (!groups.length && !effects.length) {
+    host.innerHTML = '<div class="notice">当前还没有可预览的分组或灯效。先创建一个分组或者灯效，再回来查看预览。</div>';
+    return;
+  }
+
+  ensurePreviewSelection();
+  const sourceType = previewSourceType === 'effect' && effects.length ? 'effect' : 'group';
+  const showEffects = sourceType === 'effect';
+  const current = showEffects ? currentPreviewEffect() : currentPreviewGroup();
+  if (!current) return;
+
+  const fx = showEffects ? normalizeEffectFields(current.effect_ui || defaultEffectFields()) : (document.getElementById(`grp_fx_mode_${normalizeNumber(previewSelectionId, -1)}`) ? effectFieldsFromDom(normalizeNumber(previewSelectionId, -1)) : effectFieldsFromGroup(current));
+  const sig = showEffects ? normalizeSignalUi(previewSignalUiOverride) : signalUiFromDom(normalizeNumber(previewSelectionId, -1));
+  const mapped = mapSignalValue(sig, sig.preview_rssi);
+  const viewFx = previewEffectForSignal(fx, sig, mapped.value);
+  const runtime = previewRuntime(viewFx, previewPlaying ? Math.max(0, now - previewStartTs - previewPauseOffset) : Math.max(0, previewPauseStarted - previewStartTs - previewPauseOffset));
+  const activeIndices = buildPreviewActiveIndices(viewFx);
+  const palettes = Array.isArray(viewFx.colors) && viewFx.colors.length ? viewFx.colors : defaultEffectFields().colors;
+  const brightness = clampInt(viewFx.brightness, 0, 100, 100) / 100;
+
+  if (previewGroupSelectEl) previewGroupSelectEl.value = String(previewSelectionId);
+  if (previewRssiRangeEl && previewRssiRangeEl.value !== String(sig.preview_rssi)) previewRssiRangeEl.value = String(sig.preview_rssi);
+  if (previewRssiValueEl) previewRssiValueEl.textContent = String(sig.preview_rssi);
+  if (previewPlayBtnEl) previewPlayBtnEl.textContent = previewPlaying ? '暂停预览' : '继续预览';
+  if (previewStageEl) previewStageEl.classList.toggle('paused', !previewPlaying);
+
+  if (previewSummaryEl) {
+    previewSummaryEl.innerHTML = showEffects
+      ? `
+      <div class="summary-box">
+        <b>灯效模板：${esc(current.name || current.id)}</b>
+        <div class="muted">${esc(current.note || '没有备注。')}</div>
+        <div class="muted">内置：${current.builtIn ? '是' : '否'} · 更新：${esc(String(current.updated_at || ''))}</div>
+      </div>
+      <div class="summary-box">
+        <b>模板参数</b>
+        <div class="muted">指令：${esc(buildEffectSpecFromFields(viewFx))}</div>
+        <div class="muted">播放：${previewPlaying ? '进行中' : '已暂停'} · 加速度 ${normalizeNumber(viewFx.accel, 0)} · 次数 ${normalizeNumber(viewFx.count, 0) ? normalizeNumber(viewFx.count, 0) : '无限'}</div>
+      </div>
+      <div class="summary-box">
+        <b>预览说明</b>
+        <div class="muted">这里先看模板长什么样，再决定要不要应用到某个分组。灯效库和分组绑定是分开的。</div>
+      </div>`
+      : `
+      <div class="summary-box">
+        <b>#${normalizeNumber(previewSelectionId, -1)} · ${esc(current.name || `分组${normalizeNumber(previewSelectionId, -1) + 1}`)}</b>
+        <div class="muted">模式：${esc(modeLabel(current.mode))} · 目标：${esc(targetName(current))}</div>
+        <div class="muted">成员 ${memberCount(normalizeNumber(previewSelectionId, -1))} · 模板 ${esc(String(current.template || '空白'))}</div>
+      </div>
+      <div class="summary-box">
+        <b>RSSI 映射</b>
+        <div class="muted">弱端 ${normalizeNumber(sig.weak_rssi, -85)} · 强端 ${normalizeNumber(sig.strong_rssi, -45)} · ${sig.reverse ? '反向' : '正向'}</div>
+        <div class="muted">输出 ${signalOutputLabel(sig.output)}：${normalizeNumber(sig.min_value, 10)} → ${normalizeNumber(sig.max_value, 100)}</div>
+        <div class="muted">模拟 RSSI：${normalizeNumber(sig.preview_rssi, -58)} dBm → ${mapped.value}</div>
+      </div>
+      <div class="summary-box">
+        <b>当前效果</b>
+        <div class="muted">指令：${esc(buildEffectSpecFromFields(viewFx))}</div>
+        <div class="muted">播放：${previewPlaying ? '进行中' : '已暂停'} · 加速度 ${normalizeNumber(viewFx.accel, 0)} · 次数 ${normalizeNumber(viewFx.count, 0) ? normalizeNumber(viewFx.count, 0) : '无限'}</div>
+      </div>`;
+  }
+
+  for (let port = 0; port < 3; port++) {
+    const rowEnabled = !!viewFx.ports[port] && viewFx.mode !== 'silent';
+    const rowColor = palettes[port % palettes.length] || palettes[0];
+    for (let idx = 0; idx < PREVIEW_LED_COUNT; idx++) {
+      const el = previewCells[port] && previewCells[port][idx];
+      if (!el) continue;
+      let color = '#111820';
+      let alpha = 0.12;
+      let on = false;
+      if (rowEnabled && activeIndices.length) {
+        const activeIndex = activeIndices.indexOf(idx);
+        if (activeIndex >= 0) {
+          switch (viewFx.mode) {
+            case 'solid':
+              color = rowColor;
+              alpha = Math.max(0.08, brightness);
+              on = true;
+              break;
+            case 'breath': {
+              const pulse = 0.18 + 0.82 * easeInOut(runtime.phase);
+              color = rowColor;
+              alpha = Math.max(0.08, pulse * brightness);
+              on = alpha > 0.12;
+              break;
+            }
+            case 'blink': {
+              const duty = clampInt(viewFx.duty, 1, 99, 50) / 100;
+              const blinkOn = runtime.phase < duty;
+              color = rowColor;
+              alpha = blinkOn ? Math.max(0.08, brightness) : 0.06;
+              on = blinkOn;
+              break;
+            }
+            case 'cycle': {
+              const colorSet = palettes.length ? palettes : defaultEffectFields().colors;
+              color = colorSet[(activeIndex + runtime.cycleIndex) % colorSet.length] || rowColor;
+              alpha = Math.max(0.08, brightness);
+              on = true;
+              break;
+            }
+            case 'chase': {
+              const tail = (idx - activeIndices[runtime.cycleIndex % activeIndices.length] + PREVIEW_LED_COUNT) % PREVIEW_LED_COUNT;
+              if (tail === 0) {
+                alpha = Math.max(0.08, brightness);
+              } else if (tail === 1) {
+                alpha = Math.max(0.06, brightness * 0.6);
+              } else if (tail === 2) {
+                alpha = Math.max(0.05, brightness * 0.3);
+              } else {
+                alpha = 0.05;
+              }
+              color = rowColor;
+              on = alpha > 0.08;
+              break;
+            }
+            case 'pulse': {
+              const mix = easeInOut(runtime.phase);
+              color = mixHexColor(viewFx.colors[0] || '#FFD24D', viewFx.endColor || '#FFFFFF', mix);
+              const startB = clampInt(viewFx.startBrightness, 0, 100, 10);
+              const endB = clampInt(viewFx.endBrightness, 0, 100, 100);
+              alpha = Math.max(0.08, ((startB + (endB - startB) * mix) / 100) * brightness);
+              on = alpha > 0.08;
+              break;
+            }
+            default: {
+              const testPhase = easeInOut(runtime.phase);
+              color = palettes[(port + runtime.cycleIndex) % palettes.length] || rowColor;
+              alpha = Math.max(0.08, (0.28 + 0.72 * testPhase) * brightness);
+              on = alpha > 0.12;
+              break;
+            }
+          }
+        }
+      }
+      el.classList.toggle('on', on);
+      el.style.backgroundColor = rgbaFromHex(color, alpha);
+      el.style.boxShadow = on
+        ? `0 0 12px ${rgbaFromHex(color, Math.min(1, alpha + 0.18))}, inset 0 0 0 1px rgba(255,255,255,.14)`
+        : 'inset 0 0 0 1px rgba(0,0,0,.18)';
+    }
+  }
+}
+
+function previewFrameLoop(now) {
+  previewFrameHandle = requestAnimationFrame(previewFrameLoop);
+  updatePreviewPanel(now);
+}
+
+function startPreviewLoop() {
+  if (previewFrameHandle) return;
+  previewFrameHandle = requestAnimationFrame(previewFrameLoop);
+}
+
+function scheduleControllerRefresh(delayMs = 700) {
+  clearTimeout(controllerRefreshTimer);
+  if (!controllerOnline) return;
+  controllerRefreshTimer = setTimeout(() => {
+    loadFromController().catch(() => {});
+  }, delayMs);
+}
+
+function normalizeState(raw, existing = null) {
+  const next = emptyState();
+  next.schema_version = normalizeNumber(raw?.schema_version, 1) >= 2 ? 2 : 1;
+  if (raw && Array.isArray(raw.devices)) {
+    next.devices = raw.devices.map((d, idx) => ({
+      idx: normalizeNumber(d.idx, idx),
+      mac: String(d.mac ?? ''),
+      name: normalizeDeviceName(d.name, idx),
+      group_mask: normalizeNumber(d.group_mask, 0) >>> 0,
+      rssi: normalizeNumber(d.rssi, 0),
+      seen_ms: Math.max(0, normalizeNumber(d.seen_ms, 0))
+    }));
+  }
+  if (raw && Array.isArray(raw.groups)) {
+    for (const g of raw.groups) {
+      const id = normalizeNumber(g.id, -1);
+      if (id >= 0 && id < MAX_GROUPS) {
+        const prev = existing && existing.groups && existing.groups[id] ? existing.groups[id] : emptyGroup(id);
+        const effect = String(g.effect ?? 'selftest') || 'selftest';
+        const effect_ui = normalizeEffectFields(g.effect_ui, parseEffectSpec(effect));
+        const signal_ui = normalizeSignalUi(g.signal_ui, prev.signal_ui || defaultSignalUi());
+        const score = { ...defaultScoreConfig(), ...(prev.score || {}), ...(g.score || {}) };
+        next.groups[id] = {
+          ...prev,
+          id,
+          valid: Number(g.valid) === 1 || g.valid === true,
+          name: String(g.name ?? `Group${id + 1}`),
+          note: String(g.note ?? ''),
+          template: String(g.template ?? ''),
+          effect_template_id: String(g.effect_template_id ?? prev.effect_template_id ?? ''),
+          effect,
+          effect_ui,
+          idle_effect: String(g.idle_effect ?? prev.idle_effect ?? 'selftest'),
+          silence: String(g.silence ?? ''),
+          target: normalizeNumber(g.target, 255),
+          mode: normalizeNumber(g.mode, 0),
+          sense_mode: String(g.sense_mode ?? prev.sense_mode ?? 'group_shared'),
+          rssi: normalizeNumber(g.rssi, -70),
+          hold: normalizeNumber(g.hold, 2000),
+          signal_ui,
+          score
+        };
+      }
+    }
+  }
+  if (raw && Array.isArray(raw.records)) {
+    next.records = raw.records.map(r => ({
+      src_group: normalizeNumber(r.src_group, 0),
+      target_group: normalizeNumber(r.target_group, 0),
+      src_idx: normalizeNumber(r.src_idx, -1),
+      dst_idx: normalizeNumber(r.dst_idx, -1),
+      first_seen_ms: normalizeNumber(r.first_seen_ms, 0),
+      last_seen_ms: normalizeNumber(r.last_seen_ms, 0)
+    }));
+  }
+  if (raw && Array.isArray(raw.rules)) { next.rules = raw.rules.map((r, i) => ({ ...emptyRule(i), ...r, id: normalizeNumber(r.id, i) })); }
+  if (raw && Array.isArray(raw.presets)) {
+    next.presets = normalizePresetLibrary(raw.presets, existing && Array.isArray(existing.presets) ? existing.presets : []);
+  } else if (existing && Array.isArray(existing.presets)) {
+    next.presets = normalizePresetLibrary(existing.presets, []);
+  }
+  if (raw && Array.isArray(raw.effects)) {
+    next.effects = normalizeEffectLibrary(raw.effects, existing && Array.isArray(existing.effects) ? existing.effects : next.effects);
+  } else if (existing && Array.isArray(existing.effects)) {
+    next.effects = normalizeEffectLibrary(existing.effects, next.effects);
+  }
+  next.active_preset = String(raw?.active_preset ?? existing?.active_preset ?? next.active_preset ?? '自定义');
+  return next;
+}
+
+function validGroups() {
+  return state.groups.filter(g => g.valid);
+}
+
+function groupById(id) {
+  return state.groups[normalizeNumber(id, -1)] || null;
+}
+
+function memberCount(gid) {
+  const bit = 1 << gid;
+  return state.devices.filter(d => ((d.group_mask >>> 0) & bit) !== 0).length;
+}
+
+function targetName(g) {
+  const t = normalizeNumber(g.target, 255);
+  if (t < 0 || t >= MAX_GROUPS) return '无';
+  const tg = groupById(t);
+  return tg && tg.valid ? tg.name : '无';
+}
+
+
+function modeLabel(mode) {
+  const m = normalizeNumber(mode, 1);
+  if (m === 0) return '\u7ec4\u5171\u4eab\u578b';
+  if (m === 2) return '\u7eaf\u54cd\u5e94\u578b';
+  return '\u8f6e\u5de1\u578b';
+}
+
+function modeClass(mode) {
+  const m = normalizeNumber(mode, 1);
+  if (m === 0) return 'shared';
+  if (m === 2) return 'test';
+  return 'indep';
+}
+
+function collectGroupBasicFromDom(gid) {
+  gid = normalizeNumber(gid, -1);
+  if (gid < 0 || gid >= MAX_GROUPS) return null;
+  const current = state.groups[gid] || emptyGroup(gid);
+  const nameEl = document.getElementById(`grp_name_${gid}`);
+  const noteEl = document.getElementById(`grp_note_${gid}`);
+  const targetEl = document.getElementById(`grp_target_${gid}`);
+  return {
+    ...current,
+    id: gid,
+    name: (nameEl ? nameEl.value : current.name).trim() || `分组${gid + 1}`,
+    note: (noteEl ? noteEl.value : current.note).trim(),
+    target: normalizeNumber(targetEl ? targetEl.value : current.target, 255)
+  };
+}
+
+function collectGroupGameFromDom(gid) {
+  gid = normalizeNumber(gid, -1);
+  if (gid < 0 || gid >= MAX_GROUPS) return null;
+  const current = state.groups[gid] || emptyGroup(gid);
+  const tplEl = document.getElementById(`grp_tpl_${gid}`);
+  const modeEl = document.getElementById(`grp_mode_${gid}`);
+  const rssiEl = document.getElementById(`grp_rssi_${gid}`);
+  const holdEl = document.getElementById(`grp_hold_${gid}`);
+  const silenceEl = document.getElementById(`grp_silence_${gid}`);
+  const effectTemplateEl = document.getElementById(`grp_effect_template_${gid}`);
+  const effect_ui = document.getElementById(`grp_fx_mode_${gid}`) ? effectFieldsFromDom(gid) : effectFieldsFromGroup(current);
+  const effect = buildEffectSpecFromFields(effect_ui);
+  const signal_ui = document.getElementById(`grp_sig_weak_${gid}`) ? signalUiFromDom(gid) : signalUiFromGroup(current);
+  const score = document.getElementById(`grp_score_enabled_${gid}`) ? scoreConfigFromDom(gid) : scoreConfigFromGroup(current);
+  return {
+    ...current,
+    id: gid,
+    template: String(tplEl ? tplEl.value : current.template ?? ''),
+    effect_template_id: String(effectTemplateEl ? effectTemplateEl.value : current.effect_template_id ?? ''),
+    effect,
+    effect_ui,
+    idle_effect: String(current.idle_effect ?? 'selftest'),
+    silence: (silenceEl ? silenceEl.value : current.silence).trim(),
+    mode: normalizeNumber(modeEl ? modeEl.value : current.mode, 1),
+    sense_mode: String(current.sense_mode ?? 'group_shared'),
+    rssi: normalizeNumber(rssiEl ? rssiEl.value : current.rssi, -70),
+    hold: normalizeNumber(holdEl ? holdEl.value : current.hold, 2000),
+    signal_ui,
+    score
+  };
+}
+
+function collectGroupFromDom(gid) {
+  const basic = collectGroupBasicFromDom(gid);
+  const game = collectGroupGameFromDom(gid);
+  if (!basic || !game) return null;
+  return {
+    ...basic,
+    ...game,
+    valid: true
+  };
+}
+
+function buildLocalStateFromDom() {
+  const devices = state.devices.map((d, idx) => {
+    const nameEl = document.getElementById(`dev_name_${idx}`);
+    let mask = 0;
+    for (const g of state.groups) {
+      if (!g.valid) continue;
+      const box = document.getElementById(`dev_group_${idx}_${g.id}`);
+      if (box && box.checked) mask |= (1 << g.id);
+    }
+    return {
+      idx,
+      mac: d.mac,
+      name: normalizeDeviceName(nameEl ? nameEl.value : d.name, idx),
+      group_mask: mask >>> 0,
+      rssi: normalizeNumber(d.rssi, 0),
+      seen_ms: normalizeNumber(d.seen_ms, 0)
+    };
+  });
+
+  const groups = state.groups
+    .map((g, gid) => {
+      if (!g.valid) return null;
+      const basic = collectGroupBasicFromDom(gid) || g;
+      const game = collectGroupGameFromDom(gid) || g;
+      return {
+        ...g,
+        ...basic,
+        ...game,
+        valid: true
+      };
+    })
+    .filter(Boolean);
+
+  const validIds = new Set(groups.map(g => g.id));
+  const records = state.records.filter(r => validIds.has(normalizeNumber(r.src_group, -1)) && validIds.has(normalizeNumber(r.target_group, -1)));
+  return {
+    schema_version: 2,
+    devices,
+    groups,
+    records,
+    rules: state.rules || [],
+    presets: normalizePresetLibrary(state.presets, []),
+    effects: Array.isArray(state.effects) ? state.effects.map(item => ({
+      id: String(item.id || ''),
+      name: String(item.name || ''),
+      note: String(item.note || ''),
+      builtIn: item.builtIn === true,
+      effect_ui: normalizeEffectFields(item.effect_ui || defaultEffectFields()),
+      updated_at: String(item.updated_at || new Date().toISOString())
+    })) : builtInEffectTemplates(),
+    active_preset: String(state.active_preset || '自定义')
+  };
+}
+
+function buildPresetConfigFromDom() {
+  const localState = buildLocalStateFromDom();
+  const { presets, ...config } = localState;
+  return config;
+}
+
+function validateDeviceGroupLimit(payload) {
+  const devices = Array.isArray(payload?.devices) ? payload.devices : [];
+  const offenders = devices.filter(d => countBits32(normalizeNumber(d?.group_mask, 0)) > 8);
+  if (!offenders.length) return '';
+  const first = offenders[0];
+  return `设备 #${normalizeNumber(first.idx, -1)} 的分组数超过 8 个，请先减少分组后再保存或发布。`;
+}
+
+function buildControllerPayloadFromDom() {
+  const localState = buildLocalStateFromDom();
+  const { effects, presets, active_preset, ...payload } = localState;
+  return payload;
+}
+
+function previewJson() {
+  previewEl.value = JSON.stringify(buildControllerPayloadFromDom(), null, 2);
+}
+
+function saveDraftNow() {
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(buildLocalStateFromDom()));
+  } catch (_) {}
+}
+
+function queueDraftSave() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraftNow, 250);
+}
+
+function loadDraftFromStorage() {
+  try {
+    const text = localStorage.getItem(DRAFT_KEY);
+    if (!text) return null;
+    return normalizeState(JSON.parse(text));
+  } catch (_) {
+    return null;
+  }
+}
+
+function clearDraftFromStorage() {
+  try { localStorage.removeItem(DRAFT_KEY); } catch (_) {}
+}
+
+function setControllerButtons() {
+  scanBtn.disabled = !controllerOnline;
+  identifyAllBtn.disabled = !controllerOnline;
+  identifySelectedBtn.disabled = !controllerOnline || selectedDeviceIndexes().length === 0;
+  publishBtn.disabled = !controllerOnline;
+}
+
+function controllerErrorHint(err) {
+  const text = String(err || '');
+  if (text.includes('AbortError') || text.includes('timed out') || text.includes('timeout')) {
+    return '请求超时。请查看调试日志，确认卡在本地代理还是控制端。';
+  }
+  if (controllerBase() === LOCAL_PROXY_BASE) {
+    if (text.includes('HTTP 502')) {
+      const jsonStart = text.indexOf('{');
+      if (jsonStart >= 0) {
+        try {
+          const detail = JSON.parse(text.slice(jsonStart));
+          return `本地服务已启动，但代理访问控制端失败。目标是 ${detail.controller_base || 'http://192.168.4.1'}。细节：${detail.detail || detail.error || text}`;
+        } catch (_) {}
+      }
+      return `本地服务代理控制端失败：${text}`;
+    }
+    if (text.includes('Failed to fetch') || text.includes('TypeError')) {
+      return '浏览器连不上本地服务。请确认 serve.ps1 窗口正在运行，然后刷新本页。';
+    }
+  }
+  if (text.includes('HTTP 404') && text.includes('not_found')) {
+    return '控制端没有找到这个接口。请确认控制端固件版本包含 /config/import 导入接口，或者重新烧录最新控制端固件。';
+  }
+  return text.includes('Failed to fetch') || text.includes('TypeError')
+    ? `网络请求失败：${text}`
+    : text;
+}
+
+function renderOverview() {
+  const activeGroups = validGroups();
+  const ungroupedCount = state.devices.filter(d => !activeGroups.some(g => ((d.group_mask >>> 0) & (1 << g.id)) !== 0)).length;
+  const preset = selectedPresetMeta();
+  if (activePresetNameEl) activePresetNameEl.textContent = String(preset?.name || state.active_preset || '自定义');
+  overviewEl.innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-metric blue">
+        <span>设备总数</span>
+        <b>${state.devices.length}</b>
+        <small>当前加载进页面的设备数量</small>
+      </div>
+      <div class="summary-metric yellow">
+        <span>未分组设备</span>
+        <b>${ungroupedCount}</b>
+        <small>默认先看这个，避免漏掉新接入设备</small>
+      </div>
+      <div class="summary-metric green">
+        <span>活跃分组</span>
+        <b>${activeGroups.length}</b>
+        <small>当前启用并可编辑的分组数量</small>
+      </div>
+      <div class="summary-metric purple">
+        <span>灯效模板</span>
+        <b>${validEffects().length}</b>
+        <small>可复用的灯效模板总数</small>
+      </div>
+      <div class="summary-metric red">
+        <span>发现记录</span>
+        <b>${state.records.length}</b>
+        <small>当前保存的配对与发现历史</small>
+      </div>
+      <div class="summary-metric gray wide">
+        <span>当前预设</span>
+        <b>${esc(String(preset?.name || state.active_preset || '自定义'))}</b>
+        <small>${controllerOnline ? '控制端已连接' : '控制端未连接'} · ${esc(controllerBase())}</small>
+      </div>
+    </div>`;
+}
+
+function renderDevices() {
+  const activeGroups = validGroups();
+  const total = state.devices.length;
+  const selectedCount = selectedDeviceIndexes().length;
+  const visible = filteredDeviceIndexes();
+  const allVisibleSelected = visible.length > 0 && visible.every(idx => selectedDeviceSet.has(idx));
+  const groupFilterOptions = activeGroups.length
+    ? activeGroups.map(g => `<option value="${g.id}" ${normalizeNumber(deviceFilterGroupId, -1) === g.id ? 'selected' : ''}>#${g.id} · ${esc(g.name)}</option>`).join('')
+    : '<option value="">暂无分组</option>';
+  const tableRows = total ? state.devices.map((d, idx) => {
+    if (!deviceMatchesFilter(d)) return '';
+    const selected = selectedDeviceSet.has(idx);
+    const seenMs = normalizeNumber(d.seen_ms, 0);
+    const online = seenMs <= 5000;
+    const rssi = normalizeNumber(d.rssi, 0);
+    const rssiCls = rssi >= -45 ? 'rssi-good' : (rssi >= -78 ? 'rssi-mid' : 'rssi-off');
+    const checks = activeGroups.length
+      ? activeGroups.map(g => {
+          const checked = ((d.group_mask >>> 0) & (1 << g.id)) !== 0 ? 'checked' : '';
+          return `<label><input type="checkbox" id="dev_group_${idx}_${g.id}" ${checked}><span>#${g.id} ${esc(g.name)}</span></label>`;
+        }).join('')
+      : '<span class="muted">暂无分组</span>';
+    return `
+      <tr>
+        <td><input type="checkbox" ${selected ? 'checked' : ''} onchange="toggleDeviceSelection(${idx}, this.checked)"></td>
+        <td>
+          <div class="device-name-main">#${idx} · <input id="dev_name_${idx}" value="${esc(d.name)}" maxlength="31" style="width:220px;display:inline-block;padding:6px 8px;height:32px;font-size:13px"></div>
+          <span class="device-sub">${online ? '在线' : '离线'} · 掩码 ${deviceGroupCount(d.group_mask)}</span>
+        </td>
+        <td>${esc(d.mac)}</td>
+        <td class="${rssiCls}">${rssi} dBm</td>
+        <td>${seenMs} ms 前</td>
+        <td><button class="btn-blue small" ${controllerOnline ? '' : 'disabled'} onclick="identifyDevice(${idx})">点名</button></td>
+        <td>
+          <div class="table-groups">${checks}</div>
+          <div class="table-actions">
+            <button class="btn-green" onclick="saveDevice(${idx})">保存</button>
+            <button class="btn-red" onclick="deleteDevice(${idx})">删除</button>
+          </div>
+        </td>
+      </tr>`;
+  }).filter(Boolean).join('') : '';
+
+  const filterModeButtons = `
+    <button class="${deviceFilterMode === 'all' ? 'btn-blue' : 'btn-gray'} small" onclick="setDeviceFilterMode('all')">全部 ${total}</button>
+    <button class="${deviceFilterMode === 'ungrouped' ? 'btn-blue' : 'btn-gray'} small" onclick="setDeviceFilterMode('ungrouped')">未分组 ${state.devices.filter(d => !activeGroups.some(g => ((d.group_mask >>> 0) & (1 << g.id)) !== 0)).length}</button>
+    <button class="${deviceFilterMode === 'group' ? 'btn-blue' : 'btn-gray'} small" onclick="setDeviceFilterMode('group')">按分组筛选</button>`;
+
+  const groupPreview = activeGroups.length ? activeGroups.map(g => {
+    const colorClass = ['blue', 'green', 'yellow', 'purple'][g.id % 4];
+    return `
+      <div class="group-preview-card">
+        <div class="group-preview-top">
+          <div>
+            <div class="group-preview-name"><span class="group-dot ${colorClass}"></span>${esc(g.name)} <span class="muted">ID:${g.id}</span></div>
+            <div class="group-preview-meta">${esc(g.note || '未写备注')}</div>
+          </div>
+          <button class="btn-gray small" onclick="selectGroupForGame(${g.id});setActiveTab('groups')">管理</button>
+        </div>
+        <div class="group-preview-meta" style="margin-top:8px">成员：${memberCount(g.id)} 台设备</div>
+        <div class="group-preview-meta">目标组：<b>${esc(targetName(g))}</b></div>
+      </div>`;
+  }).join('') : '<div class="notice">暂无分组。先创建分组后再分配设备。</div>';
+
+  devicesEl.innerHTML = `
+    <div class="device-layout">
+      <div class="device-main">
+        <div class="item-head">
+          <div>
+            <h2>设备</h2>
+            <div class="tab-note">默认显示未分组设备，支持全选可见、批量取消分组和逐台点名。</div>
+          </div>
+          <div class="pill-row">
+            <span class="chip">总数 <b>${total}</b></span>
+            <span class="chip">可见 <b>${visible.length}</b></span>
+            <span class="chip">已选 <b>${selectedCount}</b></span>
+          </div>
+        </div>
+
+        <div class="device-toolbar">
+          <div class="left">
+            <button class="btn-blue small" onclick="toggleVisibleSelection(true)" ${visible.length ? '' : 'disabled'}>${allVisibleSelected ? '已全选可见' : '全选（当前可见）'}</button>
+            <button class="btn-gray small" onclick="clearDeviceSelection()" ${selectedCount ? '' : 'disabled'}>清空选择</button>
+            <button class="btn-yellow small" onclick="identifySelectedDevices()" ${controllerOnline && selectedCount ? '' : 'disabled'}>点名选中</button>
+            <button class="btn-red small" onclick="clearSelectedDevicesGroups()" ${selectedCount ? '' : 'disabled'}>取消所选设备分组</button>
+          </div>
+        </div>
+
+        <div class="device-filter">
+          <div>
+            <label>筛选模式</label>
+            <div class="pill-row">${filterModeButtons}</div>
+          </div>
+          <div>
+            <label>分组</label>
+            <select id="deviceFilterGroupId" ${deviceFilterMode === 'group' && activeGroups.length ? '' : 'disabled'} onchange="setDeviceFilterGroupId(this.value)">${groupFilterOptions}</select>
+          </div>
+          <div>
+            <label>快捷视图</label>
+            <div class="pill-row">
+              <button class="btn-gray small" onclick="setDeviceFilterMode('ungrouped')">默认未分组</button>
+              <button class="btn-gray small" onclick="setDeviceFilterMode('all')">看全部</button>
+            </div>
+          </div>
+        </div>
+
+        ${total ? `
+          <div class="device-table-wrap">
+            <table class="device-table">
+              <thead>
+                <tr>
+                  <th><input type="checkbox" ${allVisibleSelected ? 'checked' : ''} onchange="toggleVisibleSelection(this.checked)"></th>
+                  <th>设备名称</th>
+                  <th>MAC 地址</th>
+                  <th>信号 (RSSI)</th>
+                  <th>最近上线</th>
+                  <th>操作</th>
+                  <th>分组成员（可多选）</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tableRows || '<tr><td colspan="7" class="muted">当前筛选下无设备。</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        ` : '<div class="notice">还没有设备。先点“从控制端读取”或者“扫描设备”。</div>'}
+      </div>
+
+      <aside class="device-side">
+        <div class="item-head">
+          <div>
+            <h2>分组（预览）</h2>
+            <div class="tab-note">右侧快速检查每个分组的成员和目标关系。</div>
+          </div>
+          <button class="btn-gray small" onclick="setActiveTab('groups')">管理分组</button>
+        </div>
+        <div class="group-preview-list">${groupPreview}</div>
+      </aside>
+    </div>
+  `;
+}
+
+function renderGroups() {
+  const activeGroups = validGroups();
+  if (!activeGroups.length) {
+    groupsEl.innerHTML = `
+      <div class="notice">当前还没有分组。先创建一个，再把设备分进去。</div>
+      <button class="btn-gray small" style="margin-top:10px" onclick="newGroup()">新建第一个分组</button>`;
+    return;
+  }
+
+  groupsEl.innerHTML = activeGroups.map(g => {
+    const targetOptions = ['<option value="255">无</option>']
+      .concat(state.groups.filter(x => x.valid && x.id !== g.id).map(x => `<option value="${x.id}" ${normalizeNumber(g.target, 255) === x.id ? 'selected' : ''}>${esc(x.name)}</option>`))
+      .join('');
+    const memberIds = deviceMembersOfGroup(g.id);
+    const memberChips = memberIds.length
+      ? memberIds.slice(0, 8).map(idx => `<span class="chip">#${idx} · ${esc(deviceNameAt(idx))}</span>`).join('') + (memberIds.length > 8 ? `<span class="chip">+${memberIds.length - 8}</span>` : '')
+      : '<span class="chip">暂无成员</span>';
+    const effectName = g.effect_template_id ? (effectById(g.effect_template_id)?.name || g.effect_template_id) : '未绑定';
+    const selected = selectedGroupId === g.id ? 'selected-card' : '';
+    return `
+      <div class="group-tile ${selected}">
+        <div class="item-head">
+          <div>
+            <div class="item-title">#${g.id} · ${esc(g.name || `分组${g.id + 1}`)}</div>
+            <div class="muted">成员 ${memberCount(g.id)} · 目标 ${esc(targetName(g))} · 灯效 ${esc(effectName)}</div>
+          </div>
+          <div class="chips">
+            <span class="chip ${modeClass(g.mode)}">${modeLabel(g.mode)}</span>
+          </div>
+        </div>
+        <label>分组名称</label>
+        <input id="grp_name_${g.id}" value="${esc(g.name)}" maxlength="31">
+        <label>备注</label>
+        <input id="grp_note_${g.id}" value="${esc(g.note)}" maxlength="47">
+        <label>对接目标分组</label>
+        <select id="grp_target_${g.id}">${targetOptions}</select>
+        <div class="group-tagline">${memberChips}</div>
+        <div class="compact-actions">
+          <button class="btn-green small" onclick="saveGroup(${g.id})">保存分组</button>
+          <button class="btn-blue small" onclick="selectGroupForGame(${g.id})">编辑功能</button>
+          <button class="btn-gray small" onclick="previewGroup(${g.id})">预览</button>
+          <button class="btn-red small" onclick="deleteGroup(${g.id})">删除</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderGameFunction() {
+  const activeGroups = validGroups();
+  if (!activeGroups.length) {
+    gameFunctionEl.innerHTML = '<div class="notice">先创建分组，再在这里设置感应、RSSI、计分和灯效绑定。</div>';
+    return;
+  }
+  ensureSelectedGroupSelection();
+  const g = groupById(selectedGroupId) || activeGroups[0];
+  const groupOptions = activeGroups.map(item => `<option value="${item.id}" ${item.id === g.id ? 'selected' : ''}>#${item.id} · ${esc(item.name)}</option>`).join('');
+  const effectOptions = ['<option value="">未绑定</option>']
+    .concat(validEffects().map(item => `<option value="${esc(String(item.id))}" ${String(g.effect_template_id || '') === String(item.id) ? 'selected' : ''}>${esc(effectTemplateLabel(item))}</option>`))
+    .join('');
+  const template = String(g.template || '');
+  const modeOptions = [
+    [1, '轮巡型'],
+    [0, '组共享型'],
+    [2, '纯响应型']
+  ].map(([value, label]) => `<option value="${value}" ${normalizeNumber(g.mode, 1) === value ? 'selected' : ''}>${label}</option>`).join('');
+  const targetMembers = deviceMembersOfGroup(g.id);
+  const memberChips = targetMembers.length
+    ? targetMembers.slice(0, 10).map(idx => `<span class="chip">#${idx} · ${esc(deviceNameAt(idx))}</span>`).join('') + (targetMembers.length > 10 ? `<span class="chip">+${targetMembers.length - 10}</span>` : '')
+    : '<span class="chip">暂无成员</span>';
+  gameFunctionEl.innerHTML = `
+    <div class="panel-split">
+      <div class="panel-stack">
+        <div class="compact-card">
+          <div class="item-head">
+            <div>
+              <div class="item-title">当前分组功能</div>
+              <div class="muted">这里承接行为模式、RSSI、保持时间、计分和灯效绑定。</div>
+            </div>
+            <div class="pill-row">
+              <span class="chip">当前编辑 #${g.id}</span>
+            </div>
+          </div>
+          <div class="grid3">
+            <div>
+              <label>选择分组</label>
+              <select id="gameGroupSelect" onchange="selectGroupForGame(this.value)">${groupOptions}</select>
+            </div>
+            <div>
+              <label>规则模板</label>
+              <select id="grp_tpl_${g.id}" onchange="refreshEffectPreview(${g.id})">
+                <option value="" ${template === '' ? 'selected' : ''}>空白</option>
+                <option value="source" ${template === 'source' ? 'selected' : ''}>魔杖组模板</option>
+                <option value="target" ${template === 'target' ? 'selected' : ''}>宝箱组模板</option>
+                <option value="test" ${template === 'test' ? 'selected' : ''}>测试模板</option>
+              </select>
+            </div>
+            <div>
+              <label>行为模式</label>
+              <select id="grp_mode_${g.id}" onchange="refreshPreviewPanel()">${modeOptions}</select>
+            </div>
+          </div>
+          <div class="grid2">
+            <div>
+              <label>RSSI 阈值</label>
+              <input id="grp_rssi_${g.id}" type="number" value="${normalizeNumber(g.rssi, -70)}" onchange="refreshPreviewPanel()">
+            </div>
+            <div>
+              <label>保持时间(ms)</label>
+              <input id="grp_hold_${g.id}" type="number" value="${normalizeNumber(g.hold, 2000)}" onchange="refreshPreviewPanel()">
+            </div>
+          </div>
+          <label>静默说明</label>
+          <textarea id="grp_silence_${g.id}" placeholder="例如：达到一次后不再重复触发">${esc(g.silence || '')}</textarea>
+          <div class="compact-actions">
+            <button class="btn-green small" onclick="saveEffect(${g.id})">保存功能与灯效</button>
+            <button class="btn-blue small" onclick="previewGroup(${g.id})">去预览台</button>
+            <button class="btn-gray small" onclick="applyGroupTemplate(${g.id})">套用模板</button>
+          </div>
+        </div>
+        ${renderEffectEditor(g.id, g)}
+      </div>
+      <div class="panel-stack">
+        <div class="compact-card">
+          <div class="item-title">灯效模板绑定</div>
+          <div class="muted">分组只引用灯效模板，不再把灯效参数和分组绑死在一起。你可以先在灯效库里做模板，再回到这里选择。</div>
+          <label>绑定灯效模板</label>
+          <select id="grp_effect_template_${g.id}">${effectOptions}</select>
+          <div class="compact-actions">
+            <button class="btn-blue small" onclick="applyEffectTemplateToGroup(${g.id}, document.getElementById('grp_effect_template_${g.id}').value)">应用到当前分组</button>
+            <button class="btn-gray small" onclick="selectEffectTemplate(document.getElementById('grp_effect_template_${g.id}').value || '')">在灯效库查看</button>
+          </div>
+          <div class="muted" style="margin-top:6px">当前绑定：<b>${esc(g.effect_template_id ? (effectById(g.effect_template_id)?.name || g.effect_template_id) : '未绑定')}</b></div>
+        </div>
+        ${renderScoreEditor(g.id, g)}
+        ${renderSignalEditor(g.id, g)}
+        <div class="compact-card">
+          <div class="item-title">当前组摘要</div>
+          <div class="muted">成员 ${memberCount(g.id)} · 目标 ${esc(targetName(g))} · 模板 ${esc(String(g.template || '空白'))}</div>
+          <div class="group-tagline" style="margin-top:8px">${memberChips}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderEffectsLibrary() {
+  const effects = validEffects();
+  ensureSelectedEffectSelection();
+  if (!effects.length) {
+    effectsLibraryEl.innerHTML = '<div class="notice">还没有灯效模板。先创建一个再回来查看。</div>';
+    return;
+  }
+  effectsLibraryEl.innerHTML = effects.map(item => {
+    const fx = normalizeEffectFields(item.effect_ui || defaultEffectFields());
+    const selected = String(selectedEffectId) === String(item.id);
+    const mini = Array.from({ length: 12 }, (_, idx) => {
+      const style = effectMiniStyle(fx, idx, 12);
+      return `<span class="fx-mini-led${style.opacity > 0.2 ? ' on' : ''}" style="background:${style.background};opacity:${style.opacity}"></span>`;
+    }).join('');
+    return `
+      <div class="fx-tile ${selected ? 'selected-card' : ''}">
+        <div class="item-head">
+          <div>
+            <div class="item-title">${esc(effectTemplateLabel(item))}</div>
+            <div class="muted">${esc(item.note || '没有备注。')}</div>
+          </div>
+          <button class="btn-blue small" onclick="previewEffectTemplate('${esc(String(item.id))}')">预览</button>
+        </div>
+        <div class="fx-preview-mini">${mini}</div>
+        <div class="muted" style="margin-top:8px">${esc(effectTemplateSummary(item))}</div>
+        <div class="compact-actions">
+          <button class="btn-green small" onclick="applyEffectTemplateToGroup(${selectedGroupId}, '${esc(String(item.id))}')">应用到当前分组</button>
+          <button class="btn-gray small" onclick="duplicateEffectTemplate('${esc(String(item.id))}')">复制</button>
+          ${item.builtIn ? '' : `<button class="btn-red small" onclick="deleteEffectTemplate('${esc(String(item.id))}')">删除</button>`}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderPresets() {
+  const builtIns = defaultPresetLibrary().map(item => ({
+    ...item,
+    builtIn: true,
+    config: null
+  }));
+  const customs = normalizePresetLibrary(state.presets, []);
+  const presets = builtIns.concat(customs);
+  ensureSelectedPresetSelection();
+  const meta = selectedPresetMeta();
+  if (activePresetNameEl) activePresetNameEl.textContent = String(meta?.name || state.active_preset || '自定义');
+  if (!presets.length) {
+    presetLibraryEl.innerHTML = '<div class="notice">还没有预设。你可以先创建一个，再把当前配置存成自己的玩法。</div>';
+    return;
+  }
+  presetLibraryEl.innerHTML = presets.map(item => {
+    const selected = String(selectedPresetId) === String(item.id);
+    const preview = item.builtIn
+      ? `
+        <div class="summary-box"><b>${esc(item.name)}</b><div class="muted">${esc(item.note || '')}</div></div>
+        <div class="summary-box"><b>建议玩法</b><div class="muted">${esc(item.source_group_hint || '')} → ${esc(item.target_group_hint || '')}</div></div>
+      `
+      : `
+        <div class="summary-box"><b>保存时间</b><div class="muted">${esc(String(item.saved_at || ''))}</div></div>
+        <div class="summary-box"><b>当前配置</b><div class="muted">${esc(presetSummary(item))}</div></div>
+      `;
+    return `
+      <div class="preset-tile ${selected ? 'selected-card' : ''}">
+        <div class="item-head">
+          <div>
+            <div class="item-title">${esc(item.name)}</div>
+            <div class="muted">${esc(item.note || '没有备注。')}</div>
+          </div>
+          <span class="chip">${item.builtIn ? '内置' : '自定义'}</span>
+        </div>
+        <div class="preset-preview">${preview}</div>
+        <div class="compact-actions">
+          <button class="btn-blue small" onclick="selectPreset('${esc(String(item.id))}')">预览</button>
+          <button class="btn-green small" onclick="applyPresetById('${esc(String(item.id))}')">套用</button>
+          ${item.builtIn ? '' : `<button class="btn-red small" onclick="deletePreset('${esc(String(item.id))}')">删除</button>`}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function deletePreset(id) {
+  const item = presetById(id);
+  if (!item || item.builtIn) return;
+  if (!confirm(`确定删除预设「${item.name}」吗？`)) return;
+  state.presets = normalizePresetLibrary(state.presets, []).filter(p => String(p.id) !== String(id));
+  if (String(selectedPresetId) === String(id)) {
+    selectedPresetId = 'solo_hunt';
+  }
+  queueRenderAndDraft(`已删除预设：${item.name}`);
+}
+
+function renderRecords() {
+  if (!state.records.length) {
+    recordsEl.innerHTML = '<div class="notice">当前还没有发现记录。</div>';
+    return;
+  }
+  recordsEl.innerHTML = state.records.map(r => {
+    const sg = groupById(r.src_group);
+    const tg = groupById(r.target_group);
+    const srcName = sg && sg.valid ? sg.name : '未命名源组';
+    const dstName = tg && tg.valid ? tg.name : '未命名目标组';
+    return `
+      <div class="item">
+        <div class="item-head">
+          <div>
+            <div class="item-title">${esc(srcName)} → ${esc(dstName)}</div>
+            <div class="muted">源设备 #${normalizeNumber(r.src_idx, -1)} · 目标设备 #${normalizeNumber(r.dst_idx, -1)}</div>
+            <div class="muted">首次 ${normalizeNumber(r.first_seen_ms, 0)} ms · 最近 ${normalizeNumber(r.last_seen_ms, 0)} ms</div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderAll() {
+  renderTabState();
+  renderOverview();
+  renderDevices();
+  renderGroups();
+  renderGameFunction();
+  renderEffectsLibrary();
+  renderPreviewLab();
+  renderPresets();
+  renderRecords();
+  previewJson();
+  setControllerButtons();
+}
+
+function firstFreeGroup() {
+  return state.groups.findIndex(g => !g.valid);
+}
+
+function queueRenderAndDraft(msg) {
+  renderAll();
+  queueDraftSave();
+  if (msg) setStatus(msg);
+}
+
+function collectGroupFromDom(gid) {
+  gid = normalizeNumber(gid, -1);
+  if (gid < 0 || gid >= MAX_GROUPS) return null;
+  const current = state.groups[gid] || emptyGroup(gid);
+  const nameEl = document.getElementById(`grp_name_${gid}`);
+  const noteEl = document.getElementById(`grp_note_${gid}`);
+  const silenceEl = document.getElementById(`grp_silence_${gid}`);
+  const targetEl = document.getElementById(`grp_target_${gid}`);
+  const modeEl = document.getElementById(`grp_mode_${gid}`);
+  const rssiEl = document.getElementById(`grp_rssi_${gid}`);
+  const holdEl = document.getElementById(`grp_hold_${gid}`);
+  const tplEl = document.getElementById(`grp_tpl_${gid}`);
+  const effect_ui = document.getElementById(`grp_fx_mode_${gid}`) ? effectFieldsFromDom(gid) : effectFieldsFromGroup(current);
+  const effect = buildEffectSpecFromFields(effect_ui);
+  const signal_ui = document.getElementById(`grp_sig_weak_${gid}`) ? signalUiFromDom(gid) : signalUiFromGroup(current);
+  return {
+    ...current,
+    id: gid,
+    valid: true,
+    name: (nameEl ? nameEl.value : current.name).trim() || `分组${gid + 1}`,
+    note: (noteEl ? noteEl.value : current.note).trim(),
+    template: String(tplEl ? tplEl.value : current.template ?? ''),
+    effect,
+    effect_ui,
+    idle_effect: String(current.idle_effect ?? 'selftest'),
+    silence: (silenceEl ? silenceEl.value : current.silence).trim(),
+    target: normalizeNumber(targetEl ? targetEl.value : current.target, 255),
+    mode: normalizeNumber(modeEl ? modeEl.value : current.mode, 0),
+    sense_mode: String(current.sense_mode ?? 'group_shared'),
+    rssi: normalizeNumber(rssiEl ? rssiEl.value : current.rssi, -70),
+    hold: normalizeNumber(holdEl ? holdEl.value : current.hold, 2000),
+    signal_ui,
+    score: { ...defaultScoreConfig(), ...(current.score || {}) }
+  };
+}
+
+function newGroup() {
+  const gid = firstFreeGroup();
+  if (gid < 0) {
+    setStatus('已经没有空闲的分组编号了。');
+    return;
+  }
+  state.groups[gid] = { ...emptyGroup(gid), valid: true };
+  queueRenderAndDraft(`已创建分组 #${gid}，现在可以改名。`);
+  scrollToSection('groupsCard');
+  setTimeout(() => {
+    const el = document.getElementById(`grp_name_${gid}`);
+    if (el) el.focus();
+  }, 0);
+}
+
+function deleteGroup(gid) {
+  gid = normalizeNumber(gid, -1);
+  if (gid < 0 || gid >= MAX_GROUPS) return;
+  if (!confirm(`确定删除分组 #${gid} 吗？这会清掉设备分组关系和相关记录。`)) return;
+  state.groups[gid] = emptyGroup(gid);
+  state.groups[gid].valid = false;
+  for (const d of state.devices) {
+    d.group_mask = (d.group_mask >>> 0) & ~(1 << gid);
+  }
+  state.records = state.records.filter(r => r.src_group !== gid && r.target_group !== gid);
+  if (selectedGroupId === gid) {
+    selectedGroupId = validGroups()[0]?.id ?? -1;
+  }
+  queueRenderAndDraft(`分组 #${gid} 已删除。`);
+}
+
+function saveGroup(gid) {
+  const next = collectGroupFromDom(gid);
+  if (!next) return;
+  state.groups[next.id] = next;
+  refreshEffectPreview(next.id);
+  queueRenderAndDraft(`分组 #${next.id} 已保存到本地。`);
+}
+
+function applyGroupTemplate(gid) {
+  gid = normalizeNumber(gid, -1);
+  if (gid < 0 || gid >= MAX_GROUPS) return;
+  const tplEl = document.getElementById(`grp_tpl_${gid}`);
+  const tpl = tplEl ? String(tplEl.value || '') : '';
+  const current = state.groups[gid] || emptyGroup(gid);
+  state.groups[gid] = { ...current, template: tpl };
+  if (!tpl) {
+    queueRenderAndDraft(`分组 #${gid} 已切换为空白模板。`);
+    return;
+  }
+
+  const presets = {
+    source: {
+      name: `魔杖组${gid + 1}`,
+      note: '发起感应、扫描和记录配对的分组。',
+      silence: '同一目标只记录一次。',
+      target: 255,
+      mode: 1,
+      rssi: -70,
+      hold: 2000,
+      fx: { mode: 'breath', colors: ['#F5D76E', '#7CC5FF', '#68E0A8'], speed: 45, brightness: 100, period: 500, duty: 50 }
+    },
+    target: {
+      name: `宝箱组${gid + 1}`,
+      note: '被感应、被记录和被静默的分组。',
+      silence: '只保留运行状态，不重复触发。',
+      target: 255,
+      mode: 0,
+      rssi: -70,
+      hold: 2000,
+      fx: { mode: 'solid', colors: ['#4B2F00', '#0A4B63', '#0B5A46'], speed: 45, brightness: 60, period: 500, duty: 50 }
+    },
+    test: {
+      name: `测试组${gid + 1}`,
+      note: '联调、验证、默认回退使用。',
+      silence: '仅用于测试链路。',
+      target: 255,
+      mode: 0,
+      rssi: -70,
+      hold: 2000,
+      fx: { mode: 'blink', colors: ['#FFD24D', '#34B3FF', '#FFFFFF'], speed: 45, brightness: 100, period: 500, duty: 50 }
+    }
+  };
+
+  const p = presets[tpl];
+  if (!p) return;
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = String(value);
+  };
+
+  set(`grp_name_${gid}`, p.name);
+  set(`grp_note_${gid}`, p.note);
+  set(`grp_silence_${gid}`, p.silence);
+  set(`grp_target_${gid}`, p.target);
+  set(`grp_mode_${gid}`, p.mode);
+  set(`grp_rssi_${gid}`, p.rssi);
+  set(`grp_hold_${gid}`, p.hold);
+  setEffectFields(gid, p.fx);
+  saveGroup(gid);
+}
+
+function saveEffect(gid) {
+  const next = collectGroupFromDom(gid);
+  if (!next) return;
+  state.groups[next.id] = next;
+  refreshEffectPreview(next.id);
+  saveDraftNow();
+  const stateEl = document.getElementById(`grp_fx_state_${next.id}`);
+  if (stateEl) stateEl.textContent = '已保存到本地';
+  queueRenderAndDraft(`分组 #${next.id} 的灯效已保存到本地草稿。`);
+}
+
+function saveDevice(idx) {
+  idx = normalizeNumber(idx, -1);
+  if (idx < 0 || idx >= state.devices.length) return;
+  const d = state.devices[idx];
+  const nameEl = document.getElementById(`dev_name_${idx}`);
+  let mask = 0;
+  for (const g of state.groups) {
+    if (!g.valid) continue;
+    const box = document.getElementById(`dev_group_${idx}_${g.id}`);
+    if (box && box.checked) mask |= (1 << g.id);
+  }
+  if (countBits32(mask) > 8) {
+    setStatus(`设备 #${idx} 选了 ${countBits32(mask)} 个分组，超过上限 8 个，请先减少一些分组。`);
+    return;
+  }
+  state.devices[idx] = {
+    ...d,
+    name: normalizeDeviceName(nameEl ? nameEl.value : d.name, idx),
+    group_mask: mask >>> 0
+  };
+  queueRenderAndDraft(`设备 #${idx} 已保存到本地。`);
+}
+
+function removeDeviceLocally(idx) {
+  idx = normalizeNumber(idx, -1);
+  if (idx < 0 || idx >= state.devices.length) return;
+  state.devices.splice(idx, 1);
+  state.records = state.records
+    .filter(r => r.src_idx !== idx && r.dst_idx !== idx)
+    .map(r => ({
+      ...r,
+      src_idx: r.src_idx > idx ? r.src_idx - 1 : r.src_idx,
+      dst_idx: r.dst_idx > idx ? r.dst_idx - 1 : r.dst_idx
+    }));
+}
+
+async function deleteDevice(idx) {
+  idx = normalizeNumber(idx, -1);
+  if (idx < 0 || idx >= state.devices.length) return;
+  const d = state.devices[idx];
+  if (!confirm(`确定删除设备 #${idx} - ${d.name} 吗？这会清掉它的分组和相关记录。`)) return;
+
+  if (controllerOnline) {
+    try {
+      const base = controllerBase();
+      const query = d.mac ? `mac=${encodeURIComponent(d.mac)}` : `idx=${encodeURIComponent(idx)}`;
+      const res = await fetch(`${base}/device_delete?${query}&t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await loadFromController();
+      setStatus(`已从控制端删除设备 #${idx}。`);
+      return;
+    } catch (err) {
+      controllerOnline = false;
+      renderAll();
+      setStatus(`在线删除失败：${String(err)}。已切换到本地删除。`);
+    }
+  }
+
+  removeDeviceLocally(idx);
+  renderAll();
+  queueDraftSave();
+  setStatus(`已从本地配置删除设备 #${idx}。`);
+}
+
+async function loadFromController() {
+  setStatus('正在从控制端读取...');
+  try {
+    const { res, route } = await fetchController(`/state?t=${Date.now()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    state = normalizeState(data, state);
+    selectedDeviceSet.clear();
+    controllerOnline = true;
+    renderAll();
+    queueDraftSave();
+    setStatus(`读取完成：${state.devices.length} 台设备，${validGroups().length} 个有效分组，${state.records.length} 条记录。`);
+    const routeText = route === 'proxy' ? '本地服务代理' : '浏览器直连';
+    setRuntimeTip(`当前控制端：<b>${esc(controllerBase())}</b>。通信路径：${routeText}。页面现在已进入联机状态，可以扫描和点名。`);
+  } catch (err) {
+    appendDebug('loadFromController failed', errorText(err));
+    controllerOnline = false;
+    renderAll();
+    setStatus(`${controllerErrorHint(err)} 你仍然可以继续离线编辑、保存本地配置，稍后再重新读取。`);
+    setRuntimeTip(`当前是离线编辑模式。等你重新连上控制端 WiFi 后，再点“从控制端读取”即可。`);
+  }
+}
+
+async function scanDevices() {
+  setStatus('正在向控制端发送扫描命令...');
+  try {
+    const { res } = await fetchController(`/scan?t=${Date.now()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    setStatus('扫描命令已发送，正在刷新设备列表...');
+    await new Promise(r => setTimeout(r, 1200));
+    selectedDeviceSet.clear();
+    await loadFromController();
+  } catch (err) {
+    appendDebug('scanDevices failed', errorText(err));
+    controllerOnline = false;
+    renderAll();
+    setStatus(`扫描失败：${controllerErrorHint(err)}`);
+  }
+}
+
+async function identifyDevice(idx) {
+  idx = normalizeNumber(idx, -1);
+  if (idx < 0 || idx >= state.devices.length) return;
+  try {
+    const { res } = await fetchController(`/identify?idx=${encodeURIComponent(idx)}&t=${Date.now()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    setStatus(`已向设备 #${idx} 发送点名命令。`);
+    scheduleControllerRefresh(800);
+  } catch (err) {
+    appendDebug(`identifyDevice failed idx=${idx}`, errorText(err));
+    controllerOnline = false;
+    renderAll();
+    setStatus(`点名失败：${controllerErrorHint(err)}`);
+  }
+}
+
+async function identifyAllDevices() {
+  try {
+    const { res } = await fetchController(`/cmd?name=IDENTIFY&t=${Date.now()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    setStatus('已向全部设备发送点名命令。');
+    scheduleControllerRefresh(800);
+  } catch (err) {
+    appendDebug('identifyAllDevices failed', errorText(err));
+    controllerOnline = false;
+    renderAll();
+    setStatus(`全部点名失败：${controllerErrorHint(err)}`);
+  }
+}
+
+async function postConfigToController(payload) {
+  const { res } = await fetchController('/config/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    cache: 'no-store'
+  });
+  return res;
+}
+
+async function publishToController() {
+  const payload = buildControllerPayloadFromDom();
+  const limitError = validateDeviceGroupLimit(payload);
+  if (limitError) {
+    setStatus(`发布失败：${limitError}`);
+    appendDebug('publish blocked by group limit', limitError);
+    return;
+  }
+  appendDebug('publishToController start', `devices=${payload.devices?.length || 0} groups=${payload.groups?.length || 0} rules=${payload.rules?.length || 0} bytes=${JSON.stringify(payload).length}`);
+  setStatus('正在把当前配置发布到控制端...');
+  try {
+    const res = await postConfigToController(payload);
+    if (!res.ok) {
+      const body = (await res.text().catch(() => '')).trim();
+      appendDebug(`publish non-ok status=${res.status}`, body.slice(0, 500));
+      throw new Error(body ? `HTTP ${res.status}: ${body}` : `HTTP ${res.status}`);
+    }
+    state = normalizeState(payload);
+    controllerOnline = true;
+    renderAll();
+    queueDraftSave();
+    setStatus('发布成功，控制端已保存当前配置。');
+  } catch (err) {
+    appendDebug('publishToController failed', errorText(err));
+    saveDraftNow();
+    controllerOnline = false;
+    renderAll();
+    setStatus(`发布失败：${controllerErrorHint(err)} 当前配置已保存在本地草稿里，控制端这次没有收到新配置。`);
+  }
+}
+
+function saveLocalConfig() {
+  const localState = buildLocalStateFromDom();
+  const limitError = validateDeviceGroupLimit(localState);
+  if (limitError) {
+    setStatus(`保存失败：${limitError}`);
+    appendDebug('saveLocalConfig blocked by group limit', limitError);
+    return;
+  }
+  const payload = JSON.stringify(localState, null, 2);
+  const blob = new Blob([payload], { type: 'application/json;charset=utf-8' });
+  const a = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = localConfigName || 'magic_wand_config.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setStatus(`已下载 ${a.download}。你可以把它当成电脑上的唯一保存文件，后面直接覆盖它。`);
+}
+
+async function loadLocalConfigFromFile(file) {
+  if (!file) {
+    setStatus('请先选择一个 JSON 文件。');
+    return;
+  }
+  setStatus(`正在读取本地文件：${file.name} ...`);
+  try {
+    const text = await file.text();
+    state = normalizeState(JSON.parse(text));
+    localConfigName = file.name || localConfigName;
+    renderAll();
+    queueDraftSave();
+    setStatus(`已从本地读取 ${localConfigName}。现在可以继续编辑。`);
+  } catch (err) {
+    setStatus(`本地读取失败：${String(err)}`);
+  }
+}
+
+function canUseLocalApi() {
+  return isLocalLauncher();
+}
+
+async function saveLocalConfigSmart() {
+  const payload = buildLocalStateFromDom();
+  const limitError = validateDeviceGroupLimit(payload);
+  if (limitError) {
+    setStatus(`保存失败：${limitError}`);
+    appendDebug('saveLocalConfigSmart blocked by group limit', limitError);
+    return;
+  }
+  const text = JSON.stringify(payload, null, 2);
+
+  if (canUseLocalApi()) {
+    try {
+      const res = await fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: text,
+        cache: 'no-store'
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      queueDraftSave();
+      setStatus(`本地保存成功，已写入 ${esc(data.saved || localConfigName || 'magic_wand_config.json')}。`);
+      return;
+    } catch (err) {
+      setStatus(`本地写入失败，已改为下载方式：${String(err)}`);
+    }
+  }
+
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+  const a = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = localConfigName || 'magic_wand_config.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  queueDraftSave();
+  setStatus(`已下载 ${a.download}。联网模式下会直接写入电脑同级文件夹。`);
+}
+
+async function loadLocalConfigSmart() {
+  if (canUseLocalApi()) {
+    try {
+      const res = await fetch('/api/load', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      state = normalizeState(data);
+      renderAll();
+      queueDraftSave();
+      setStatus('已从电脑本地保存文件读取配置。');
+      return;
+    } catch (err) {
+      setStatus(`读取本地保存文件失败，将改为手动选择：${String(err)}`);
+    }
+  }
+  localFileInput.click();
+}
+
+function exportJson() {
+  previewEl.value = JSON.stringify(buildControllerPayloadFromDom(), null, 2);
+  previewEl.focus();
+  previewEl.select();
+  setStatus('JSON 预览已刷新。');
+}
+
+async function refreshServeLog() {
+  if (!isLocalLauncher()) {
+    appendDebug('read serve log skipped', 'not local launcher mode');
+    setStatus('当前不是本地启动模式，无法读取 serve 日志。');
+    return;
+  }
+  try {
+    const res = await fetch('/api/log?tail=300', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    appendDebug('serve log loaded', `chars=${text.length}`);
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    if (lines.length) {
+      debugLines.push('===== serve_debug.log =====');
+      debugLines.push(...lines.slice(-300));
+      if (debugLines.length > 300) debugLines = debugLines.slice(-300);
+      if (debugOutputEl) debugOutputEl.value = debugLines.join('\n');
+    }
+    setStatus('已读取 serve_debug.log（最近 300 行）。');
+  } catch (err) {
+    appendDebug('refreshServeLog failed', errorText(err));
+    setStatus(`读取 serve 日志失败：${controllerErrorHint(err)}`);
+  }
+}
+
+async function clearServeLog() {
+  if (!isLocalLauncher()) {
+    setStatus('当前不是本地启动模式，无法清空 serve 日志。');
+    return;
+  }
+  try {
+    const res = await fetch('/api/log/clear', { method: 'POST', cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    appendDebug('serve log cleared');
+    setStatus('已清空 serve_debug.log。');
+  } catch (err) {
+    appendDebug('clearServeLog failed', errorText(err));
+    setStatus(`清空 serve 日志失败：${controllerErrorHint(err)}`);
+  }
+}
+
+function refreshFromDraft(draft, msg) {
+  if (!draft) {
+    setStatus('没有找到本地草稿。');
+    return;
+  }
+  state = draft;
+  controllerOnline = false;
+  renderAll();
+  queueDraftSave();
+  setStatus(msg || '已恢复本地草稿。');
+}
+
+
+function applyGamePreset(name) {
+  const preset = String(name || selectedPresetId || 'solo_hunt');
+  const ensureGroup = (id, data) => {
+    state.groups[id] = { ...emptyGroup(id), ...state.groups[id], ...data, id, valid: true };
+  };
+  if (preset === 'solo_hunt') {
+    ensureGroup(0, { name: '魔杖组', note: '每支魔杖独立记录宝箱', mode: 1, target: 1, effect_ui: { ...defaultEffectFields(), mode: 'breath', ports: [true,false,false], colors: ['#FFD24D','#005AFF','#00AA78'], brightness: 35, speed: 20 }, effect: 'breath2|1|0|25|0|FFD24D|20|35|0|0|0', score: { enabled: true, port: 0, start: 0, count: 10, empty: '#FFD24D', full: '#FFD700', brightness: 50 } });
+    ensureGroup(1, { name: '宝箱组', note: '宝箱只做反馈灯效', mode: 0, target: 255, effect_ui: { ...defaultEffectFields(), mode: 'pulse', ports: [true,true,true], colors: ['#FFD24D','#005AFF','#00AA78'], endColor: '#FFFFFF', startBrightness: 10, endBrightness: 100, period: 600, count: 20, accel: 70, endHold: 3000 }, effect: 'pulse2|7|0|25|0|FFD24D|FFFFFF|600|10|100|20|70|3000' });
+    state.rules = [{ ...emptyRule(0), name: '魔杖寻找宝箱，一次计分', source_group: 0, target_group: 1, mode: 'round_robin', once: true }];
+  } else if (preset === 'team_hunt') {
+    ensureGroup(0, { name: '双人魔杖组', note: '同组共享找到记录', mode: 0, target: 1, score: { enabled: true, port: 0, start: 0, count: 10, empty: '#FFD24D', full: '#FFD700', brightness: 50 } });
+    ensureGroup(1, { name: '宝箱组', note: '同一组找到后不重复响应', mode: 0, target: 255 });
+    state.rules = [{ ...emptyRule(0), name: '双人组共享寻宝', source_group: 0, target_group: 1, mode: 'group_shared', once: true }];
+  } else if (preset === 'distance_test') {
+    ensureGroup(0, { name: '距离提示测试', note: 'RSSI 越强越明显', mode: 2, target: 255, effect_ui: { ...defaultEffectFields(), mode: 'blink', period: 700, brightness: 100 }, effect: 'blink2|7|0|25|0|34B3FF|700|50|100|0|0|0' });
+    state.rules = [{ ...emptyRule(0), name: '距离响应测试', source_group: 0, target_group: 255, mode: 'response', once: false }];
+  } else if (preset === 'effect_demo') {
+    ensureGroup(0, { name: '灯效演示', note: '展示加速脉冲', mode: 2, target: 255, effect_ui: { ...defaultEffectFields(), mode: 'pulse', ports: [true,true,true], colors: ['#FFD24D','#005AFF','#00AA78'], endColor: '#FFFFFF', startBrightness: 10, endBrightness: 100, period: 600, count: 20, accel: 70, endHold: 3000 }, effect: 'pulse2|7|0|25|0|FFD24D|FFFFFF|600|10|100|20|70|3000' });
+    state.rules = [];
+  }
+  state.schema_version = 2;
+  state.active_preset = String((builtInPresetById(preset)?.name) || preset);
+  selectedPresetId = preset;
+  saveUiState();
+  queueRenderAndDraft(`已套用预设：${preset}，请检查设备分组后发布。`);
+}
+
+function saveMyPreset() {
+  const typed = presetNameInput ? String(presetNameInput.value || '').trim() : '';
+  const name = typed || prompt('预设名称', '我的玩法');
+  if (!name) return;
+  const config = buildPresetConfigFromDom();
+  const limitError = validateDeviceGroupLimit(config);
+  if (limitError) {
+    setStatus(`保存预设失败：${limitError}`);
+    appendDebug('saveMyPreset blocked by group limit', limitError);
+    return;
+  }
+  const id = makeCustomPresetId(name);
+  state.presets = normalizePresetLibrary(state.presets, []);
+  state.presets = state.presets.filter(p => String(p.id) !== id);
+  state.presets.push({ id, name, note: '用户自定义预设。', saved_at: new Date().toISOString(), config });
+  selectedPresetId = id;
+  state.active_preset = name;
+  if (presetNameInput) presetNameInput.value = name;
+  saveUiState();
+  queueRenderAndDraft(`已保存我的预设：${name}`);
+}
+
+tabButtons.forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab || 'devices')));
+loadBtn.addEventListener('click', () => loadFromController().catch(() => {}));
+loadLocalBtn.addEventListener('click', () => loadLocalConfigSmart().catch(() => {}));
+saveLocalBtn.addEventListener('click', () => saveLocalConfigSmart().catch(() => {}));
+restoreDraftBtn.addEventListener('click', () => refreshFromDraft(loadDraftFromStorage(), '已恢复本地草稿。'));
+clearDraftBtn.addEventListener('click', () => {
+  clearDraftFromStorage();
+  setStatus('本地草稿已清除。');
+});
+newGroupBtn.addEventListener('click', newGroup);
+newGroupBtn2.addEventListener('click', newGroup);
+scanBtn.addEventListener('click', () => scanDevices().catch(() => {}));
+identifyAllBtn.addEventListener('click', () => identifyAllDevices().catch(() => {}));
+identifySelectedBtn.addEventListener('click', () => identifySelectedDevices().catch(() => {}));
+publishBtn.addEventListener('click', () => publishToController().catch(() => {}));
+exportBtn.addEventListener('click', exportJson);
+applyGamePresetBtn.addEventListener('click', () => applyPresetConfig(selectedPresetMeta()));
+saveMyPresetBtn.addEventListener('click', saveMyPreset);
+newEffectBtn.addEventListener('click', createEffectTemplate);
+copyCurrentEffectBtn.addEventListener('click', createEffectTemplateFromCurrent);
+refreshLogBtn.addEventListener('click', () => refreshServeLog().catch(() => {}));
+clearLogBtn.addEventListener('click', () => clearServeLog().catch(() => {}));
+copyDebugBtn.addEventListener('click', async () => {
+  const text = debugOutputEl ? debugOutputEl.value : '';
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus('调试文本已复制到剪贴板。');
+  } catch (err) {
+    appendDebug('copyDebug failed', errorText(err));
+    setStatus('复制调试文本失败。');
+  }
+});
+clearDebugBtn.addEventListener('click', () => {
+  debugLines = [];
+  if (debugOutputEl) debugOutputEl.value = '';
+  setStatus('页面调试文本已清空。');
+});
+document.addEventListener('input', queueDraftSave, true);
+document.addEventListener('change', queueDraftSave, true);
+localFileInput.addEventListener('change', async () => {
+  const file = localFileInput.files && localFileInput.files[0];
+  if (file) await loadLocalConfigFromFile(file);
+  localFileInput.value = '';
+});
+window.addEventListener('beforeunload', saveDraftNow);
+
+setRuntimeTip('UI v0.8.0 · 页面样式已按参考设计重建：顶部分组、总览、标签页和设备工作区保持同一视觉密度；发布链路保持兼容。');
+appendDebug('page init', `ui=v0.8.0 launcher=${isLocalLauncher()} controllerBase=${controllerBase()}`);
+renderAll();
+startPreviewLoop();</script>
+</body>
+</html>
+
+
+
+
+
+
+

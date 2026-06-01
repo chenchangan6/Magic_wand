@@ -1,0 +1,5 @@
+# Name,   Type, SubType, Offset,  Size,    Flags
+# Keep a larger NVS partition so the registry blobs can fit without constant save failures.
+nvs,      data, nvs,     ,        0x20000,
+phy_init, data, phy,     ,        0x1000,
+factory,  app,  factory, ,        0x1D0000,
