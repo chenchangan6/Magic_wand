@@ -54,6 +54,57 @@ function Stop-OldLocalConfigServers {
     }
 }
 
+function Start-StaticFlashServer([int]$ListenPort, [string]$OpenUrl) {
+    $listener = [System.Net.HttpListener]::new()
+    $prefix = "http://127.0.0.1:$ListenPort/"
+    $listener.Prefixes.Add($prefix)
+    $listener.Start()
+    Write-Host "Python was not found. Static flasher server started at $OpenUrl"
+    Start-Process $OpenUrl
+
+    try {
+        while ($listener.IsListening) {
+            $context = $listener.GetContext()
+            $requestPath = [Uri]::UnescapeDataString($context.Request.Url.AbsolutePath.TrimStart('/'))
+            if (-not $requestPath) {
+                $requestPath = 'flash.html'
+            }
+            $requestPath = $requestPath -replace '/', [IO.Path]::DirectorySeparatorChar
+            $fullPath = [IO.Path]::GetFullPath((Join-Path $root $requestPath))
+            if (-not $fullPath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $context.Response.StatusCode = 403
+                $context.Response.Close()
+                continue
+            }
+            if (-not (Test-Path $fullPath -PathType Leaf)) {
+                $context.Response.StatusCode = 404
+                $context.Response.Close()
+                continue
+            }
+
+            $ext = [IO.Path]::GetExtension($fullPath).ToLowerInvariant()
+            $contentType = switch ($ext) {
+                '.html' { 'text/html; charset=utf-8' }
+                '.json' { 'application/json; charset=utf-8' }
+                '.js' { 'text/javascript; charset=utf-8' }
+                '.css' { 'text/css; charset=utf-8' }
+                '.bin' { 'application/octet-stream' }
+                default { 'application/octet-stream' }
+            }
+            $bytes = [IO.File]::ReadAllBytes($fullPath)
+            $context.Response.Headers.Set('Access-Control-Allow-Origin', '*')
+            $context.Response.Headers.Set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+            $context.Response.ContentType = $contentType
+            $context.Response.ContentLength64 = $bytes.Length
+            $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+            $context.Response.Close()
+        }
+    } finally {
+        $listener.Stop()
+        $listener.Close()
+    }
+}
+
 Stop-OldLocalConfigServers
 
 foreach ($candidatePort in 8777..8787) {
@@ -66,7 +117,15 @@ if (-not $port) {
     throw 'No free localhost port found in the 8777-8787 range.'
 }
 
-$url = "http://127.0.0.1:$port/"
+$startPath = [string]$env:MAGIC_START_PATH
+if (-not $startPath) {
+    $startPath = '/'
+}
+if (-not $startPath.StartsWith('/')) {
+    $startPath = '/' + $startPath
+}
+$url = "http://127.0.0.1:$port$startPath"
+$statusUrl = "http://127.0.0.1:$port/api/status"
 $env:MAGIC_LAN_PORT = [string]$port
 
 $preferred = 'C:\Espressif\tools\python\v6.0\venv\Scripts\python.exe'
@@ -88,15 +147,19 @@ if (-not $python -and (Test-Path 'C:\ProgramData\miniconda3\python.exe')) {
 }
 
 if (-not $python) {
-    throw 'Python or py was not found. Please install Python before running this local config page.'
+    if ($startPath -eq '/flash.html') {
+        Start-StaticFlashServer -ListenPort $port -OpenUrl $url
+        return
+    }
+    throw 'Python or py was not found. Please install Python before running the full local config page. For firmware flashing only, run start_flasher.cmd.'
 }
 
-Write-Host "Local config page starting at $url (page + local save, controller connects directly)"
+Write-Host "MagicWand local tool starting at $url"
 $server = Start-Process -FilePath $python -ArgumentList @('serve.py') -WorkingDirectory $root -WindowStyle Hidden -PassThru
 try {
     for ($i = 0; $i -lt 50; $i++) {
         try {
-            Invoke-WebRequest -UseBasicParsing "$url/api/status" | Out-Null
+            Invoke-WebRequest -UseBasicParsing $statusUrl | Out-Null
             break
         } catch {
             Start-Sleep -Milliseconds 200

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MagicWand 固件烧录</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b111a;
+      --panel: #121b28;
+      --panel-2: #172234;
+      --line: rgba(135, 164, 204, 0.24);
+      --text: #eef5ff;
+      --muted: #9fb0c8;
+      --ok: #61d890;
+      --warn: #f2c75b;
+      --bad: #ef6f7d;
+      --blue: #61b5ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+    main {
+      width: min(1120px, calc(100% - 28px));
+      margin: 0 auto;
+      padding: 24px 0 36px;
+    }
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    h1 { margin: 0; font-size: 24px; line-height: 1.1; }
+    p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 16px;
+    }
+    .card h2 { margin: 0 0 8px; font-size: 17px; }
+    .meta { margin: 8px 0 14px; color: var(--muted); font-size: 12px; }
+    .firmware-meta {
+      display: grid;
+      gap: 6px;
+      margin: 12px 0;
+      border: 1px solid rgba(135, 164, 204, 0.16);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.035);
+      padding: 10px;
+      color: #dce8f7;
+      font-size: 12px;
+    }
+    .firmware-meta .line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid rgba(135, 164, 204, 0.1);
+      padding-bottom: 5px;
+    }
+    .firmware-meta .line:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+    .firmware-meta .label { color: var(--muted); }
+    .firmware-meta .value { color: #ffffff; font-weight: 700; text-align: right; }
+    esp-web-install-button { display: block; margin-top: 12px; }
+    .unsupported {
+      display: block;
+      border: 1px solid rgba(239, 111, 125, 0.4);
+      border-radius: 8px;
+      background: rgba(239, 111, 125, 0.1);
+      color: #ffd9dd;
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+    .diag {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .diag-row {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr) 84px;
+      gap: 10px;
+      align-items: center;
+      min-height: 34px;
+      border: 1px solid rgba(135, 164, 204, 0.14);
+      border-radius: 8px;
+      background: var(--panel-2);
+      padding: 7px 9px;
+      font-size: 12px;
+    }
+    .value { overflow-wrap: anywhere; color: #dce8f7; }
+    .badge {
+      justify-self: end;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .ok { color: var(--ok); border-color: rgba(97, 216, 144, 0.35); }
+    .warn { color: var(--warn); border-color: rgba(242, 199, 91, 0.35); }
+    .bad { color: var(--bad); border-color: rgba(239, 111, 125, 0.35); }
+    .tips {
+      margin-top: 12px;
+      border: 1px solid rgba(97, 181, 255, 0.22);
+      border-radius: 8px;
+      background: rgba(97, 181, 255, 0.08);
+      padding: 10px 12px;
+      color: #cfe8ff;
+      font-size: 13px;
+    }
+    code {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 5px;
+      padding: 1px 5px;
+    }
+    @media (max-width: 780px) {
+      header { display: block; }
+      .grid { grid-template-columns: 1fr; }
+      .diag-row { grid-template-columns: 1fr; }
+      .badge { justify-self: start; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>MagicWand 固件烧录</h1>
+        <p>使用 Chrome 或 Edge 连接 ESP32-C6 MINI 的官方 USB 端口。请选择控制端或接收端固件。</p>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>网页烧录自检</h2>
+      <p>如果 Windows 11 Chrome 提示不支持，请先看这里的真实原因。</p>
+      <div id="diag" class="diag"></div>
+      <div id="tips" class="tips">正在检测浏览器能力...</div>
+    </section>
+
+    <section class="grid" style="margin-top:14px">
+      <div class="card">
+        <h2>控制端固件</h2>
+        <div class="meta">烧录到控制端设备，默认 AP 地址为 192.168.4.1。</div>
+        <div id="controllerFirmwareMeta" class="firmware-meta">
+          <div class="line"><span class="label">固件版本</span><span class="value">正在读取...</span></div>
+        </div>
+        <esp-web-install-button manifest="firmware/controller/manifest.json">
+          <span slot="unsupported" class="unsupported">ESP Web Tools 认为当前环境不可烧录，请查看上方自检原因。</span>
+          <span slot="not-allowed" class="unsupported">浏览器安全策略阻止串口访问，请查看上方自检原因。</span>
+        </esp-web-install-button>
+      </div>
+      <div class="card">
+        <h2>接收端固件</h2>
+        <div class="meta">烧录到接收端设备，接收控制端下发的配置并自主触发。</div>
+        <div id="receiverFirmwareMeta" class="firmware-meta">
+          <div class="line"><span class="label">固件版本</span><span class="value">正在读取...</span></div>
+        </div>
+        <esp-web-install-button manifest="firmware/receiver/manifest.json">
+          <span slot="unsupported" class="unsupported">ESP Web Tools 认为当前环境不可烧录，请查看上方自检原因。</span>
+          <span slot="not-allowed" class="unsupported">浏览器安全策略阻止串口访问，请查看上方自检原因。</span>
+        </esp-web-install-button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const diagEl = document.getElementById('diag');
+    const tipsEl = document.getElementById('tips');
+    const controllerFirmwareMetaEl = document.getElementById('controllerFirmwareMeta');
+    const receiverFirmwareMetaEl = document.getElementById('receiverFirmwareMeta');
+    const rows = {};
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function formatBytes(value) {
+      const bytes = Number(value || 0);
+      if (!Number.isFinite(bytes) || bytes <= 0) return '未知';
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    }
+
+    function formatTime(value) {
+      if (!value) return '未知';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString();
+    }
+
+    function renderFirmwareMeta(target, info, fallbackManifest) {
+      const version = info?.version || fallbackManifest?.version || '未知';
+      const appSize = formatBytes(info?.app_size);
+      const appTime = formatTime(info?.app_mtime || info?.manifest_mtime);
+      target.innerHTML = `
+        <div class="line"><span class="label">固件版本</span><span class="value">${escapeHtml(version)}</span></div>
+        <div class="line"><span class="label">APP 大小</span><span class="value">${escapeHtml(appSize)}</span></div>
+        <div class="line"><span class="label">更新时间</span><span class="value">${escapeHtml(appTime)}</span></div>
+      `;
+    }
+
+    async function loadFirmwareInfo() {
+      const loadManifest = async (path) => {
+        const response = await fetch(`${path}?t=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      };
+      let status = null;
+      try {
+        const response = await fetch(`/api/status?t=${Date.now()}`, { cache: 'no-store' });
+        if (response.ok) status = await response.json();
+      } catch (err) {
+        status = null;
+      }
+      try {
+        const [controllerManifest, receiverManifest] = await Promise.all([
+          loadManifest('firmware/controller/manifest.json'),
+          loadManifest('firmware/receiver/manifest.json')
+        ]);
+        renderFirmwareMeta(controllerFirmwareMetaEl, status?.firmware?.controller, controllerManifest);
+        renderFirmwareMeta(receiverFirmwareMetaEl, status?.firmware?.receiver, receiverManifest);
+      } catch (err) {
+        controllerFirmwareMetaEl.innerHTML = `<div class="line"><span class="label">固件版本</span><span class="value">读取失败：${escapeHtml(err.message)}</span></div>`;
+        receiverFirmwareMetaEl.innerHTML = `<div class="line"><span class="label">固件版本</span><span class="value">读取失败：${escapeHtml(err.message)}</span></div>`;
+      }
+    }
+
+    function isLocalOrHttps() {
+      const host = window.location.hostname;
+      return window.location.protocol === 'https:' || host === '127.0.0.1' || host === 'localhost' || host === '::1';
+    }
+
+    function badgeClass(status) {
+      if (status === 'ok') return 'ok';
+      if (status === 'bad') return 'bad';
+      return 'warn';
+    }
+
+    function setRow(key, label, value, status, statusText) {
+      rows[key] = { label, value, status, statusText };
+      diagEl.innerHTML = Object.values(rows).map((row) => `
+        <div class="diag-row">
+          <div>${row.label}</div>
+          <div class="value">${escapeHtml(row.value)}</div>
+          <div class="badge ${badgeClass(row.status)}">${row.statusText}</div>
+        </div>
+      `).join('');
+      updateTips();
+    }
+
+    function updateTips() {
+      const secureOk = window.isSecureContext && isLocalOrHttps();
+      const serialOk = 'serial' in navigator;
+      const tools = rows.tools?.status;
+      if (!isLocalOrHttps()) {
+        tipsEl.innerHTML = `当前不是安全本地地址。请用 <code>http://127.0.0.1:${window.location.port || '8777'}/flash.html</code> 或 HTTPS 打开。`;
+      } else if (!window.isSecureContext) {
+        tipsEl.textContent = '当前页面不是安全上下文。请确认地址栏是 127.0.0.1 或 HTTPS，并且不是 file:// 直接打开。';
+      } else if (!serialOk) {
+        tipsEl.textContent = '浏览器没有 Web Serial。请使用新版 Chrome/Edge，并检查企业策略、浏览器实验功能或扩展是否禁用了串口能力。';
+      } else if (tools === 'bad') {
+        tipsEl.textContent = 'ESP Web Tools 脚本未加载，通常是网络或 CDN 被拦截。联网后刷新，或改用离线烧录工具。';
+      } else if (secureOk && serialOk && tools === 'ok') {
+        tipsEl.textContent = '自检通过。点击对应固件的 Connect/Install 后，在弹窗里选择 ESP32-C6 的 USB 串口。';
+      } else {
+        tipsEl.textContent = '正在等待 ESP Web Tools 初始化...';
+      }
+    }
+
+    setRow('url', '当前 URL', window.location.href, isLocalOrHttps() ? 'ok' : 'bad', isLocalOrHttps() ? '本地/HTTPS' : '非安全地址');
+    setRow('secure', '安全上下文', String(window.isSecureContext), window.isSecureContext ? 'ok' : 'bad', window.isSecureContext ? '是' : '否');
+    setRow('serial', 'Web Serial', String('serial' in navigator), 'serial' in navigator ? 'ok' : 'bad', 'serial' in navigator ? '存在' : '不存在');
+    setRow('ua', '浏览器 UA', navigator.userAgent, 'ok', '已读取');
+    setRow('tools', 'ESP Web Tools', '等待加载', 'warn', '检测中');
+
+    customElements.whenDefined('esp-web-install-button')
+      .then(() => setRow('tools', 'ESP Web Tools', 'esp-web-install-button 已注册', 'ok', '已加载'))
+      .catch(() => setRow('tools', 'ESP Web Tools', 'customElements.whenDefined 失败', 'bad', '失败'));
+
+    window.setTimeout(() => {
+      if (customElements.get('esp-web-install-button')) {
+        setRow('tools', 'ESP Web Tools', 'esp-web-install-button 已注册', 'ok', '已加载');
+      } else {
+        setRow('tools', 'ESP Web Tools', '脚本未加载或被拦截', 'bad', '失败');
+      }
+    }, 3500);
+
+    loadFirmwareInfo();
+  </script>
+</body>
+</html>

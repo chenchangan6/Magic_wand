@@ -33,6 +33,8 @@ static const char *TAG = "MAGIC_CTRL";
 #define MAX_DEVICES 32
 #define MAX_GROUPS 16
 #define MAX_DISCOVERY_RECORDS 64
+#define MAX_RUNTIME_EVENTS 64
+#define MAX_RUNTIME_STATS MAX_DEVICES
 #define CONFIG_IMPORT_MAX_BODY (32 * 1024)
 
 #define DEVICE_NAME_LEN 32
@@ -66,11 +68,15 @@ typedef struct {
     char note[GROUP_TEXT_LEN];
     char effect_note[GROUP_TEXT_LEN];
     char silence_note[GROUP_TEXT_LEN];
+    char trigger_effect_note[GROUP_TEXT_LEN];
+    uint32_t peer_mask;
+    uint16_t room_hash;
     uint8_t target_group;      // 0xFF = none
     uint8_t mode;              // GROUP_MODE_*
     int16_t rssi_threshold;    // placeholder for future proximity logic
     uint16_t hold_ms;          // placeholder for future proximity logic
-    uint8_t reserved[2];
+    uint8_t trigger_compare;   // 0 = gte, 1 = lte
+    uint8_t reserved[1];
 } group_config_t;
 
 typedef struct {
@@ -85,6 +91,28 @@ typedef struct {
 } discovery_record_t;
 
 typedef struct {
+    uint16_t room_hash;
+    uint8_t self_mac[6];
+    uint8_t peer_mac[6];
+    int16_t self_device_index;
+    int16_t peer_device_index;
+    uint32_t self_group_mask;
+    uint32_t peer_group_mask;
+    int16_t rssi;
+    int64_t event_ms;
+} runtime_event_t;
+
+typedef struct {
+    uint8_t valid;
+    uint16_t room_hash;
+    uint8_t self_mac[6];
+    uint16_t seen_count;
+    uint16_t found_count;
+    uint32_t seq;
+    int64_t last_seen_ms;
+} runtime_stat_t;
+
+typedef struct {
     char *buf;
     size_t len;
     size_t cap;
@@ -97,9 +125,14 @@ static receiver_device_t devices[MAX_DEVICES];
 static receiver_device_v1_t legacy_devices[MAX_DEVICES];
 static group_config_t groups[MAX_GROUPS];
 static discovery_record_t records[MAX_DISCOVERY_RECORDS];
+static runtime_event_t runtime_events[MAX_RUNTIME_EVENTS];
+static runtime_stat_t runtime_stats[MAX_RUNTIME_STATS];
 
 static int device_count = 0;
 static int record_count = 0;
+static int runtime_event_count = 0;
+static volatile bool runtime_running = false;
+static int64_t runtime_started_ms = 0;
 static portMUX_TYPE state_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool registry_dirty = false;
 
@@ -457,8 +490,18 @@ static bool parse_import_group_object(json_reader_t *jr, group_config_t *dst, in
             if (!jr_read_string(jr, dst->note, sizeof(dst->note))) return false;
         } else if (strcmp(key, "effect") == 0) {
             if (!jr_read_string(jr, dst->effect_note, sizeof(dst->effect_note))) return false;
+        } else if (strcmp(key, "trigger_effect") == 0) {
+            if (!jr_read_string(jr, dst->trigger_effect_note, sizeof(dst->trigger_effect_note))) return false;
         } else if (strcmp(key, "silence") == 0) {
             if (!jr_read_string(jr, dst->silence_note, sizeof(dst->silence_note))) return false;
+        } else if (strcmp(key, "peer_mask") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > (int64_t)UINT32_MAX) return false;
+            dst->peer_mask = (uint32_t)value;
+        } else if (strcmp(key, "room_hash") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > UINT16_MAX) return false;
+            dst->room_hash = (uint16_t)value;
         } else if (strcmp(key, "target") == 0) {
             int64_t value = 0;
             if (!jr_parse_int64(jr, &value) || value < -1 || value > 255) return false;
@@ -467,6 +510,10 @@ static bool parse_import_group_object(json_reader_t *jr, group_config_t *dst, in
             int64_t value = 0;
             if (!jr_parse_int64(jr, &value) || value < 0 || value > 255) return false;
             dst->mode = (uint8_t)value;
+        } else if (strcmp(key, "trigger_compare") == 0) {
+            char value[8] = {0};
+            if (!jr_read_string(jr, value, sizeof(value))) return false;
+            dst->trigger_compare = (strcmp(value, "lte") == 0) ? 1 : 0;
         } else if (strcmp(key, "rssi") == 0) {
             int64_t value = 0;
             if (!jr_parse_int64(jr, &value) || value < INT16_MIN || value > INT16_MAX) return false;
@@ -961,10 +1008,19 @@ static void ensure_group_default_fields_locked(int gid)
         make_default_group_name(gid, groups[gid].name, sizeof(groups[gid].name));
     }
     if (groups[gid].effect_note[0] == '\0') {
-        snprintf(groups[gid].effect_note, sizeof(groups[gid].effect_note), "selftest");
+        snprintf(groups[gid].effect_note, sizeof(groups[gid].effect_note), "silent");
+    }
+    if (groups[gid].trigger_effect_note[0] == '\0') {
+        char effect_copy[GROUP_TEXT_LEN];
+        snprintf(effect_copy, sizeof(effect_copy), "%s", groups[gid].effect_note);
+        snprintf(groups[gid].trigger_effect_note, sizeof(groups[gid].trigger_effect_note), "%s", effect_copy);
     }
     if (groups[gid].target_group >= MAX_GROUPS) groups[gid].target_group = 0xFF;
     if (groups[gid].target_group == gid) groups[gid].target_group = 0xFF;
+    if (groups[gid].peer_mask == 0 && group_bit_valid(groups[gid].target_group)) {
+        groups[gid].peer_mask = group_bit(groups[gid].target_group);
+    }
+    if (groups[gid].room_hash == 0) groups[gid].room_hash = 1;
 }
 
 static void registry_save(void)
@@ -1203,7 +1259,7 @@ static esp_err_t send_espnow_command_to(const uint8_t *mac, const char *cmd)
     if (ret == ESP_OK) {
         char mac_text[18];
         mac_to_string(mac, mac_text, sizeof(mac_text));
-        ESP_LOGI(TAG, "ESP-NOW TX %s to %s", cmd, mac_text);
+        ESP_LOGI(TAG, "ESP-NOW TX len=%u %s to %s", (unsigned int)strlen(cmd), cmd, mac_text);
     } else {
         ESP_LOGE(TAG, "ESP-NOW TX failed for %s: %s", cmd, esp_err_to_name(ret));
     }
@@ -1235,7 +1291,7 @@ static void sync_effects_to_devices(void)
         portENTER_CRITICAL(&state_mux);
         if (i < device_count) {
             memcpy(mac, devices[i].mac, sizeof(mac));
-            const char *resolved_spec = "selftest";
+            const char *resolved_spec = "silent";
             for (int g = 0; g < MAX_GROUPS; g++) {
                 if (!groups[g].valid) continue;
                 if ((devices[i].group_mask & group_bit(g)) == 0) continue;
@@ -1254,7 +1310,7 @@ static void sync_effects_to_devices(void)
         }
 
         char cmd[GROUP_TEXT_LEN + 8];
-        snprintf(cmd, sizeof(cmd), "FXSET|%s", spec[0] ? spec : "selftest");
+        snprintf(cmd, sizeof(cmd), "FXSET|%s", spec[0] ? spec : "silent");
         esp_err_t ret = send_espnow_command_to(mac, cmd);
         if (ret != ESP_OK) {
             char mac_text[18];
@@ -1264,6 +1320,148 @@ static void sync_effects_to_devices(void)
         pushed++;
     }
     ESP_LOGI(TAG, "Sync effects end. devices=%d", pushed);
+}
+
+static int first_group_for_mask(uint32_t mask)
+{
+    for (int g = 0; g < MAX_GROUPS; g++) {
+        if ((mask & group_bit(g)) != 0 && groups[g].valid) {
+            return g;
+        }
+    }
+    return -1;
+}
+
+static void runtime_reset_locked(void)
+{
+    memset(runtime_events, 0, sizeof(runtime_events));
+    memset(runtime_stats, 0, sizeof(runtime_stats));
+    runtime_event_count = 0;
+    runtime_running = false;
+    runtime_started_ms = 0;
+}
+
+static void append_runtime_event_locked(uint16_t room, const uint8_t *self_mac, const uint8_t *peer_mac,
+                                        int16_t self_device_index, int16_t peer_device_index,
+                                        uint32_t self_mask, uint32_t peer_mask, int rssi, int64_t event_ms)
+{
+    int idx = runtime_event_count;
+    if (idx >= MAX_RUNTIME_EVENTS) {
+        memmove(&runtime_events[0], &runtime_events[1], sizeof(runtime_event_t) * (MAX_RUNTIME_EVENTS - 1));
+        idx = MAX_RUNTIME_EVENTS - 1;
+        runtime_event_count = MAX_RUNTIME_EVENTS - 1;
+    }
+    runtime_event_t *event = &runtime_events[idx];
+    memset(event, 0, sizeof(*event));
+    event->room_hash = room;
+    memcpy(event->self_mac, self_mac, 6);
+    memcpy(event->peer_mac, peer_mac, 6);
+    event->self_device_index = self_device_index;
+    event->peer_device_index = peer_device_index;
+    event->self_group_mask = self_mask;
+    event->peer_group_mask = peer_mask;
+    event->rssi = (int16_t)rssi;
+    event->event_ms = event_ms;
+    runtime_event_count++;
+}
+
+static void upsert_runtime_stat_locked(uint16_t room, const uint8_t *self_mac, unsigned int seen_count,
+                                       unsigned int found_count, unsigned int seq, int64_t now_ms)
+{
+    int slot = -1;
+    int empty = -1;
+    for (int i = 0; i < MAX_RUNTIME_STATS; i++) {
+        if (runtime_stats[i].valid && mac_equal(runtime_stats[i].self_mac, self_mac)) {
+            slot = i;
+            break;
+        }
+        if (!runtime_stats[i].valid && empty < 0) empty = i;
+    }
+    if (slot < 0) slot = empty >= 0 ? empty : 0;
+    runtime_stat_t *stat = &runtime_stats[slot];
+    memset(stat, 0, sizeof(*stat));
+    stat->valid = 1;
+    stat->room_hash = room;
+    memcpy(stat->self_mac, self_mac, 6);
+    stat->seen_count = (uint16_t)seen_count;
+    stat->found_count = (uint16_t)found_count;
+    stat->seq = seq;
+    stat->last_seen_ms = now_ms;
+}
+
+static esp_err_t send_runtime_to_devices(bool start_after_config, bool test_after_config = false)
+{
+    int snapshot_count = 0;
+    portENTER_CRITICAL(&state_mux);
+    snapshot_count = device_count;
+    if (snapshot_count < 0) snapshot_count = 0;
+    if (snapshot_count > MAX_DEVICES) snapshot_count = MAX_DEVICES;
+    portEXIT_CRITICAL(&state_mux);
+
+    int pushed = 0;
+    for (int i = 0; i < snapshot_count; i++) {
+        uint8_t mac[6] = {0};
+        uint32_t group_mask = 0;
+        uint32_t peer_mask = 0;
+        uint16_t room_hash = 1;
+        int16_t rssi = -70;
+        uint16_t hold = 2000;
+        const char *compare = "gte";
+        char idle[GROUP_TEXT_LEN] = {0};
+        char trigger[GROUP_TEXT_LEN] = {0};
+
+        portENTER_CRITICAL(&state_mux);
+        if (i < device_count) {
+            memcpy(mac, devices[i].mac, sizeof(mac));
+            group_mask = devices[i].group_mask;
+            int gid = first_group_for_mask(group_mask);
+            if (gid >= 0) {
+                group_config_t *g = &groups[gid];
+                peer_mask = g->peer_mask;
+                room_hash = g->room_hash ? g->room_hash : 1;
+                rssi = g->rssi_threshold ? g->rssi_threshold : -70;
+                hold = g->hold_ms ? g->hold_ms : 2000;
+                compare = g->trigger_compare ? "lte" : "gte";
+                snprintf(idle, sizeof(idle), "%s", g->effect_note[0] ? g->effect_note : "silent");
+                snprintf(trigger, sizeof(trigger), "%s", g->trigger_effect_note[0] ? g->trigger_effect_note : idle);
+            }
+        }
+        portEXIT_CRITICAL(&state_mux);
+
+        if (group_mask == 0 || peer_mask == 0) {
+            continue;
+        }
+
+        char cfg[250];
+        snprintf(cfg, sizeof(cfg), "CFG|%u|%u|%u|%s|%d|%u|%s",
+                 (unsigned int)room_hash,
+                 (unsigned int)group_mask,
+                 (unsigned int)peer_mask,
+                 compare,
+                 (int)rssi,
+                 (unsigned int)hold,
+                 idle[0] ? idle : "silent");
+        esp_err_t ret = send_espnow_command_to(mac, cfg);
+        if (ret != ESP_OK) return ret;
+
+        char trg[250];
+        snprintf(trg, sizeof(trg), "TRG|%s", trigger[0] ? trigger : idle);
+        ret = send_espnow_command_to(mac, trg);
+        if (ret != ESP_OK) return ret;
+
+        if (start_after_config) {
+            ret = send_espnow_command_to(mac, "START");
+            if (ret != ESP_OK) return ret;
+        }
+        if (test_after_config) {
+            ret = send_espnow_command_to(mac, "TEST_EFFECT");
+            if (ret != ESP_OK) return ret;
+        }
+        pushed++;
+    }
+    ESP_LOGI(TAG, "Runtime pushed to %d device(s), start=%u test=%u.",
+             pushed, start_after_config ? 1 : 0, test_after_config ? 1 : 0);
+    return ESP_OK;
 }
 
 static bool update_device_name_by_index(int index, const char *name)
@@ -1415,7 +1613,7 @@ static bool save_group_locked(int gid, const char *name, const char *note, const
     if (effect && effect[0] != '\0') {
         snprintf(g->effect_note, sizeof(g->effect_note), "%s", effect);
     } else {
-        snprintf(g->effect_note, sizeof(g->effect_note), "selftest");
+        snprintf(g->effect_note, sizeof(g->effect_note), "silent");
     }
     if (silence && silence[0] != '\0') snprintf(g->silence_note, sizeof(g->silence_note), "%s", silence);
     g->target_group = (target_group >= 0 && target_group < MAX_GROUPS && target_group != gid) ? (uint8_t)target_group : 0xFF;
@@ -1484,7 +1682,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
 {
     if (!recv_info || !recv_info->src_addr || !data || data_len <= 0) return;
 
-    char msg[64];
+    char msg[192];
     int copy_len = data_len < (int)sizeof(msg) - 1 ? data_len : (int)sizeof(msg) - 1;
     memcpy(msg, data, copy_len);
     msg[copy_len] = '\0';
@@ -1496,6 +1694,67 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
         char mac_text[18];
         mac_to_string(recv_info->src_addr, mac_text, sizeof(mac_text));
         ESP_LOGI(TAG, "Receiver present: %s, RSSI=%d", mac_text, rssi);
+    } else if (strncmp(msg, "EVENT|", 6) == 0) {
+        ensure_peer_exists(recv_info->src_addr);
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        unsigned int room = 0;
+        unsigned int self_mask = 0;
+        unsigned int peer_mask = 0;
+        int event_rssi = recv_info->rx_ctrl ? recv_info->rx_ctrl->rssi : 0;
+        char self_mac_text[18] = {0};
+        char peer_mac_text[18] = {0};
+        uint8_t self_mac[6] = {0};
+        uint8_t peer_mac[6] = {0};
+        int16_t self_device_index = -1;
+        int16_t peer_device_index = -1;
+        long long event_ms = 0;
+        bool new_event = sscanf(msg, "EVENT|%u|%17[^|]|%17[^|]|%u|%u|%d|%lld",
+                                &room, self_mac_text, peer_mac_text, &self_mask, &peer_mask, &event_rssi, &event_ms) == 7 &&
+                         parse_mac_string(self_mac_text, self_mac) &&
+                         parse_mac_string(peer_mac_text, peer_mac);
+        if (!new_event) {
+            sscanf(msg, "EVENT|%u|%u|%u|%d", &room, &self_mask, &peer_mask, &event_rssi);
+            memcpy(self_mac, recv_info->src_addr, 6);
+        }
+        portENTER_CRITICAL(&state_mux);
+        if (new_event) {
+            self_device_index = (int16_t)find_device_index_by_mac_locked(self_mac);
+            peer_device_index = (int16_t)find_device_index_by_mac_locked(peer_mac);
+            append_runtime_event_locked((uint16_t)room, self_mac, peer_mac, self_device_index, peer_device_index, self_mask, peer_mask,
+                                        event_rssi, event_ms > 0 ? (int64_t)event_ms : now_ms);
+        }
+        if (record_count < MAX_DISCOVERY_RECORDS) {
+            discovery_record_t *r = &records[record_count++];
+            memset(r, 0, sizeof(*r));
+            r->source_group = (uint8_t)first_group_for_mask(self_mask);
+            r->target_group = (uint8_t)first_group_for_mask(peer_mask);
+            r->source_device_index = find_device_index_by_mac_locked(self_mac);
+            r->target_device_index = new_event ? find_device_index_by_mac_locked(peer_mac) : -1;
+            memcpy(r->source_mac, self_mac, sizeof(r->source_mac));
+            if (new_event) memcpy(r->target_mac, peer_mac, sizeof(r->target_mac));
+            r->first_seen_ms = now_ms;
+            r->last_seen_ms = now_ms;
+            registry_dirty = true;
+        }
+        portEXIT_CRITICAL(&state_mux);
+        ESP_LOGI(TAG, "Runtime event received: room=%u self=%u peer=%u rssi=%d", room, self_mask, peer_mask, event_rssi);
+    } else if (strncmp(msg, "STAT|", 5) == 0) {
+        ensure_peer_exists(recv_info->src_addr);
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        unsigned int room = 0;
+        char self_mac_text[18] = {0};
+        unsigned int seen_count = 0;
+        unsigned int found_count = 0;
+        unsigned int seq = 0;
+        uint8_t self_mac[6] = {0};
+        if (sscanf(msg, "STAT|%u|%17[^|]|%u|%u|%u",
+                   &room, self_mac_text, &seen_count, &found_count, &seq) == 5 &&
+            parse_mac_string(self_mac_text, self_mac)) {
+            portENTER_CRITICAL(&state_mux);
+            upsert_runtime_stat_locked((uint16_t)room, self_mac, seen_count, found_count, seq, now_ms);
+            portEXIT_CRITICAL(&state_mux);
+            ESP_LOGI(TAG, "Runtime stat: room=%u seen=%u found=%u seq=%u", room, seen_count, found_count, seq);
+        }
     }
 }
 
@@ -1545,12 +1804,31 @@ static esp_err_t command_handler(httpd_req_t *req)
     }
 
     if (strcmp(name, "START") != 0 && strcmp(name, "STOP") != 0 &&
-        strcmp(name, "IDENTIFY") != 0 && strcmp(name, "DISCOVER") != 0) {
+        strcmp(name, "START_GAME") != 0 && strcmp(name, "STOP_GAME") != 0 &&
+        strcmp(name, "IDENTIFY") != 0 && strcmp(name, "DISCOVER") != 0 &&
+        strcmp(name, "TEST_EFFECT") != 0) {
         httpd_resp_set_status(req, "400 Bad Request");
         return httpd_resp_sendstr(req, "Unknown command.");
     }
 
-    esp_err_t ret = send_espnow_broadcast(name);
+    esp_err_t ret = ESP_OK;
+    if (strcmp(name, "START_GAME") == 0) {
+        portENTER_CRITICAL(&state_mux);
+        runtime_reset_locked();
+        runtime_running = true;
+        runtime_started_ms = esp_timer_get_time() / 1000;
+        portEXIT_CRITICAL(&state_mux);
+        ret = send_runtime_to_devices(true);
+    } else if (strcmp(name, "STOP_GAME") == 0) {
+        portENTER_CRITICAL(&state_mux);
+        runtime_running = false;
+        portEXIT_CRITICAL(&state_mux);
+        ret = send_espnow_broadcast("STOP");
+    } else if (strcmp(name, "TEST_EFFECT") == 0) {
+        ret = send_runtime_to_devices(false, true);
+    } else {
+        ret = send_espnow_broadcast(name);
+    }
     if (ret != ESP_OK) {
         httpd_resp_set_status(req, "500 Internal Server Error");
         return httpd_resp_sendstr(req, "ESP-NOW send failed.");
@@ -1590,13 +1868,20 @@ static esp_err_t state_handler(httpd_req_t *req)
     receiver_device_t *device_snapshot = (receiver_device_t *)calloc(MAX_DEVICES, sizeof(receiver_device_t));
     group_config_t *group_snapshot = (group_config_t *)calloc(MAX_GROUPS, sizeof(group_config_t));
     discovery_record_t *record_snapshot = (discovery_record_t *)calloc(MAX_DISCOVERY_RECORDS, sizeof(discovery_record_t));
+    runtime_event_t *runtime_event_snapshot = (runtime_event_t *)calloc(MAX_RUNTIME_EVENTS, sizeof(runtime_event_t));
+    runtime_stat_t *runtime_stat_snapshot = (runtime_stat_t *)calloc(MAX_RUNTIME_STATS, sizeof(runtime_stat_t));
     int device_snapshot_count = 0;
     int record_snapshot_count = 0;
+    int runtime_event_snapshot_count = 0;
+    bool runtime_running_snapshot = false;
+    int64_t runtime_started_snapshot = 0;
 
-    if (!device_snapshot || !group_snapshot || !record_snapshot) {
+    if (!device_snapshot || !group_snapshot || !record_snapshot || !runtime_event_snapshot || !runtime_stat_snapshot) {
         free(device_snapshot);
         free(group_snapshot);
         free(record_snapshot);
+        free(runtime_event_snapshot);
+        free(runtime_stat_snapshot);
         httpd_resp_set_status(req, "500 Internal Server Error");
         return httpd_resp_sendstr(req, "Out of memory.");
     }
@@ -1604,13 +1889,23 @@ static esp_err_t state_handler(httpd_req_t *req)
     portENTER_CRITICAL(&state_mux);
     device_snapshot_count = device_count;
     record_snapshot_count = record_count;
+    runtime_event_snapshot_count = runtime_event_count;
+    runtime_running_snapshot = runtime_running;
+    runtime_started_snapshot = runtime_started_ms;
     memcpy(device_snapshot, devices, sizeof(receiver_device_t) * device_snapshot_count);
     memcpy(group_snapshot, groups, sizeof(group_config_t) * MAX_GROUPS);
     memcpy(record_snapshot, records, sizeof(discovery_record_t) * record_snapshot_count);
+    memcpy(runtime_event_snapshot, runtime_events, sizeof(runtime_event_t) * runtime_event_snapshot_count);
+    memcpy(runtime_stat_snapshot, runtime_stats, sizeof(runtime_stat_t) * MAX_RUNTIME_STATS);
     portEXIT_CRITICAL(&state_mux);
 
     strbuf_t sb = {};
     if (!sb_init(&sb, 8192)) {
+        free(device_snapshot);
+        free(group_snapshot);
+        free(record_snapshot);
+        free(runtime_event_snapshot);
+        free(runtime_stat_snapshot);
         httpd_resp_set_status(req, "500 Internal Server Error");
         return httpd_resp_sendstr(req, "Out of memory.");
     }
@@ -1639,18 +1934,23 @@ static esp_err_t state_handler(httpd_req_t *req)
         char note[GROUP_TEXT_LEN * 2];
         char effect[GROUP_TEXT_LEN * 2];
         char silence[GROUP_TEXT_LEN * 2];
+        char trigger[GROUP_TEXT_LEN * 2];
         json_escape(group_snapshot[g].name, name, sizeof(name));
         json_escape(group_snapshot[g].note, note, sizeof(note));
         json_escape(group_snapshot[g].effect_note, effect, sizeof(effect));
         json_escape(group_snapshot[g].silence_note, silence, sizeof(silence));
+        json_escape(group_snapshot[g].trigger_effect_note, trigger, sizeof(trigger));
         sb_appendf(&sb,
-                   "%s{\"id\":%d,\"valid\":%u,\"name\":\"%s\",\"note\":\"%s\",\"effect\":\"%s\",\"silence\":\"%s\",\"target\":%u,\"mode\":%u,\"rssi\":%d,\"hold\":%u}",
+                   "%s{\"id\":%d,\"valid\":%u,\"name\":\"%s\",\"note\":\"%s\",\"effect\":\"%s\",\"trigger_effect\":\"%s\",\"silence\":\"%s\",\"peer_mask\":%u,\"room_hash\":%u,\"target\":%u,\"mode\":%u,\"trigger_compare\":\"%s\",\"rssi\":%d,\"hold\":%u}",
                    g == 0 ? "" : ",",
                    g,
                    (unsigned int)group_snapshot[g].valid,
-                   name, note, effect, silence,
+                   name, note, effect, trigger, silence,
+                   (unsigned int)group_snapshot[g].peer_mask,
+                   (unsigned int)group_snapshot[g].room_hash,
                    (unsigned int)group_snapshot[g].target_group,
                    (unsigned int)group_snapshot[g].mode,
+                   group_snapshot[g].trigger_compare ? "lte" : "gte",
                    (int)group_snapshot[g].rssi_threshold,
                    (unsigned int)group_snapshot[g].hold_ms);
     }
@@ -1666,7 +1966,45 @@ static esp_err_t state_handler(httpd_req_t *req)
                    (long long)record_snapshot[i].first_seen_ms,
                    (long long)record_snapshot[i].last_seen_ms);
     }
-    sb_appendf(&sb, "]}");
+    sb_appendf(&sb, "],\"runtime\":{\"running\":%s,\"started_ms\":%lld,\"events\":[",
+               runtime_running_snapshot ? "true" : "false",
+               (long long)runtime_started_snapshot);
+    for (int i = 0; i < runtime_event_snapshot_count; i++) {
+        char self_mac[18];
+        char peer_mac[18];
+        mac_to_string(runtime_event_snapshot[i].self_mac, self_mac, sizeof(self_mac));
+        mac_to_string(runtime_event_snapshot[i].peer_mac, peer_mac, sizeof(peer_mac));
+        sb_appendf(&sb,
+                   "%s{\"room\":%u,\"self_idx\":%d,\"peer_idx\":%d,\"self_mac\":\"%s\",\"peer_mac\":\"%s\",\"self_group_mask\":%u,\"peer_group_mask\":%u,\"rssi\":%d,\"event_ms\":%lld}",
+                   i == 0 ? "" : ",",
+                   (unsigned int)runtime_event_snapshot[i].room_hash,
+                   (int)runtime_event_snapshot[i].self_device_index,
+                   (int)runtime_event_snapshot[i].peer_device_index,
+                   self_mac,
+                   peer_mac,
+                   (unsigned int)runtime_event_snapshot[i].self_group_mask,
+                   (unsigned int)runtime_event_snapshot[i].peer_group_mask,
+                   (int)runtime_event_snapshot[i].rssi,
+                   (long long)runtime_event_snapshot[i].event_ms);
+    }
+    sb_appendf(&sb, "],\"receiver_stats\":[");
+    bool first_stat = true;
+    for (int i = 0; i < MAX_RUNTIME_STATS; i++) {
+        if (!runtime_stat_snapshot[i].valid) continue;
+        char self_mac[18];
+        mac_to_string(runtime_stat_snapshot[i].self_mac, self_mac, sizeof(self_mac));
+        sb_appendf(&sb,
+                   "%s{\"room\":%u,\"self_mac\":\"%s\",\"seen_count\":%u,\"found_count\":%u,\"seq\":%u,\"seen_ms\":%lld}",
+                   first_stat ? "" : ",",
+                   (unsigned int)runtime_stat_snapshot[i].room_hash,
+                   self_mac,
+                   (unsigned int)runtime_stat_snapshot[i].seen_count,
+                   (unsigned int)runtime_stat_snapshot[i].found_count,
+                   (unsigned int)runtime_stat_snapshot[i].seq,
+                   (long long)(now_ms - runtime_stat_snapshot[i].last_seen_ms));
+        first_stat = false;
+    }
+    sb_appendf(&sb, "]}}");
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
@@ -1679,6 +2017,8 @@ static esp_err_t state_handler(httpd_req_t *req)
     free(device_snapshot);
     free(group_snapshot);
     free(record_snapshot);
+    free(runtime_event_snapshot);
+    free(runtime_stat_snapshot);
     return ret;
 }
 
@@ -2085,9 +2425,18 @@ static esp_err_t config_import_handler(httpd_req_t *req)
     body[received] = '\0';
     ESP_LOGI(TAG, "Import body received bytes=%d", received);
 
-    receiver_device_t imported_devices[MAX_DEVICES];
-    group_config_t imported_groups[MAX_GROUPS];
-    discovery_record_t imported_records[MAX_DISCOVERY_RECORDS];
+    receiver_device_t *imported_devices = (receiver_device_t *)calloc(MAX_DEVICES, sizeof(receiver_device_t));
+    group_config_t *imported_groups = (group_config_t *)calloc(MAX_GROUPS, sizeof(group_config_t));
+    discovery_record_t *imported_records = (discovery_record_t *)calloc(MAX_DISCOVERY_RECORDS, sizeof(discovery_record_t));
+    if (!imported_devices || !imported_groups || !imported_records) {
+        free(body);
+        free(imported_devices);
+        free(imported_groups);
+        free(imported_records);
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        set_cors_headers(req);
+        return httpd_resp_sendstr(req, "Out of memory.");
+    }
     int imported_device_count = 0;
     int imported_record_count = 0;
     int schema_version = 0;
@@ -2103,6 +2452,9 @@ static esp_err_t config_import_handler(httpd_req_t *req)
 
     if (!ok) {
         ESP_LOGW(TAG, "Import parse failed: %s", error_text[0] ? error_text : "Invalid config JSON.");
+        free(imported_devices);
+        free(imported_groups);
+        free(imported_records);
         httpd_resp_set_status(req, "400 Bad Request");
         set_cors_headers(req);
         return httpd_resp_sendstr(req, error_text[0] ? error_text : "Invalid config JSON.");
@@ -2113,11 +2465,15 @@ static esp_err_t config_import_handler(httpd_req_t *req)
     memset(devices, 0, sizeof(devices));
     memset(groups, 0, sizeof(groups));
     memset(records, 0, sizeof(records));
+    runtime_reset_locked();
     memcpy(devices, imported_devices, sizeof(receiver_device_t) * imported_device_count);
     memcpy(groups, imported_groups, sizeof(groups));
     memcpy(records, imported_records, sizeof(discovery_record_t) * imported_record_count);
     device_count = imported_device_count;
     record_count = imported_record_count;
+    free(imported_devices);
+    free(imported_groups);
+    free(imported_records);
     for (int i = 0; i < device_count; i++) {
         normalize_device_name_for_index(i, devices[i].name, sizeof(devices[i].name));
     }
@@ -2147,6 +2503,7 @@ static esp_err_t config_import_handler(httpd_req_t *req)
     ESP_LOGI(TAG, "Import response sent; continuing with save/sync in handler.");
     registry_save();
     sync_effects_to_devices();
+    send_runtime_to_devices(false);
     ESP_LOGI(TAG, "Import handler finished.");
     return ESP_OK;
 }

@@ -6,6 +6,7 @@ idf_component_register(
         esp_driver_spi
         esp_event
         esp_netif
+        esp_timer
         esp_wifi
         nvs_flash
         led_strip

@@ -17,6 +17,7 @@ CONFIG_FILE = ROOT / "magic_wand_config.json"
 LOCAL_STATE_FILE = ROOT / "magic_wand_local_state.json"
 ROOM_RECORD_FILE = ROOT / "magic_wand_game_sessions.jsonl"
 LOG_FILE = ROOT / "serve_debug.log"
+FIRMWARE_DIR = ROOT / "firmware"
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("MAGIC_LAN_PORT", "8777"))
 CONTROLLER_BASE = os.environ.get("MAGIC_CONTROLLER_URL", "http://192.168.4.1").rstrip("/")
@@ -24,6 +25,10 @@ PROXY_BASE = f"http://{HOST}:{PORT}/api/controller"
 DIRECT_OPENER = build_opener(ProxyHandler({}))
 
 LOCAL_STATE_VERSION = 1
+RSSI_DEFAULTS_VERSION = 2
+DEFAULT_TRIGGER_RSSI = -25
+OLD_DEFAULT_TRIGGER_RSSI = -10
+MCU_EFFECT_TEXT_LIMIT = 180
 
 
 def log_line(level: str, message: str):
@@ -62,6 +67,134 @@ def _write_json_file(path: Path, payload: object):
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _firmware_info(name: str, app_name: str):
+    manifest_path = FIRMWARE_DIR / name / "manifest.json"
+    app_path = FIRMWARE_DIR / name / app_name
+    manifest = _load_json_file(manifest_path, {}) if manifest_path.exists() else {}
+    app_stat = app_path.stat() if app_path.exists() else None
+    manifest_stat = manifest_path.stat() if manifest_path.exists() else None
+    return {
+        "manifest": str(manifest_path),
+        "manifest_url": f"firmware/{name}/manifest.json",
+        "version": str(manifest.get("version") or ""),
+        "app": str(app_path),
+        "app_size": app_stat.st_size if app_stat else 0,
+        "app_mtime": datetime.fromtimestamp(app_stat.st_mtime).isoformat(timespec="seconds") if app_stat else "",
+        "manifest_mtime": datetime.fromtimestamp(manifest_stat.st_mtime).isoformat(timespec="seconds") if manifest_stat else "",
+    }
+
+
+def _compact_controller_payload(payload: object):
+    if not isinstance(payload, dict):
+        return payload
+
+    def as_int(value, default=0):
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+    runtime_group_ids = []
+    def add_group_id(value):
+        gid = as_int(value, -1)
+        if gid >= 0 and gid not in runtime_group_ids:
+            runtime_group_ids.append(gid)
+
+    runtime = payload.get("mcu_runtime")
+    if isinstance(runtime, dict):
+        for rule in runtime.get("rules") or []:
+            if isinstance(rule, dict):
+                add_group_id(rule.get("group_id"))
+
+    for group in payload.get("groups") or []:
+        if isinstance(group, dict) and group.get("valid") is not False:
+            add_group_id(group.get("id"))
+
+    group_id_map = {old_id: idx for idx, old_id in enumerate(runtime_group_ids[:16])}
+
+    def remap_mask(value):
+        source = as_int(value, 0) & 0xFFFFFFFF
+        next_mask = 0
+        for old_id, runtime_id in group_id_map.items():
+            if old_id < 32 and (source & (1 << old_id)):
+                next_mask |= 1 << runtime_id
+        return next_mask & 0xFFFFFFFF
+
+    def compact_rssi(value):
+        rssi = as_int(value, DEFAULT_TRIGGER_RSSI)
+        if as_int(payload.get("rssi_defaults_version"), 1) < RSSI_DEFAULTS_VERSION and rssi == OLD_DEFAULT_TRIGGER_RSSI:
+            return DEFAULT_TRIGGER_RSSI
+        return rssi
+
+    def compact_compare(value):
+        return "lte" if str(value or "").strip() == "lte" else "gte"
+
+    def compact_effect_text(value, fallback, label):
+        text = str(value or fallback or "silent")
+        if len(text) > MCU_EFFECT_TEXT_LIMIT:
+            raise ValueError(f"{label} 长度 {len(text)} 超过固件安全长度 {MCU_EFFECT_TEXT_LIMIT}，请减少灯效轨道或简化参数。")
+        return text
+
+    devices = []
+    for idx, device in enumerate(payload.get("devices") or []):
+        if not isinstance(device, dict):
+            continue
+        mac = str(device.get("mac") or "").strip()
+        if not mac:
+            continue
+        devices.append(
+            {
+                "idx": as_int(device.get("idx"), idx),
+                "mac": mac,
+                "name": str(device.get("name") or f"Fragment{idx + 1}")[:31],
+                "group_mask": remap_mask(device.get("group_mask")),
+                "rssi": as_int(device.get("rssi"), 0),
+                "seen_ms": max(0, as_int(device.get("seen_ms"), 0)),
+            }
+        )
+
+    groups = []
+    for group in payload.get("groups") or []:
+        if not isinstance(group, dict):
+            continue
+        gid = as_int(group.get("id"), -1)
+        if gid < 0:
+            continue
+        if gid not in group_id_map:
+            continue
+        valid = group.get("valid") is not False
+        if not valid:
+            continue
+        target = as_int(group.get("target"), 255)
+        mapped_target = group_id_map.get(target, 255)
+        groups.append(
+            {
+                "id": group_id_map[gid],
+                "valid": valid,
+                "name": str(group.get("name") or f"分组{gid + 1}"),
+                "note": str(group.get("note") or ""),
+                "target": mapped_target,
+                "mode": as_int(group.get("mode"), 1),
+                "trigger_compare": compact_compare(group.get("trigger_compare")),
+                "rssi": compact_rssi(group.get("rssi")),
+                "hold": as_int(group.get("hold"), 2000),
+                "effect": compact_effect_text(group.get("effect"), "silent", f"分组 {gid} 空闲灯效"),
+                "trigger_effect": compact_effect_text(group.get("trigger_effect"), group.get("effect") or "silent", f"分组 {gid} 触发灯效"),
+                "silence": str(group.get("silence") or "")[:63],
+                "peer_mask": remap_mask(group.get("peer_mask")),
+                "room_hash": as_int(group.get("room_hash"), 1),
+            }
+        )
+
+    return {
+        "schema_version": as_int(payload.get("schema_version"), 2),
+        "rssi_defaults_version": RSSI_DEFAULTS_VERSION,
+        "devices": devices,
+        "groups": groups,
+        "records": [],
+    }
+
+
 def _default_local_state():
     return {
         "schema": LOCAL_STATE_VERSION,
@@ -84,6 +217,10 @@ def _load_local_state():
     state.setdefault("schema", LOCAL_STATE_VERSION)
     state.setdefault("updated_at", _now_iso())
     state.setdefault("device_drafts", {})
+    if not isinstance(state.get("controller_groups"), list) or not state.get("controller_groups"):
+        saved_config = _load_json_file(CONFIG_FILE, {})
+        if isinstance(saved_config, dict) and isinstance(saved_config.get("groups"), list):
+            state["controller_groups"] = saved_config["groups"]
     state.setdefault("templates", [])
     state.setdefault("current_room", None)
     state.setdefault("room_history", [])
@@ -131,6 +268,36 @@ def _load_room_records(tail: int = 100):
         except Exception as exc:
             log_exception("parse room record failed", exc)
     return records
+
+
+def _delete_room_records(room_id: str | None = None):
+    if not ROOM_RECORD_FILE.exists():
+        return 0
+    try:
+        with ROOM_RECORD_FILE.open("r", encoding="utf-8", errors="replace") as f:
+            lines = [line.strip() for line in f if line.strip()]
+    except Exception as exc:
+        log_exception("load room records for delete failed", exc)
+        return 0
+    kept = []
+    deleted = 0
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except Exception as exc:
+            log_exception("parse room record during delete failed", exc)
+            kept.append(line)
+            continue
+        if room_id and str(item.get("room_id") or "") == str(room_id):
+            deleted += 1
+            continue
+        kept.append(json.dumps(item, ensure_ascii=False))
+    try:
+        ROOM_RECORD_FILE.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    except Exception as exc:
+        log_exception("rewrite room records failed", exc)
+        return 0
+    return deleted
 
 
 
@@ -201,6 +368,25 @@ class ConfigHandler(SimpleHTTPRequestHandler):
         if self.command in {"POST", "PUT", "PATCH"}:
             length = int(self.headers.get("Content-Length", "0") or "0")
             body = self.rfile.read(length) if length > 0 else None
+            if body and proxy_path == "/config/import":
+                try:
+                    raw_payload = json.loads(body.decode("utf-8"))
+                    controller_payload = _compact_controller_payload(raw_payload)
+                    body = json.dumps(controller_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                except ValueError as exc:
+                    log_line("ERROR", f"controller import payload invalid: {exc}")
+                    self._send_json(
+                        {"error": "invalid_runtime_payload", "detail": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                except Exception as exc:
+                    log_exception("controller import payload compact failed", exc)
+                    self._send_json(
+                        {"error": "invalid_controller_payload", "detail": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
 
         headers = {}
         for key, value in self.headers.items():
@@ -295,7 +481,16 @@ class ConfigHandler(SimpleHTTPRequestHandler):
             self._send_json(error, status=status)
             return
 
-        body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        try:
+            controller_payload = _compact_controller_payload(payload)
+        except ValueError as exc:
+            log_line("ERROR", f"publish payload invalid: {exc}")
+            self._send_json(
+                {"error": "invalid_runtime_payload", "detail": str(exc)},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+            return
+        body = json.dumps(controller_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         target_url = f"{CONTROLLER_BASE}/config/import"
         request = Request(
             target_url,
@@ -303,9 +498,10 @@ class ConfigHandler(SimpleHTTPRequestHandler):
             headers={"Content-Type": "application/json; charset=utf-8"},
             method="POST",
         )
-        log_line("INFO", f"publish saved config target={target_url} body_bytes={len(body)}")
+        original_size = CONFIG_FILE.stat().st_size if CONFIG_FILE.exists() else len(body)
+        log_line("INFO", f"publish saved config target={target_url} body_bytes={len(body)} original_bytes={original_size}")
         try:
-            with DIRECT_OPENER.open(request, timeout=20) as response:
+            with DIRECT_OPENER.open(request, timeout=60) as response:
                 data = response.read()
                 log_line("INFO", f"publish success status={response.getcode() or 200} target={target_url} response_bytes={len(data)}")
                 try:
@@ -406,6 +602,11 @@ class ConfigHandler(SimpleHTTPRequestHandler):
                     "templates": len(local_state.get("templates", []) or []),
                     "room_history": len(local_state.get("room_history", []) or []),
                     "controller_base": CONTROLLER_BASE,
+                    "flasher_url": f"http://{HOST}:{PORT}/flash.html",
+                    "firmware": {
+                        "controller": _firmware_info("controller", "magic_wand_controller.bin"),
+                        "receiver": _firmware_info("receiver", "magic_wand_receiver.bin"),
+                    },
                 }
             )
             return
@@ -517,6 +718,19 @@ class ConfigHandler(SimpleHTTPRequestHandler):
             self._proxy_controller()
             return
 
+        self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        log_line("DEBUG", f"DELETE {path}")
+        if path == "/api/local/records":
+            query = urlparse(self.path).query
+            room_id = None
+            if "room_id=" in query:
+                room_id = query.split("room_id=", 1)[1].split("&", 1)[0]
+            deleted = _delete_room_records(room_id)
+            self._send_json({"ok": True, "deleted": deleted, "room_id": room_id})
+            return
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
 

@@ -1,5 +1,12 @@
 ﻿(() => {
   const MAX_VISIBLE_LOG_LINES = 120;
+  const MAX_MCU_GROUPS = 16;
+  const DEFAULT_TRIGGER_RSSI = -25;
+  const OLD_DEFAULT_TRIGGER_RSSI = -10;
+  const DEFAULT_TRIGGER_HOLD_MS = 2000;
+  const RSSI_DEFAULTS_VERSION = 2;
+  const DEVICE_ONLINE_MS = 5 * 60 * 1000;
+  const DEVICE_SCAN_RETAIN_MS = 24 * 60 * 60 * 1000;
   const STORAGE_KEYS = {
     localState: 'magic_wand_local_state_backup_v1',
     roomRecords: 'magic_wand_room_records_backup_v1',
@@ -42,6 +49,8 @@
     roomEffectPreviewId: '',
     roomEffectPreviewKey: '',
     roomPrepareModal: null,
+    roomFinalizeModal: null,
+    preparingRoomId: '',
     roomStartCountdown: null,
     roomCountdownTimer: null,
     wizardRoomDraft: null,
@@ -54,6 +63,8 @@
       scan: false,
       identify: false,
       publish: false,
+      testEffect: false,
+      stopEffect: false,
       save: false,
       restore: false
     }
@@ -165,6 +176,18 @@
     return Number.isFinite(n) ? n : fallback;
   }
 
+  function triggerCompareValue(value) {
+    return String(value || '').trim() === 'lte' ? 'lte' : 'gte';
+  }
+
+  function triggerCompareLabel(value) {
+    return triggerCompareValue(value) === 'lte' ? '小于等于' : '大于等于';
+  }
+
+  function triggerConditionText(compare, rssi, hold) {
+    return `${triggerCompareLabel(compare)} ${normalizeNumber(rssi, DEFAULT_TRIGGER_RSSI)} dBm / ${normalizeNumber(hold, DEFAULT_TRIGGER_HOLD_MS)} ms`;
+  }
+
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   }
@@ -192,6 +215,14 @@
     if (Number.isNaN(date.getTime())) return String(iso);
     const pad = (n) => String(n).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function formatClockTime(ms) {
+    const value = Math.max(0, normalizeNumber(ms, 0));
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '未记录';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(date.getHours())}点${pad(date.getMinutes())}分${pad(date.getSeconds())}秒`;
   }
 
   function formatDuration(startIso, endIso) {
@@ -447,8 +478,8 @@
       pulse_speed_start: mode === 'pulse_chase' ? 0 : 0,
       pulse_speed_end: mode === 'pulse_chase' ? 100 : 100,
       pulse_duration_ms: 0,
-      end_hold_ms: mode === 'pulse_chase' ? 2000 : 0,
-      end_behavior: mode === 'pulse_chase' ? 'hold' : 'off'
+      end_hold_ms: 0,
+      end_behavior: 'off'
     }));
     while (tracks.length < EFFECT_TRACK_LIMIT) {
       tracks.push(buildDefaultEffectTrack('solid', tracks.length, { enabled: false, port: tracks.length + 1 }));
@@ -638,15 +669,15 @@
 
     if (mode === 'breath') {
       const sweep = 0.5 + 0.5 * Math.sin((tickMs / 1000) * (freq || 0.35) * Math.PI * 2 + paletteIndex * 0.45);
-      const wave = 0.12 + 0.88 * sweep;
+      const wave = sweep;
       const breathColor = palette.length >= 3
         ? (sweep < 0.5
           ? mixHexColor(palette[0], palette[1], sweep * 2)
           : mixHexColor(palette[1], palette[2], (sweep - 0.5) * 2))
         : mixHexColor(palette[0], palette[1] || palette[0], sweep);
       color = rgbaFromHex(breathColor, 0.96);
-      opacity = Math.max(0.08, wave * baseAlpha);
-      shadow = `0 0 14px ${rgbaFromHex(breathColor, 0.58 * opacity)}`;
+      opacity = wave * baseAlpha;
+      shadow = opacity > 0.03 ? `0 0 14px ${rgbaFromHex(breathColor, 0.58 * opacity)}` : 'none';
       return { color, opacity, shadow };
     }
 
@@ -689,10 +720,10 @@
       const headPeriod = Math.max(180, periodMs / Math.max(1, activeCount));
       const head = Math.floor((tickMs / headPeriod) % activeCount);
       const dist = circularDistance(activeIndex, head, activeCount);
-      const trail = dist === 0 ? 1 : dist === 1 ? 0.62 : dist === 2 ? 0.28 : 0.08;
+      const trail = dist === 0 ? 1 : 0;
       color = rgbaFromHex(paletteColor, 0.95);
       opacity = trail * baseAlpha;
-      shadow = dist <= 1 ? `0 0 12px ${rgbaFromHex(paletteColor, 0.5 * opacity)}` : 'none';
+      shadow = dist === 0 ? `0 0 12px ${rgbaFromHex(paletteColor, 0.5 * opacity)}` : 'none';
       return { color, opacity, shadow };
     }
 
@@ -720,7 +751,7 @@
       const pulsePhase = clamp((loopTime - cursor) / pulseSpanMs, 0, 1);
       const head = Math.min(activeCount - 1, Math.floor(pulsePhase * activeCount));
       const dist = circularDistance(activeIndex, head, activeCount);
-      const trail = dist === 0 ? 1 : dist === 1 ? 0.72 : dist === 2 ? 0.4 : 0.1;
+      const trail = dist === 0 ? 1 : dist === 1 ? 0.35 : 0;
       const pulseColor = palette[(pulseIndex + activeIndex) % palette.length] || palette[0];
       color = rgbaFromHex(pulseColor, 0.98);
       opacity = trail * baseAlpha;
@@ -1345,8 +1376,8 @@
               pulse_speed_start: item.mode === 'pulse_chase' ? 0 : 0,
               pulse_speed_end: item.mode === 'pulse_chase' ? 100 : 100,
               pulse_duration_ms: 0,
-              end_hold_ms: item.mode === 'pulse_chase' ? 2000 : 0,
-              end_behavior: item.mode === 'pulse_chase' ? 'hold' : 'off'
+              end_hold_ms: 0,
+              end_behavior: 'off'
             })]
         }),
         updated_at: '1970-01-01T00:00:00'
@@ -1379,7 +1410,7 @@
         builtIn: true,
         feature_ui: {
           sense_mode: 'ring',
-          signal_ui: { trigger_rssi_threshold: -10, trigger_hold_ms: 2000 },
+          signal_ui: { trigger_compare: 'gte', trigger_rssi_threshold: DEFAULT_TRIGGER_RSSI, trigger_hold_ms: DEFAULT_TRIGGER_HOLD_MS },
           scoring: { mode: 'count_find', max_find: 0 },
           timer: { mode: 'manual', duration_ms: 0 },
           idle_effect_id: 'builtin-breath',
@@ -1395,7 +1426,7 @@
         builtIn: true,
         feature_ui: {
           sense_mode: 'response',
-          signal_ui: { trigger_rssi_threshold: -10, trigger_hold_ms: 2000 },
+          signal_ui: { trigger_compare: 'gte', trigger_rssi_threshold: DEFAULT_TRIGGER_RSSI, trigger_hold_ms: DEFAULT_TRIGGER_HOLD_MS },
           scoring: { mode: 'rssi_probe', max_find: 0 },
           timer: { mode: 'manual', duration_ms: 0 },
           idle_effect_id: 'builtin-breath',
@@ -1415,7 +1446,9 @@
     return {
       schema: 1,
       updated_at: nowIso(),
+      rssi_defaults_version: RSSI_DEFAULTS_VERSION,
       device_drafts: {},
+      controller_groups: buildDefaultGroups(),
       hidden_devices: [],
       templates: builtinTemplates.map((tpl) => ({
         id: tpl.id,
@@ -1493,8 +1526,9 @@
       const id = String(item.id || '').trim() || uid('fp');
       const featureUi = item.feature_ui && typeof item.feature_ui === 'object' ? clone(item.feature_ui) : clone(item.feature_ui || {});
       featureUi.signal_ui = {
-        trigger_rssi_threshold: normalizeNumber(featureUi?.signal_ui?.trigger_rssi_threshold, -10),
-        trigger_hold_ms: normalizeNumber(featureUi?.signal_ui?.trigger_hold_ms, 2000)
+        trigger_compare: triggerCompareValue(featureUi?.signal_ui?.trigger_compare),
+        trigger_rssi_threshold: normalizeNumber(featureUi?.signal_ui?.trigger_rssi_threshold, DEFAULT_TRIGGER_RSSI),
+        trigger_hold_ms: normalizeNumber(featureUi?.signal_ui?.trigger_hold_ms, DEFAULT_TRIGGER_HOLD_MS)
       };
       byId.set(id, {
         id,
@@ -1719,10 +1753,13 @@
       room.trigger_effect_id = String(template.trigger_effect_id || featureUi.trigger_effect_id || '');
     }
     if (overwrite || normalizeNumber(room.trigger_signal_rssi, NaN) !== normalizeNumber(room.trigger_signal_rssi, NaN) || !String(room.trigger_signal_rssi ?? '').trim()) {
-      room.trigger_signal_rssi = normalizeNumber(featureUi?.signal_ui?.trigger_rssi_threshold, -10);
+      room.trigger_signal_rssi = normalizeNumber(featureUi?.signal_ui?.trigger_rssi_threshold, DEFAULT_TRIGGER_RSSI);
+    }
+    if (overwrite || !String(room.trigger_compare || '').trim()) {
+      room.trigger_compare = triggerCompareValue(featureUi?.signal_ui?.trigger_compare);
     }
     if (overwrite || normalizeNumber(room.trigger_hold_ms, NaN) !== normalizeNumber(room.trigger_hold_ms, NaN) || !String(room.trigger_hold_ms ?? '').trim()) {
-      room.trigger_hold_ms = normalizeNumber(featureUi?.signal_ui?.trigger_hold_ms, 2000);
+      room.trigger_hold_ms = normalizeNumber(featureUi?.signal_ui?.trigger_hold_ms, DEFAULT_TRIGGER_HOLD_MS);
     }
     if (overwrite || !(room.scoring && typeof room.scoring === 'object' && Object.keys(room.scoring).length)) {
       room.scoring = template.scoring && typeof template.scoring === 'object'
@@ -1771,8 +1808,9 @@
       sense_mode: String(raw.sense_mode || fallbackTemplate?.sense_mode || ''),
       idle_effect_id: String(raw.idle_effect_id || fallbackTemplate?.idle_effect_id || ''),
       trigger_effect_id: String(raw.trigger_effect_id || fallbackTemplate?.trigger_effect_id || ''),
-      trigger_signal_rssi: normalizeNumber(raw.trigger_signal_rssi, normalizeNumber(featurePresetById(fallbackTemplate?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_rssi_threshold, -10)),
-      trigger_hold_ms: normalizeNumber(raw.trigger_hold_ms, normalizeNumber(featurePresetById(fallbackTemplate?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_hold_ms, 2000)),
+      trigger_compare: triggerCompareValue(raw.trigger_compare || featurePresetById(fallbackTemplate?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_compare),
+      trigger_signal_rssi: normalizeNumber(raw.trigger_signal_rssi, normalizeNumber(featurePresetById(fallbackTemplate?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_rssi_threshold, DEFAULT_TRIGGER_RSSI)),
+      trigger_hold_ms: normalizeNumber(raw.trigger_hold_ms, normalizeNumber(featurePresetById(fallbackTemplate?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_hold_ms, DEFAULT_TRIGGER_HOLD_MS)),
       preview_effect_id: String(raw.preview_effect_id || fallbackTemplate?.effect_preset_id || ''),
       timer: raw.timer && typeof raw.timer === 'object'
         ? clone(raw.timer)
@@ -1986,6 +2024,7 @@
       devices: clone(fallback.devices),
       groups: clone(fallback.groups),
       records: [],
+      runtime: { running: false, started_ms: 0, events: [], receiver_stats: [] },
       rules: [],
       presets: clone(fallback.presets),
       effects: clone(fallback.effects),
@@ -1995,6 +2034,7 @@
     if (existing && Array.isArray(existing.devices)) out.devices = clone(existing.devices);
     if (existing && Array.isArray(existing.groups)) out.groups = clone(existing.groups);
     if (existing && Array.isArray(existing.records)) out.records = clone(existing.records);
+    if (existing && existing.runtime && typeof existing.runtime === 'object') out.runtime = clone(existing.runtime);
     if (existing && Array.isArray(existing.rules)) out.rules = clone(existing.rules);
     if (existing && Array.isArray(existing.presets)) out.presets = clone(existing.presets);
     if (existing && Array.isArray(existing.effects)) out.effects = clone(existing.effects);
@@ -2015,6 +2055,31 @@
         out.groups = normalizeGroups(raw.groups, out.groups);
       }
       if (Array.isArray(raw.records)) out.records = normalizeRecords(raw.records);
+      if (raw.runtime && typeof raw.runtime === 'object') {
+        out.runtime = {
+          running: raw.runtime.running === true,
+          started_ms: normalizeNumber(raw.runtime.started_ms, 0),
+          events: Array.isArray(raw.runtime.events) ? raw.runtime.events.map((event) => ({
+            room: normalizeNumber(event?.room, 0),
+            self_idx: normalizeNumber(event?.self_idx, -1),
+            peer_idx: normalizeNumber(event?.peer_idx, -1),
+            self_mac: String(event?.self_mac || '').trim(),
+            peer_mac: String(event?.peer_mac || '').trim(),
+            self_group_mask: normalizeNumber(event?.self_group_mask, 0) >>> 0,
+            peer_group_mask: normalizeNumber(event?.peer_group_mask, 0) >>> 0,
+            rssi: normalizeNumber(event?.rssi, 0),
+            event_ms: normalizeNumber(event?.event_ms, 0)
+          })).filter((event) => event.self_mac || event.peer_mac) : [],
+          receiver_stats: Array.isArray(raw.runtime.receiver_stats) ? raw.runtime.receiver_stats.map((stat) => ({
+            room: normalizeNumber(stat?.room, 0),
+            self_mac: String(stat?.self_mac || '').trim(),
+            seen_count: normalizeNumber(stat?.seen_count, 0),
+            found_count: normalizeNumber(stat?.found_count, 0),
+            seq: normalizeNumber(stat?.seq, 0),
+            seen_ms: normalizeNumber(stat?.seen_ms, 0)
+          })).filter((stat) => stat.self_mac) : []
+        };
+      }
       if (Array.isArray(raw.rules)) out.rules = raw.rules.map((r, i) => ({ id: normalizeNumber(r?.id, i), ...clone(r) }));
       if (Array.isArray(raw.presets)) out.presets = normalizeTemplates(raw.presets);
       if (Array.isArray(raw.effects)) out.effects = normalizeEffectEffects(raw.effects);
@@ -2030,7 +2095,9 @@
     const out = clone(fallback);
     out.schema = normalizeNumber(raw.schema, 1);
     out.updated_at = String(raw.updated_at || nowIso());
+    out.rssi_defaults_version = normalizeNumber(raw.rssi_defaults_version, 1);
     out.device_drafts = raw.device_drafts && typeof raw.device_drafts === 'object' ? clone(raw.device_drafts) : {};
+    out.controller_groups = normalizeGroups(raw.controller_groups || raw.groups || fallback.controller_groups, fallback.controller_groups);
     out.hidden_devices = Array.isArray(raw.hidden_devices) ? raw.hidden_devices.map((item) => String(item || '').trim()).filter(Boolean) : [];
     out.templates = normalizeTemplates(raw.templates || fallback.templates);
     out.feature_presets = normalizeFeaturePresets(raw.feature_presets || fallback.feature_presets);
@@ -2075,8 +2142,118 @@
     if (!out.ui.selected_effect_preset_id || !out.effect_presets.some((item) => String(item.id) === String(out.ui.selected_effect_preset_id))) {
       out.ui.selected_effect_preset_id = out.effect_presets[0]?.id || '';
     }
+    migrateRssiDefaults(out, raw);
     migrateLegacyEffectReferences(out);
     return out;
+  }
+
+  function migrateRssiDefaults(localState, raw = {}) {
+    if (!localState || typeof localState !== 'object') return;
+    const version = normalizeNumber(raw?.rssi_defaults_version, 1);
+    if (version >= RSSI_DEFAULTS_VERSION) {
+      localState.rssi_defaults_version = RSSI_DEFAULTS_VERSION;
+      return;
+    }
+    const migrateSignal = (signalUi) => {
+      if (!signalUi || typeof signalUi !== 'object') return;
+      signalUi.trigger_compare = triggerCompareValue(signalUi.trigger_compare);
+      if (normalizeNumber(signalUi.trigger_rssi_threshold, OLD_DEFAULT_TRIGGER_RSSI) === OLD_DEFAULT_TRIGGER_RSSI) {
+        signalUi.trigger_rssi_threshold = DEFAULT_TRIGGER_RSSI;
+      }
+    };
+    for (const preset of Array.isArray(localState.feature_presets) ? localState.feature_presets : []) {
+      migrateSignal(preset?.feature_ui?.signal_ui);
+    }
+    const migrateRoom = (room) => {
+      if (!room || typeof room !== 'object') return;
+      if (normalizeNumber(room.trigger_signal_rssi, OLD_DEFAULT_TRIGGER_RSSI) === OLD_DEFAULT_TRIGGER_RSSI) {
+        room.trigger_signal_rssi = DEFAULT_TRIGGER_RSSI;
+      }
+      room.trigger_compare = triggerCompareValue(room.trigger_compare);
+    };
+    for (const room of Array.isArray(localState.rooms) ? localState.rooms : []) migrateRoom(room);
+    migrateRoom(localState.current_room);
+    localState.rssi_defaults_version = RSSI_DEFAULTS_VERSION;
+  }
+
+  function firstFreeGroupId(usedIds = new Set()) {
+    for (let id = 0; id < MAX_MCU_GROUPS; id++) {
+      if (!usedIds.has(id)) return id;
+    }
+    return -1;
+  }
+
+  function remapGroupArray(values, idMap) {
+    if (!Array.isArray(values)) return [];
+    return Array.from(new Set(values.map((id) => {
+      const gid = normalizeNumber(id, -1);
+      return idMap.has(gid) ? idMap.get(gid) : gid;
+    }).filter((gid) => gid >= 0 && gid < MAX_MCU_GROUPS))).sort((a, b) => a - b);
+  }
+
+  function remapGroupMask(mask, idMap) {
+    const source = normalizeNumber(mask, 0) >>> 0;
+    let next = 0;
+    for (let gid = 0; gid < 32; gid++) {
+      if ((source & (1 << gid)) === 0) continue;
+      const mapped = idMap.has(gid) ? idMap.get(gid) : gid;
+      if (mapped >= 0 && mapped < MAX_MCU_GROUPS) next |= (1 << mapped);
+    }
+    return next >>> 0;
+  }
+
+  function migrateOversizedGroupIds(localState) {
+    if (!localState || typeof localState !== 'object') return;
+    const groups = Array.isArray(localState.controller_groups) ? localState.controller_groups : [];
+    const validGroups = groups.filter((group) => group && group.valid !== false);
+    const used = new Set(validGroups.map((group) => normalizeNumber(group.id, -1)).filter((id) => id >= 0 && id < MAX_MCU_GROUPS));
+    const oversized = validGroups.map((group) => normalizeNumber(group.id, -1)).filter((id) => id >= MAX_MCU_GROUPS);
+    if (!oversized.length) return;
+    const idMap = new Map();
+    for (const oldId of oversized) {
+      const nextId = firstFreeGroupId(used);
+      if (nextId < 0) break;
+      used.add(nextId);
+      idMap.set(oldId, nextId);
+    }
+    if (!idMap.size) return;
+    localState.controller_groups = groups
+      .map((group) => {
+        const oldId = normalizeNumber(group?.id, -1);
+        if (idMap.has(oldId)) return { ...group, id: idMap.get(oldId), updated_at: nowIso() };
+        return group;
+      })
+      .filter((group) => normalizeNumber(group?.id, -1) >= 0 && normalizeNumber(group?.id, -1) < MAX_MCU_GROUPS);
+    if (localState.device_drafts && typeof localState.device_drafts === 'object') {
+      for (const draft of Object.values(localState.device_drafts)) {
+        if (draft && typeof draft === 'object') draft.group_mask = remapGroupMask(draft.group_mask, idMap);
+      }
+    }
+    for (const room of Array.isArray(localState.rooms) ? localState.rooms : []) {
+      room.source_group_ids = remapGroupArray(room.source_group_ids, idMap);
+      room.target_group_ids = remapGroupArray(room.target_group_ids, idMap);
+      room.group_ids = remapGroupArray(room.group_ids, idMap);
+      if (Array.isArray(room.effect_rules)) {
+        for (const rule of room.effect_rules) {
+          const source = normalizeNumber(rule?.source_group_id, -1);
+          const target = normalizeNumber(rule?.target_group_id, -1);
+          if (idMap.has(source)) rule.source_group_id = idMap.get(source);
+          if (idMap.has(target)) rule.target_group_id = idMap.get(target);
+        }
+      }
+      syncRoomEffectRules(room);
+    }
+    if (localState.current_room) {
+      localState.current_room.source_group_ids = remapGroupArray(localState.current_room.source_group_ids, idMap);
+      localState.current_room.target_group_ids = remapGroupArray(localState.current_room.target_group_ids, idMap);
+      localState.current_room.group_ids = remapGroupArray(localState.current_room.group_ids, idMap);
+    }
+    if (localState.ui) {
+      for (const key of ['selected_group_id', 'expanded_group_id', 'device_filter_group_id']) {
+        const value = normalizeNumber(localState.ui[key], -1);
+        if (idMap.has(value)) localState.ui[key] = idMap.get(value);
+      }
+    }
   }
 
   function emptyGroup(id) {
@@ -2139,6 +2316,27 @@
     const draft = state.localState?.device_drafts?.[device.mac];
     if (draft && typeof draft === 'object' && String(draft.note || '').trim()) return String(draft.note).trim();
     return String(device.note || '');
+  }
+
+  function deviceDraftGroupMask(device) {
+    const draft = state.localState?.device_drafts?.[device.mac];
+    if (draft && typeof draft === 'object' && draft.group_mask !== undefined) {
+      return normalizeNumber(draft.group_mask, normalizeNumber(device?.group_mask, 0)) >>> 0;
+    }
+    return normalizeNumber(device?.group_mask, 0) >>> 0;
+  }
+
+  function saveDeviceDraft(device, overrides = {}) {
+    if (!device?.mac) return;
+    if (!state.localState.device_drafts || typeof state.localState.device_drafts !== 'object') {
+      state.localState.device_drafts = {};
+    }
+    const existing = state.localState.device_drafts[device.mac];
+    const prev = existing && typeof existing === 'object' ? existing : {};
+    const name = String(overrides.name ?? prev.name ?? device.name ?? '').trim();
+    const note = String(overrides.note ?? prev.note ?? device.note ?? '').trim();
+    const groupMask = normalizeNumber(overrides.group_mask ?? prev.group_mask ?? device.group_mask, 0) >>> 0;
+    state.localState.device_drafts[device.mac] = { name, note, group_mask: groupMask };
   }
 
   function selectedGroupId() {
@@ -2260,14 +2458,21 @@
   function mergeDraftsIntoController(controllerState, localState) {
     const out = clone(controllerState);
     const drafts = localState?.device_drafts || {};
+    if (Array.isArray(localState?.controller_groups) && localState.controller_groups.length) {
+      out.groups = normalizeGroups(localState.controller_groups, out.groups || []);
+    }
     out.devices = (out.devices || []).map((device) => {
       const draft = drafts[device.mac];
       const name = draft && typeof draft === 'object' && String(draft.name || '').trim();
       const note = draft && typeof draft === 'object' && String(draft.note || '').trim();
+      const groupMask = draft && typeof draft === 'object' && draft.group_mask !== undefined
+        ? normalizeNumber(draft.group_mask, normalizeNumber(device.group_mask, 0)) >>> 0
+        : normalizeNumber(device.group_mask, 0) >>> 0;
       return {
         ...device,
         name: name || device.name,
-        note: note || device.note || ''
+        note: note || device.note || '',
+        group_mask: groupMask
       };
     });
     return out;
@@ -2275,6 +2480,28 @@
 
   function controllerDevices() {
     return Array.isArray(state.controllerState?.devices) ? state.controllerState.devices : [];
+  }
+
+  function deviceNameByMac(mac) {
+    const value = String(mac || '').trim().toUpperCase();
+    const device = controllerDevices().find((item) => String(item.mac || '').trim().toUpperCase() === value);
+    return device ? deviceDraftName(device) : (value || '未知设备');
+  }
+
+  function deviceLabelByIndex(index) {
+    const idx = normalizeNumber(index, -1);
+    if (idx < 0) return '未知设备';
+    const device = controllerDevices().find((item) => normalizeNumber(item?.idx, -1) === idx) || null;
+    if (device) return deviceDraftName(device);
+    return `设备${idx + 1}`;
+  }
+
+  function deviceLabelFromRuntime(event, key = 'self') {
+    const idxKey = key === 'peer' ? 'peer_idx' : 'self_idx';
+    const macKey = key === 'peer' ? 'peer_mac' : 'self_mac';
+    const idx = normalizeNumber(event?.[idxKey], -1);
+    if (idx >= 0) return deviceLabelByIndex(idx);
+    return deviceNameByMac(event?.[macKey]);
   }
 
   function controllerGroups() {
@@ -2352,7 +2579,18 @@
   }
 
   function isDeviceOnline(device) {
-    return state.controllerOnline && normalizeNumber(device?.seen_ms, 999999) < 10000;
+    return state.controllerOnline && normalizeNumber(device?.seen_ms, Number.POSITIVE_INFINITY) < DEVICE_ONLINE_MS;
+  }
+
+  function isDeviceScanRetained(device) {
+    const seen = normalizeNumber(device?.seen_ms, Number.POSITIVE_INFINITY);
+    return !!String(device?.mac || '').trim() && (seen < DEVICE_SCAN_RETAIN_MS || normalizeNumber(device?.online, 0) === 1);
+  }
+
+  function deviceScanStatusLabel(device) {
+    if (isDeviceOnline(device)) return '在线';
+    if (isDeviceScanRetained(device)) return '待刷新';
+    return '离线';
   }
 
   function roomSelectedGroupIds(room = currentRoom()) {
@@ -2385,12 +2623,81 @@
 
   function roomPreparationAudit(room = currentRoom()) {
     const selectedDevices = roomSelectedDevices(room);
-    const offlineDevices = selectedDevices.filter((item) => !isDeviceOnline(item.device));
+    const offlineDevices = selectedDevices.filter((item) => !isDeviceScanRetained(item.device));
     return {
       groupIds: roomSelectedGroupIds(room),
       devices: selectedDevices,
       offlineDevices
     };
+  }
+
+  function devicePrepareViewItem(item) {
+    return {
+      mac: String(item.device?.mac || ''),
+      name: String(item.device?.name || ''),
+      groups: Array.isArray(item.groups) ? item.groups.slice() : [],
+      rssi: normalizeNumber(item.device?.rssi, 0),
+      seen_ms: normalizeNumber(item.device?.seen_ms, 999999),
+      online: isDeviceOnline(item.device),
+      retained: isDeviceScanRetained(item.device),
+      status: deviceScanStatusLabel(item.device)
+    };
+  }
+
+  function openRoomPrepareModal(room = currentRoom()) {
+    if (!room) return false;
+    const { issues } = validateRoomReady(room);
+    if (issues.length) {
+      alert(issues[0]);
+      if (state.activeTab !== 'room') {
+        state.activeTab = 'room';
+        state.localState.ui.active_tab = 'room';
+      }
+      render();
+      return false;
+    }
+    const audit = roomPreparationAudit(room);
+    const devices = audit.devices.map(devicePrepareViewItem);
+    state.roomPrepareModal = {
+      roomId: room.id,
+      roomName: room.name || '未命名房间',
+      groupIds: audit.groupIds.slice(),
+      devices,
+      offlineDevices: devices.filter((item) => !item.online),
+      autoScanIssued: false
+    };
+    renderDialogs();
+    if (state.controllerOnline && !state.busy.scan && !state.roomPrepareModal.autoScanIssued) {
+      state.roomPrepareModal.autoScanIssued = true;
+      scanDevices();
+    }
+    return true;
+  }
+
+  function roomFinalizeAudit(room = currentRoom()) {
+    const selectedDevices = roomSelectedDevices(room);
+    const runtime = state.controllerState?.runtime || {};
+    const roomHash = runtimeRoomHash(room);
+    const stats = Array.isArray(runtime.receiver_stats)
+      ? runtime.receiver_stats.filter((stat) => normalizeNumber(stat?.room, -1) === roomHash)
+      : [];
+    const statMacs = new Set(stats.map((stat) => String(stat.self_mac || '').trim().toUpperCase()).filter(Boolean));
+    const missingDevices = selectedDevices.filter((item) => !statMacs.has(String(item.device?.mac || '').trim().toUpperCase()));
+    return {
+      room,
+      roomHash,
+      stats,
+      missingDevices,
+      scoreTotal: roomRuntimeSummary(room).score_total,
+      latestLine: roomRuntimeSummary(room).discoveries[0]?.line || ''
+    };
+  }
+
+  function openRoomFinalizeModal(room = currentRoom()) {
+    if (!room) return false;
+    state.roomFinalizeModal = roomFinalizeAudit(room);
+    renderDialogs();
+    return true;
   }
 
   function isSoftStopDisconnectError(err) {
@@ -2437,8 +2744,9 @@
       sense_mode: String(template?.sense_mode || ''),
       idle_effect_id: String(template?.idle_effect_id || ''),
       trigger_effect_id: String(template?.trigger_effect_id || ''),
-      trigger_signal_rssi: normalizeNumber(featurePresetById(template?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_rssi_threshold, -10),
-      trigger_hold_ms: normalizeNumber(featurePresetById(template?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_hold_ms, 2000),
+      trigger_compare: triggerCompareValue(featurePresetById(template?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_compare),
+      trigger_signal_rssi: normalizeNumber(featurePresetById(template?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_rssi_threshold, DEFAULT_TRIGGER_RSSI),
+      trigger_hold_ms: normalizeNumber(featurePresetById(template?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_hold_ms, DEFAULT_TRIGGER_HOLD_MS),
       preview_effect_id: String(template?.effect_preset_id || ''),
       timer: template?.feature_preset_id ? clone(featurePresetById(template.feature_preset_id)?.feature_ui?.timer || {}) : {},
       scoring: template?.scoring && typeof template.scoring === 'object' ? clone(template.scoring) : {},
@@ -2516,6 +2824,61 @@
     return group ? group.name : `分组${id + 1}`;
   }
 
+  function groupLabelFromMask(mask) {
+    const ids = controllerGroups()
+      .map((group) => normalizeNumber(group?.id, -1))
+      .filter((gid) => gid >= 0 && ((normalizeNumber(mask, 0) >>> 0) & (1 << gid)) !== 0);
+    if (!ids.length) return '未分组';
+    return ids.map((gid) => groupNameById(gid)).join(' / ');
+  }
+
+  function groupMaskFromIds(ids) {
+    return (Array.isArray(ids) ? ids : []).reduce((mask, gid) => {
+      const id = normalizeNumber(gid, -1);
+      if (id >= 0) return mask | (1 << id);
+      return mask;
+    }, 0) >>> 0;
+  }
+
+  function runtimeEventMatchesRoomDirection(event, room) {
+    const sourceMask = groupMaskFromIds(room?.source_group_ids);
+    const targetMask = groupMaskFromIds(room?.target_group_ids);
+    if (!sourceMask || !targetMask) return true;
+    const selfMask = normalizeNumber(event?.self_group_mask, 0) >>> 0;
+    const peerMask = normalizeNumber(event?.peer_group_mask, 0) >>> 0;
+    return (selfMask & sourceMask) !== 0 && (peerMask & targetMask) !== 0;
+  }
+
+  function deviceByMac(mac) {
+    const value = String(mac || '').trim().toUpperCase();
+    return controllerDevices().find((item) => String(item.mac || '').trim().toUpperCase() === value) || null;
+  }
+
+  function devicePrimaryGroupIds(device) {
+    const mask = normalizeNumber(device?.group_mask, 0) >>> 0;
+    return controllerGroups()
+      .map((group) => normalizeNumber(group?.id, -1))
+      .filter((gid) => gid >= 0 && (mask & (1 << gid)) !== 0);
+  }
+
+  function devicePrimaryGroupLabel(device) {
+    const ids = devicePrimaryGroupIds(device);
+    if (!ids.length) return '未分组';
+    return ids.map((gid) => groupNameById(gid)).join(' / ');
+  }
+
+  function roomSourceGroupLabel(room, device) {
+    const sourceIds = new Set((room?.source_group_ids || []).map((gid) => normalizeNumber(gid, -1)).filter((gid) => gid >= 0));
+    const ids = devicePrimaryGroupIds(device).filter((gid) => sourceIds.size === 0 || sourceIds.has(gid));
+    if (!ids.length) return devicePrimaryGroupLabel(device);
+    return ids.map((gid) => groupNameById(gid)).join(' / ');
+  }
+
+  function formatRuntimeDiscovery(event, room = currentRoom()) {
+    if (!event) return '';
+    return `${formatClockTime(event.event_ms)} ${deviceLabelFromRuntime(event, 'self')}（${groupLabelFromMask(event.self_group_mask)}）发现 ${deviceLabelFromRuntime(event, 'peer')}（${groupLabelFromMask(event.peer_group_mask)}）`;
+  }
+
   function modeLabel(mode) {
     const value = normalizeNumber(mode, 1);
     if (value === 0) return '组共享型';
@@ -2564,6 +2927,405 @@
     return match ? match.name : String(templateId || '') || '未设置';
   }
 
+  function colorForMcu(value, fallback = 'FFFFFF') {
+    const hex = String(value || '').replace('#', '').trim();
+    return /^[0-9a-fA-F]{6}$/.test(hex) ? hex.toUpperCase() : fallback;
+  }
+
+  function portMaskForMcu(track) {
+    const port = clamp(normalizeNumber(track?.port, 1), 1, 3);
+    return 1 << (port - 1);
+  }
+
+  function breathSpeedForMcu(track) {
+    const freq = normalizeNumber(track?.frequency_hz, 0);
+    const effectiveFreq = freq > 0 ? freq : 0.35;
+    return clamp(Math.round(effectiveFreq * 188), 20, 5000);
+  }
+
+  function enabledMcuTracks(effect) {
+    const tracks = Array.isArray(effect?.effect_ui?.tracks) ? effect.effect_ui.tracks : [];
+    return tracks.filter((track) => track && track.enabled !== false && normalizeNumber(track?.port, 1) >= 1 && normalizeNumber(track?.port, 1) <= 3);
+  }
+
+  function mcuModeForTrack(track, fallback = 'silent') {
+    const mode = String(track?.mode || fallback || 'silent');
+    if (mode === 'gradient') return 'solid';
+    if (mode === 'pulse_chase') return 'pulse';
+    return mode;
+  }
+
+  function mcuComparableKeyForTrack(track, fallback = 'silent') {
+    const mode = mcuModeForTrack(track, fallback);
+    if (mode === 'selftest' || mode === 'silent') return mode;
+    const start = Math.max(0, normalizeNumber(track?.led_start, 1) - 1);
+    const end = Math.max(start + 1, normalizeNumber(track?.led_end, track?.led_count || 25));
+    const length = clamp(end - start, 1, 200);
+    const gap = clamp(normalizeNumber(track?.gap, 0), 0, 20);
+    const colors = Array.isArray(track?.colors) ? track.colors : [];
+    const c1 = colorForMcu(colors[0], 'FFFFFF');
+    const c2 = colorForMcu(colors[1], c1);
+    const c3 = colorForMcu(colors[2], c1);
+    const brightness = clamp(normalizeNumber(track?.brightness, mode === 'silent' ? 0 : 80), 0, 100);
+    const period = clamp(normalizeNumber(track?.period_ms, mode === 'cycle' ? 420 : 700), 50, 20000);
+    const duty = clamp(normalizeNumber(track?.duty, 50), 1, 99);
+    const repeat = clamp(normalizeNumber(track?.repeat, 0), 0, 9999);
+    const accel = clamp(normalizeNumber(track?.accel, 0), 0, 100);
+    const hold = clamp(normalizeNumber(track?.end_hold_ms, 0), 0, 30000);
+    if (mode === 'solid') return JSON.stringify([mode, start, length, gap, c1, c2, c3, brightness]);
+    if (mode === 'breath') {
+      const speed = breathSpeedForMcu(track);
+      return JSON.stringify([mode, start, length, gap, c1, c2, c3, speed, brightness, repeat, accel, hold]);
+    }
+    if (mode === 'blink') return JSON.stringify([mode, start, length, gap, c1, c2, c3, period, duty, brightness, repeat, accel, hold]);
+    if (mode === 'cycle') return JSON.stringify([mode, start, length, gap, c1, c2, c3, period, brightness, repeat, accel, hold]);
+    if (mode === 'chase') return JSON.stringify([mode, start, length, gap, c1, c2, c3, period, brightness, repeat, accel, hold]);
+    if (mode === 'pulse') {
+      const startBrightness = clamp(normalizeNumber(track?.pulse_speed_start, 10), 0, 100);
+      const endBrightness = clamp(normalizeNumber(track?.pulse_speed_end, 100), 0, 100);
+      const duration = clamp(normalizeNumber(track?.pulse_duration_ms, 0), 0, 30000);
+      return JSON.stringify([mode, start, length, gap, c1, c2, c3, period, startBrightness, endBrightness, repeat || 15, accel, hold, duration]);
+    }
+    return mode;
+  }
+
+  function combinedPortMaskForMcu(effect, primary, fallback = 'silent') {
+    const primaryKey = mcuComparableKeyForTrack(primary, fallback);
+    let mask = 0;
+    for (const track of enabledMcuTracks(effect)) {
+      if (mcuComparableKeyForTrack(track, fallback) === primaryKey) {
+        mask |= portMaskForMcu(track);
+      }
+    }
+    return mask || portMaskForMcu(primary);
+  }
+
+  function effectTrackSpecForMcu(track, portMask, fallback = 'silent') {
+    const mode = String(track?.mode || fallback || 'silent');
+    if (mode === 'selftest') return 'selftest';
+    if (mode === 'silent') return 'silent';
+    const start = Math.max(0, normalizeNumber(track?.led_start, 1) - 1);
+    const end = Math.max(start + 1, normalizeNumber(track?.led_end, track?.led_count || 25));
+    const length = clamp(end - start, 1, 200);
+    const gap = clamp(normalizeNumber(track?.gap, 0), 0, 20);
+    const colors = Array.isArray(track?.colors) ? track.colors : [];
+    const c1 = colorForMcu(colors[0], 'FFFFFF');
+    const c2 = colorForMcu(colors[1], c1);
+    const c3 = colorForMcu(colors[2], c1);
+    const brightness = clamp(normalizeNumber(track?.brightness, mode === 'silent' ? 0 : 80), 0, 100);
+    const period = clamp(normalizeNumber(track?.period_ms, mode === 'cycle' ? 420 : 700), 50, 20000);
+    const duty = clamp(normalizeNumber(track?.duty, 50), 1, 99);
+    const repeat = clamp(normalizeNumber(track?.repeat, 0), 0, 9999);
+    const accel = clamp(normalizeNumber(track?.accel, 0), 0, 100);
+    const hold = clamp(normalizeNumber(track?.end_hold_ms, 0), 0, 30000);
+    if (mode === 'solid' || mode === 'gradient') return `solid3|${portMask}|${start}|${length}|${gap}|${c1}|${c2}|${c3}|${brightness}`;
+    if (mode === 'breath') {
+      const speed = breathSpeedForMcu(track);
+      return `breath3|${portMask}|${start}|${length}|${gap}|${c1}|${c2}|${c3}|${speed}|${brightness}|${repeat}|${accel}|${hold}`;
+    }
+    if (mode === 'blink') return `blink3|${portMask}|${start}|${length}|${gap}|${c1}|${c2}|${c3}|${period}|${duty}|${brightness}|${repeat}|${accel}|${hold}`;
+    if (mode === 'cycle') return `cycle2|${portMask}|${start}|${length}|${gap}|${c1}|${c2}|${c3}|${period}|${brightness}|${repeat}|${accel}|${hold}`;
+    if (mode === 'chase') return `chase3|${portMask}|${start}|${length}|${gap}|${c1}|${c2}|${c3}|${period}|${brightness}|${repeat}|${accel}|${hold}`;
+    if (mode === 'pulse' || mode === 'pulse_chase') {
+      const startBrightness = clamp(normalizeNumber(track?.pulse_speed_start, 10), 0, 100);
+      const endBrightness = clamp(normalizeNumber(track?.pulse_speed_end, 100), 0, 100);
+      const duration = clamp(normalizeNumber(track?.pulse_duration_ms, 0), 0, 30000);
+      return `pulse3|${portMask}|${start}|${length}|${gap}|${c1}|${c2}|${c3}|${period}|${startBrightness}|${endBrightness}|${repeat || 15}|${accel}|${hold}|${duration}`;
+    }
+    return fallback === 'selftest' ? 'selftest' : 'silent';
+  }
+
+  function effectSpecForMcu(effectId, fallback = 'silent') {
+    const effect = effectDefinitionById(effectId);
+    const primary = effectPrimaryTrack(effect) || buildDefaultEffectTrack(fallback, 0);
+    const tracks = enabledMcuTracks(effect);
+    if (tracks.length > 1) {
+      const specs = tracks.slice(0, 3).map((track) => effectTrackSpecForMcu(track, portMaskForMcu(track), fallback)).filter((spec) => spec && spec !== 'silent');
+      if (specs.length > 1) {
+        const multi = `multi2;${specs.join(';')}`;
+        if (multi.length <= 180) return multi;
+      }
+    }
+    const portMask = combinedPortMaskForMcu(effect, primary, fallback);
+    return effectTrackSpecForMcu(primary, portMask, fallback);
+  }
+
+  function effectMcuDiagnostic(effectId, fallback = 'silent') {
+    const effect = effectDefinitionById(effectId);
+    const primary = effectPrimaryTrack(effect) || buildDefaultEffectTrack(fallback, 0);
+    const tracks = enabledMcuTracks(effect);
+    const primaryKey = mcuComparableKeyForTrack(primary, fallback);
+    const applied = tracks.filter((track) => mcuComparableKeyForTrack(track, fallback) === primaryKey);
+    const ignored = tracks.filter((track) => mcuComparableKeyForTrack(track, fallback) !== primaryKey);
+    const spec = effectSpecForMcu(effectId, fallback);
+    const warnings = [];
+    if (ignored.length && !spec.startsWith('multi2;')) {
+      warnings.push(`固件本次只执行 ${applied.map((track) => `LED${normalizeNumber(track.port, 1)}`).join(' / ')}；${ignored.map((track) => `LED${normalizeNumber(track.port, 1)} ${effectModeLabel(track.mode)}`).join('、')} 暂未下发。`);
+    }
+    if (tracks.length > 1 && !spec.startsWith('multi2;') && effectSpecForMcu(effectId, fallback).length > 180) {
+      warnings.push('多轨灯效超过 ESP-NOW 安全长度，已退回单轨下发。');
+    }
+    if (spec.startsWith('multi2;')) {
+      warnings.push(`已启用 3 路多轨下发：${tracks.slice(0, 3).map((track) => `LED${normalizeNumber(track.port, 1)} ${effectModeLabel(track.mode)}`).join('、')}。`);
+    }
+    if (String(primary?.mode || '') === 'gradient') {
+      warnings.push('渐变模式在当前固件中按纯色发布。');
+    }
+    if (!effect && effectId && effectId !== 'builtin-silent') {
+      warnings.push('没有找到这个灯效定义，已使用回退灯效。');
+    }
+    return {
+      effect_id: String(effectId || ''),
+      name: effectNameById(effectId),
+      spec,
+      applied_ports: applied.map((track) => normalizeNumber(track.port, 1)),
+      ignored_count: ignored.length,
+      warnings
+    };
+  }
+
+  function roomRuleForGroup(room, gid) {
+    const rules = Array.isArray(room?.effect_rules) ? room.effect_rules : [];
+    return rules.find((rule) => normalizeNumber(rule.source_group_id, -1) === gid)
+      || rules.find((rule) => normalizeNumber(rule.target_group_id, -1) === gid)
+      || null;
+  }
+
+  function buildMcuRuntimePayload(payload) {
+    const room = currentRoom() ? clone(normalizeRoomDraft(currentRoom(), state.localState?.templates?.find((tpl) => tpl.id === currentRoom().template_id) || state.localState?.templates?.[0] || builtinTemplates[0])) : null;
+    const runtime = {
+      schema: 1,
+      room_id: room?.id || '',
+      room_name: room?.name || '',
+      active: !!room,
+      led_ports_supported: 3,
+      warnings: [],
+      rules: []
+    };
+    if (!room) return runtime;
+    syncRoomEffectRules(room);
+    const sourceIds = new Set((room.source_group_ids || []).map((id) => normalizeNumber(id, -1)).filter((id) => id >= 0));
+    const targetIds = new Set((room.target_group_ids || []).map((id) => normalizeNumber(id, -1)).filter((id) => id >= 0));
+    const allRuntimeGroups = new Set([...sourceIds, ...targetIds]);
+    const groupById = new Map((payload.groups || []).map((group) => [normalizeNumber(group.id, -1), group]));
+    const usedEffectIds = new Set();
+    for (const gid of allRuntimeGroups) {
+      const group = groupById.get(gid);
+      if (!group) continue;
+      const asSource = sourceIds.has(gid);
+      const peerIds = asSource ? targetIds : sourceIds;
+      const peerMask = Array.from(peerIds).reduce((mask, id) => mask | (1 << id), 0) >>> 0;
+      const rule = roomRuleForGroup(room, gid);
+      const idleId = asSource
+        ? (rule?.source_idle_effect_id || room.idle_effect_id || 'builtin-silent')
+        : (rule?.target_idle_effect_id || 'builtin-silent');
+      const triggerId = asSource
+        ? (rule?.source_trigger_effect_id || room.trigger_effect_id || idleId)
+        : (rule?.target_trigger_effect_id || room.trigger_effect_id || idleId);
+      usedEffectIds.add(idleId);
+      usedEffectIds.add(triggerId);
+      const idleSpec = effectSpecForMcu(idleId, 'silent');
+      const triggerSpec = effectSpecForMcu(triggerId, 'silent');
+      Object.assign(group, {
+        effect: idleSpec,
+        trigger_effect: triggerSpec,
+        peer_mask: peerMask,
+        room_hash: Math.abs(hashCode(String(room.id || 'room'))) % 65535,
+        trigger_compare: triggerCompareValue(room.trigger_compare || group.trigger_compare),
+        rssi: normalizeNumber(room.trigger_signal_rssi ?? group.rssi, normalizeNumber(group.rssi, -70)),
+        hold: normalizeNumber(room.trigger_hold_ms ?? group.hold, normalizeNumber(group.hold, 2000))
+      });
+      runtime.rules.push({
+        group_id: gid,
+        role: asSource ? 'source' : 'target',
+        peer_mask: peerMask,
+        trigger_compare: group.trigger_compare,
+        rssi: group.rssi,
+        hold: group.hold,
+        idle_effect: idleSpec,
+        trigger_effect: triggerSpec
+      });
+    }
+    const usesLed4 = Array.from(usedEffectIds).some((effectId) => {
+      const effect = effectDefinitionById(effectId);
+      const tracks = Array.isArray(effect?.effect_ui?.tracks) ? effect.effect_ui.tracks : [];
+      return tracks.some((track) => track?.enabled !== false && normalizeNumber(track?.port, 1) > 3);
+    });
+    if (usesLed4) runtime.warnings.push('当前接收端固件只发布 LED1-LED3，LED4 灯效会被忽略。');
+    const warningSet = new Set(runtime.warnings);
+    for (const effectId of usedEffectIds) {
+      const diag = effectMcuDiagnostic(effectId, 'silent');
+      for (const warning of diag.warnings) {
+        if (warning.startsWith('已启用')) continue;
+        warningSet.add(`${diag.name}：${warning}`);
+      }
+    }
+    runtime.warnings = Array.from(warningSet);
+    return runtime;
+  }
+
+  function roomRuntimeEffectDiagnostics(room = currentRoom()) {
+    if (!room) return [];
+    const template = state.localState?.templates?.find((tpl) => tpl.id === room.template_id) || state.localState?.templates?.[0] || builtinTemplates[0];
+    const draft = clone(normalizeRoomDraft(room, template));
+    syncRoomEffectRules(draft);
+    const sourceIds = new Set((draft.source_group_ids || []).map((gid) => normalizeNumber(gid, -1)).filter((gid) => gid >= 0));
+    const targetIds = new Set((draft.target_group_ids || []).map((gid) => normalizeNumber(gid, -1)).filter((gid) => gid >= 0));
+    const groupIds = Array.from(new Set([...sourceIds, ...targetIds])).sort((a, b) => a - b);
+    return groupIds.map((gid) => {
+      const asSource = sourceIds.has(gid);
+      const rule = roomRuleForGroup(draft, gid);
+      const idleId = asSource
+        ? (rule?.source_idle_effect_id || draft.idle_effect_id || 'builtin-silent')
+        : (rule?.target_idle_effect_id || 'builtin-silent');
+      const triggerId = asSource
+        ? (rule?.source_trigger_effect_id || draft.trigger_effect_id || idleId)
+        : (rule?.target_trigger_effect_id || draft.trigger_effect_id || idleId);
+      const devices = groupDevices(gid).map((device) => deviceDraftName(device) || device.mac || '未知设备');
+      const idle = effectMcuDiagnostic(idleId, 'silent');
+      const trigger = effectMcuDiagnostic(triggerId, 'silent');
+      return {
+        group_id: gid,
+        group_name: groupNameById(gid),
+        role: asSource ? 'source' : 'target',
+        role_label: asSource ? '源组' : '目标组',
+        devices,
+        idle,
+        trigger,
+        warnings: [...idle.warnings, ...trigger.warnings]
+      };
+    });
+  }
+
+  function hashCode(text) {
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+    }
+    return hash;
+  }
+
+  function runtimeRoomHash(room) {
+    return Math.abs(hashCode(String(room?.id || 'room'))) % 65535;
+  }
+
+  function roomRuntimeSummary(room) {
+    const runtime = state.controllerState?.runtime || {};
+    const roomHash = runtimeRoomHash(room);
+    const events = Array.isArray(runtime.events)
+      ? runtime.events.filter((event) => normalizeNumber(event?.room, -1) === roomHash && runtimeEventMatchesRoomDirection(event, room))
+      : [];
+    const bySource = new Map();
+    const bySourceGroup = new Map();
+    for (const event of events) {
+      const selfIdx = normalizeNumber(event?.self_idx, -1);
+      const selfMac = String(event.self_mac || '').trim();
+      const sourceKey = selfIdx >= 0 ? `idx:${selfIdx}` : `mac:${selfMac}`;
+      const sourceLabel = selfIdx >= 0 ? deviceLabelByIndex(selfIdx) : deviceNameByMac(selfMac);
+      bySource.set(sourceKey, {
+        label: sourceLabel,
+        count: (bySource.get(sourceKey)?.count || 0) + 1,
+        idx: selfIdx
+      });
+      const sourceDevice = selfIdx >= 0
+        ? controllerDevices().find((device) => normalizeNumber(device?.idx, -1) === selfIdx)
+        : deviceByMac(selfMac);
+      const groupLabel = roomSourceGroupLabel(room, sourceDevice);
+      bySourceGroup.set(groupLabel, (bySourceGroup.get(groupLabel) || 0) + 1);
+    }
+    const discoveries = events.slice().reverse().map((event) => ({
+      ...event,
+      line: formatRuntimeDiscovery(event, room)
+    }));
+    return {
+      roomHash,
+      running: runtime.running === true && events.length > 0,
+      events,
+      score_total: events.length,
+      by_source: Array.from(bySource.values()).map((item) => ({ label: item.label, count: item.count, idx: item.idx })),
+      by_source_group: Array.from(bySourceGroup.entries()).map(([label, count]) => ({ label, count })),
+      discoveries,
+      latest: events.length ? events[events.length - 1] : null
+    };
+  }
+
+  function historySessionRecords() {
+    return normalizeRoomRecords(state.roomRecords)
+      .filter((record) => String(record?.type || 'room_session') === 'room_session')
+      .sort((a, b) => new Date(b.ended_at || b.updated_at || b.started_at || 0).getTime() - new Date(a.ended_at || a.updated_at || a.started_at || 0).getTime());
+  }
+
+  function historyPlayerSummary(records = historySessionRecords()) {
+    const map = new Map();
+    for (const record of records) {
+      const roomName = String(record?.room_name || '未命名房间');
+      const endedAt = record?.ended_at || record?.updated_at || '';
+      const sourceRows = Array.isArray(record?.runtime_scoreboard?.source) ? record.runtime_scoreboard.source : [];
+      if (sourceRows.length) {
+        for (const row of sourceRows) {
+          const label = String(row?.label || '').trim();
+          if (!label) continue;
+          const current = map.get(label) || { label, score: 0, sessions: 0, last_room: '', last_time: '' };
+          current.score += normalizeNumber(row?.count, 0);
+          current.sessions += 1;
+          if (!current.last_time || new Date(endedAt).getTime() > new Date(current.last_time).getTime()) {
+            current.last_room = roomName;
+            current.last_time = endedAt;
+          }
+          map.set(label, current);
+        }
+        continue;
+      }
+      const discoveries = Array.isArray(record?.runtime_discoveries) ? record.runtime_discoveries : [];
+      for (const event of discoveries) {
+        const label = String(event?.self_name || event?.source_name || '').trim()
+          || String(event?.line || '').split('发现')[0].replace(/^\d+点\d+分\d+秒\s*/, '').replace(/（.*$/, '').trim()
+          || String(event?.self_mac || '未知玩家');
+        const current = map.get(label) || { label, score: 0, sessions: 0, last_room: '', last_time: '' };
+        current.score += 1;
+        current.sessions += 1;
+        current.last_room = roomName;
+        current.last_time = endedAt;
+        map.set(label, current);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.score - a.score || b.sessions - a.sessions || a.label.localeCompare(b.label, 'zh-CN'));
+  }
+
+  function historyGroupSummary(records = historySessionRecords()) {
+    const map = new Map();
+    for (const record of records) {
+      const rows = Array.isArray(record?.runtime_scoreboard?.source_groups) ? record.runtime_scoreboard.source_groups : [];
+      for (const row of rows) {
+        const label = String(row?.label || '').trim();
+        if (!label) continue;
+        const current = map.get(label) || { label, score: 0, sessions: 0 };
+        current.score += normalizeNumber(row?.count, 0);
+        current.sessions += 1;
+        map.set(label, current);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.score - a.score || b.sessions - a.sessions || a.label.localeCompare(b.label, 'zh-CN'));
+  }
+
+  function historyDiscoveryRows(records = historySessionRecords()) {
+    const rows = [];
+    for (const record of records) {
+      const roomName = String(record?.room_name || '未命名房间');
+      const discoveries = Array.isArray(record?.runtime_discoveries) ? record.runtime_discoveries : [];
+      for (const event of discoveries) {
+        rows.push({
+          room_name: roomName,
+          line: String(event?.line || ''),
+          rssi: normalizeNumber(event?.rssi, 0),
+          event_ms: normalizeNumber(event?.event_ms, 0),
+          ended_at: record?.ended_at || record?.updated_at || ''
+        });
+      }
+    }
+    return rows.sort((a, b) => normalizeNumber(b.event_ms, 0) - normalizeNumber(a.event_ms, 0));
+  }
+
   function filteredDevices() {
     const devices = controllerDevices();
     const mode = state.deviceFilterMode;
@@ -2578,7 +3340,7 @@
     }
     filtered = filtered.filter((device) => !hidden.has(String(device.mac || '').trim()));
     if (!state.localState?.ui?.show_offline_devices) {
-      filtered = filtered.filter((device) => isDeviceOnline(device));
+      filtered = filtered.filter((device) => isDeviceScanRetained(device));
     }
     return filtered.slice().sort((a, b) => {
       const aOnline = isDeviceOnline(a) ? 1 : 0;
@@ -2597,6 +3359,10 @@
 
   function onlineCount() {
     return controllerDevices().filter((device) => isDeviceOnline(device)).length;
+  }
+
+  function retainedDeviceCount() {
+    return controllerDevices().filter((device) => isDeviceScanRetained(device)).length;
   }
 
   function ungroupedCount() {
@@ -2914,13 +3680,79 @@
     payload.current_room = currentRoom() ? clone(normalizeRoomDraft(currentRoom(), state.localState?.templates?.find((tpl) => tpl.id === currentRoom().template_id) || state.localState?.templates?.[0] || builtinTemplates[0])) : null;
     payload.records = Array.isArray(payload.records) ? payload.records : [];
     payload.rules = Array.isArray(payload.rules) ? payload.rules : [];
+    payload.mcu_runtime = buildMcuRuntimePayload(payload);
     return payload;
+  }
+
+  function buildControllerPublishPayload(sourcePayload = buildControllerPayload()) {
+    const payload = clone(sourcePayload);
+    if (!payload.mcu_runtime) payload.mcu_runtime = buildMcuRuntimePayload(payload);
+    const runtimeGroupIds = [];
+    const addRuntimeGroupId = (gid) => {
+      const id = normalizeNumber(gid, -1);
+      if (id >= 0 && !runtimeGroupIds.includes(id)) runtimeGroupIds.push(id);
+    };
+    const runtimeRules = Array.isArray(payload.mcu_runtime?.rules) ? payload.mcu_runtime.rules : [];
+    for (const rule of runtimeRules) {
+      addRuntimeGroupId(rule?.group_id);
+    }
+    if (!runtimeGroupIds.length) {
+      for (const gid of roomSelectedGroupIds(currentRoom())) addRuntimeGroupId(gid);
+    }
+    if (runtimeGroupIds.length > MAX_MCU_GROUPS) {
+      throw new Error(`本局参与分组 ${runtimeGroupIds.length} 个，超过固件运行态最多 ${MAX_MCU_GROUPS} 个。`);
+    }
+    const groupIdMap = new Map(runtimeGroupIds.map((oldId, index) => [oldId, index]));
+    const remapRuntimeMask = (mask) => {
+      const source = normalizeNumber(mask, 0) >>> 0;
+      let next = 0;
+      for (const [oldId, runtimeId] of groupIdMap.entries()) {
+        if ((source & (1 << oldId)) !== 0) next |= (1 << runtimeId);
+      }
+      return next >>> 0;
+    };
+    const groupById = new Map((Array.isArray(payload.groups) ? payload.groups : []).map((group) => [normalizeNumber(group?.id, -1), group]));
+    const compactGroups = runtimeGroupIds.map((oldId) => {
+      const group = groupById.get(oldId) || { id: oldId, valid: true, name: groupNameById(oldId) };
+      const mappedTarget = groupIdMap.has(normalizeNumber(group.target, -1)) ? groupIdMap.get(normalizeNumber(group.target, -1)) : 255;
+      return {
+        id: groupIdMap.get(oldId),
+        valid: group.valid !== false,
+        name: String(group.name || `分组${normalizeNumber(group.id, 0) + 1}`),
+        note: String(group.note || ''),
+        target: mappedTarget,
+        mode: normalizeNumber(group.mode, 1),
+        trigger_compare: triggerCompareValue(group.trigger_compare),
+        rssi: normalizeNumber(group.rssi, -70),
+        hold: normalizeNumber(group.hold, 2000),
+        effect: String(group.effect || 'silent').slice(0, 180),
+        trigger_effect: String(group.trigger_effect || group.effect || 'silent').slice(0, 180),
+        silence: String(group.silence || '').slice(0, 63),
+        peer_mask: remapRuntimeMask(group.peer_mask),
+        room_hash: normalizeNumber(group.room_hash, 1)
+      };
+    });
+    return {
+      schema_version: 2,
+      rssi_defaults_version: RSSI_DEFAULTS_VERSION,
+      devices: (Array.isArray(payload.devices) ? payload.devices : []).map((device, idx) => ({
+        idx: normalizeNumber(device.idx, idx),
+        mac: String(device.mac || '').trim(),
+        name: String(device.name || `Fragment${idx + 1}`).slice(0, 31),
+        group_mask: remapRuntimeMask(device.group_mask),
+        rssi: normalizeNumber(device.rssi, 0),
+        seen_ms: Math.max(0, normalizeNumber(device.seen_ms, 0))
+      })).filter((device) => device.mac),
+      groups: compactGroups,
+      records: []
+    };
   }
 
   function buildLocalStatePayload() {
     const payload = clone(state.localState || buildDefaultLocalState());
     payload.schema = 1;
     payload.updated_at = nowIso();
+    payload.rssi_defaults_version = RSSI_DEFAULTS_VERSION;
     payload.ui = {
       active_tab: state.activeTab,
       show_unassigned: payload.ui?.show_unassigned !== false,
@@ -2950,6 +3782,7 @@
     payload.effect_templates = Array.isArray(payload.effect_templates) ? payload.effect_templates : [];
     payload.effect_presets = Array.isArray(payload.effect_presets) ? payload.effect_presets : [];
     payload.hidden_devices = Array.isArray(payload.hidden_devices) ? payload.hidden_devices : [];
+    payload.controller_groups = normalizeGroups(controllerGroupSlots(), payload.controller_groups || buildDefaultGroups());
     return payload;
   }
 
@@ -2965,9 +3798,24 @@
     return `设备 #${normalizeNumber(first?.idx, -1)} 的分组数超过 8 个，请先减少后再保存或发布。`;
   }
 
+  function showRuntimeWarnings(payload) {
+    const warnings = Array.isArray(payload?.mcu_runtime?.warnings) ? payload.mcu_runtime.warnings : [];
+    if (!warnings.length) return;
+    const text = warnings.join('\n');
+    logDebug(`运行配置提示 | ${warnings.join(' | ')}`);
+    alert(text);
+  }
+
   function setBusy(key, value) {
     state.busy[key] = !!value;
     render();
+  }
+
+  function requestTimeoutError(controller, fallback) {
+    if (controller?.signal?.aborted) return new Error('timeout');
+    const message = String(fallback?.message || fallback || '');
+    if (/aborted|abort/i.test(message)) return new Error('timeout');
+    return fallback instanceof Error ? fallback : new Error(message || 'request failed');
   }
 
   function logDebug(line) {
@@ -3013,6 +3861,8 @@
         throw new Error(`HTTP ${response.status}: ${detail}`);
       }
       return body;
+    } catch (err) {
+      throw requestTimeoutError(controller, err);
     } finally {
       clearTimeout(timer);
     }
@@ -3030,6 +3880,8 @@
       const text = await response.text();
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 160)}`);
       return text;
+    } catch (err) {
+      throw requestTimeoutError(controller, err);
     } finally {
       clearTimeout(timer);
     }
@@ -3085,6 +3937,8 @@
         throw new Error(`HTTP ${response.status}: ${detail}`);
       }
       return body;
+    } catch (err) {
+      throw requestTimeoutError(controller, err);
     } finally {
       clearTimeout(timer);
     }
@@ -3103,7 +3957,7 @@
   }
 
   async function fetchRecords() {
-    return requestJson('/api/local/records?tail=200', { timeoutMs: 5000, headers: { 'Content-Type': 'application/json' } });
+    return requestJson('/api/local/records?tail=5000', { timeoutMs: 5000, headers: { 'Content-Type': 'application/json' } });
   }
 
   async function fetchServerLog() {
@@ -3128,9 +3982,10 @@
 
   async function persistDraftToServer() {
     try {
+      const payload = buildControllerPayload();
       await requestJson('/api/save', {
         method: 'POST',
-        body: JSON.stringify(buildControllerPayload()),
+        body: JSON.stringify(buildControllerPublishPayload(payload)),
         timeoutMs: 15000
       });
       return true;
@@ -3201,7 +4056,7 @@
     device.name = name;
     const note = String(state.editingDraftNote || '').trim();
     device.note = note;
-    state.localState.device_drafts[mac] = { name, note };
+    saveDeviceDraft(device, { name, note, group_mask: device.group_mask });
     state.editingMac = '';
     state.editingDraftName = '';
     state.editingDraftNote = '';
@@ -3231,6 +4086,7 @@
     const mask = normalizeNumber(device.group_mask, 0) >>> 0;
     const bit = 1 << gid;
     device.group_mask = checked ? ((mask | bit) >>> 0) : ((mask & ~bit) >>> 0);
+    saveDeviceDraft(device, { group_mask: device.group_mask });
     render();
     persistStateToServer();
   }
@@ -3240,6 +4096,7 @@
     if (!selected.length) return;
     for (const device of selected) {
       device.group_mask = 0;
+      saveDeviceDraft(device, { group_mask: 0 });
     }
     render();
     persistStateToServer();
@@ -3259,7 +4116,7 @@
     }
     device.name = name;
     device.note = note;
-    state.localState.device_drafts[mac] = { name, note };
+    saveDeviceDraft(device, { name, note, group_mask: device.group_mask });
     await persistStateToServer();
     render();
     logDebug(`保存设备 | ${mac} = ${name}${note ? ` / ${note}` : ''}`);
@@ -3301,6 +4158,7 @@
   }
 
   async function persistGroupState() {
+    state.localState.controller_groups = normalizeGroups(controllerGroupSlots(), state.localState.controller_groups || buildDefaultGroups());
     await persistStateToServer();
     const ok = await persistDraftToServer();
     return ok;
@@ -3319,6 +4177,7 @@
       const mask = normalizeNumber(device.group_mask, 0) >>> 0;
       if ((mask & bit) !== 0) {
         device.group_mask = (mask & ~bit) >>> 0;
+        saveDeviceDraft(device, { group_mask: device.group_mask });
         deviceCount++;
       }
     }
@@ -3577,7 +4436,7 @@
         timeoutMs: 8000
       });
       logDebug('扫描设备 | 已发送 DISCOVER');
-      await sleep(700);
+      await sleep(1200);
       await loadFromController();
     } catch (err) {
       logDebug(`扫描设备失败 | ${err.message}`);
@@ -3728,7 +4587,12 @@
       case 'signal_rssi_threshold':
         preset.feature_ui = preset.feature_ui && typeof preset.feature_ui === 'object' ? preset.feature_ui : {};
         preset.feature_ui.signal_ui = preset.feature_ui.signal_ui && typeof preset.feature_ui.signal_ui === 'object' ? preset.feature_ui.signal_ui : {};
-        preset.feature_ui.signal_ui.trigger_rssi_threshold = normalizeNumber(value, -10);
+        preset.feature_ui.signal_ui.trigger_rssi_threshold = normalizeNumber(value, DEFAULT_TRIGGER_RSSI);
+        break;
+      case 'signal_compare':
+        preset.feature_ui = preset.feature_ui && typeof preset.feature_ui === 'object' ? preset.feature_ui : {};
+        preset.feature_ui.signal_ui = preset.feature_ui.signal_ui && typeof preset.feature_ui.signal_ui === 'object' ? preset.feature_ui.signal_ui : {};
+        preset.feature_ui.signal_ui.trigger_compare = triggerCompareValue(value);
         break;
       case 'signal_hold_ms':
         preset.feature_ui = preset.feature_ui && typeof preset.feature_ui === 'object' ? preset.feature_ui : {};
@@ -3875,10 +4739,17 @@
   }
 
   async function prepareRoom(room = currentRoom(), { force = false } = {}) {
+    if (state.busy.publish || state.preparingRoomId) {
+      logDebug('设备预备正在进行，已忽略重复点击');
+      return false;
+    }
     if (!room) return false;
     if (room.status === 'running') {
       alert('请先停止进行中的游戏，再进行设备预备。');
       return false;
+    }
+    if (!force) {
+      return openRoomPrepareModal(room);
     }
     const { issues } = validateRoomReady(room);
     if (issues.length) {
@@ -3890,29 +4761,15 @@
       render();
       return false;
     }
-    const audit = roomPreparationAudit(room);
-    if (audit.offlineDevices.length && !force) {
-      state.roomPrepareModal = {
-        roomId: room.id,
-        roomName: room.name || '未命名房间',
-        offlineDevices: audit.offlineDevices.map((item) => ({
-          mac: String(item.device?.mac || ''),
-          name: String(item.device?.name || ''),
-          groups: Array.isArray(item.groups) ? item.groups.slice() : [],
-          rssi: normalizeNumber(item.device?.rssi, 0),
-          seen_ms: normalizeNumber(item.device?.seen_ms, 0)
-        }))
-      };
-      renderDialogs();
-      return false;
-    }
     try {
+      state.preparingRoomId = room.id;
       setBusy('publish', true);
       const saved = await persistDraftToServer();
       if (!saved) return false;
+      showRuntimeWarnings(buildControllerPayload());
       await requestJson('/api/publish', {
         method: 'POST',
-        timeoutMs: 20000,
+        timeoutMs: 60000,
         body: JSON.stringify({ source: 'ui_rebuild_room_prepare', room_id: room.id })
       });
       const now = nowIso();
@@ -3926,7 +4783,11 @@
       upsertRoom(room, { activate: true });
       state.roomPrepareModal = null;
       await persistStateToServer();
-      await loadFromController();
+      try {
+        await loadFromController();
+      } catch (refreshErr) {
+        logDebug(`设备预备后刷新控制端状态失败 | ${refreshErr.message}`);
+      }
       logDebug(`设备预备完成 | ${room.name}`);
       render();
       return true;
@@ -3941,12 +4802,107 @@
       render();
       return false;
     } finally {
+      state.preparingRoomId = '';
       setBusy('publish', false);
     }
   }
 
   async function publishRoom(room = currentRoom()) {
     return prepareRoom(room, { force: true });
+  }
+
+  async function testRoomTriggerEffects(room = currentRoom()) {
+    if (state.busy.publish || state.busy.testEffect || state.preparingRoomId) {
+      logDebug('测试效果正在进行，已忽略重复点击');
+      return false;
+    }
+    if (!room) return false;
+    const { issues } = validateRoomReady(room);
+    if (issues.length) {
+      alert(issues[0]);
+      return false;
+    }
+    try {
+      state.preparingRoomId = room.id;
+      setBusy('testEffect', true);
+      const saved = await persistDraftToServer();
+      if (!saved) return false;
+      showRuntimeWarnings(buildControllerPayload());
+      await requestJson('/api/publish', {
+        method: 'POST',
+        timeoutMs: 60000,
+        body: JSON.stringify({ source: 'ui_rebuild_room_test_effect', room_id: room.id })
+      });
+      const now = nowIso();
+      room.status = 'published';
+      room.published_at = now;
+      room.publish_result = { ok: true, published_at: now, controller: state.controllerBase || '/api/controller', test_effect: true };
+      room.started_at = '';
+      room.ended_at = '';
+      room.updated_at = now;
+      updateRoomDraftSummary(room);
+      upsertRoom(room, { activate: true });
+      await persistStateToServer();
+      await requestJson(`/api/controller/cmd?name=TEST_EFFECT&t=${Date.now()}`, {
+        method: 'GET',
+        timeoutMs: 15000
+      });
+      try {
+        await loadFromController();
+      } catch (refreshErr) {
+        logDebug(`测试效果后刷新控制端状态失败 | ${refreshErr.message}`);
+      }
+      logDebug(`测试效果已发送 | ${room.name}`);
+      renderDialogs();
+      render();
+      return true;
+    } catch (err) {
+      logDebug(`测试效果失败 | ${err.message}`);
+      alert(`测试效果失败：${err.message}`);
+      renderDialogs();
+      render();
+      return false;
+    } finally {
+      state.preparingRoomId = '';
+      setBusy('testEffect', false);
+    }
+  }
+
+  async function stopRoomTestEffects(room = currentRoom()) {
+    if (state.busy.stopEffect) {
+      logDebug('停止测试正在进行，已忽略重复点击');
+      return false;
+    }
+    try {
+      setBusy('stopEffect', true);
+      await requestJson(`/api/controller/cmd?name=STOP&t=${Date.now()}`, {
+        method: 'GET',
+        timeoutMs: 12000
+      });
+      if (room) {
+        room.updated_at = nowIso();
+        updateRoomDraftSummary(room);
+        upsertRoom(room, { activate: true });
+        await persistStateToServer();
+      }
+      try {
+        await loadFromController();
+      } catch (refreshErr) {
+        logDebug(`停止测试后刷新控制端状态失败 | ${refreshErr.message}`);
+      }
+      logDebug(`停止测试/熄灭已发送 | ${room?.name || '当前房间'}`);
+      renderDialogs();
+      render();
+      return true;
+    } catch (err) {
+      logDebug(`停止测试失败 | ${err.message}`);
+      alert(`停止测试失败：${err.message}`);
+      renderDialogs();
+      render();
+      return false;
+    } finally {
+      setBusy('stopEffect', false);
+    }
   }
 
   function beginRoomStartCountdown(room = currentRoom()) {
@@ -4049,10 +5005,16 @@
         if (!isSoftStopDisconnectError(err)) throw err;
         logDebug(`停止游戏收到代理断连响应，按成功处理 | ${room.name}`);
       }
+      try {
+        await loadFromController();
+      } catch (refreshErr) {
+        logDebug(`停止后刷新控制端状态失败 | ${refreshErr.message}`);
+      }
       room.status = 'ended';
       room.ended_at = nowIso();
       room.updated_at = nowIso();
       upsertRoom(room, { activate: true });
+      const runtimeSummary = roomRuntimeSummary(room);
       const record = {
         schema: 1,
         type: 'room_session',
@@ -4075,6 +5037,35 @@
         trigger_effect_id: String(room.trigger_effect_id || ''),
         effect_rules: Array.isArray(room.effect_rules) ? clone(room.effect_rules) : [],
         scoring: room.scoring && typeof room.scoring === 'object' ? clone(room.scoring) : {},
+        score_total: runtimeSummary.score_total,
+        runtime_room_hash: runtimeSummary.roomHash,
+        runtime_discoveries: runtimeSummary.discoveries.map((event) => ({
+          room: event.room,
+          self_idx: event.self_idx,
+          peer_idx: event.peer_idx,
+          self_mac: event.self_mac,
+          peer_mac: event.peer_mac,
+          self_group_mask: event.self_group_mask,
+          peer_group_mask: event.peer_group_mask,
+          rssi: event.rssi,
+          event_ms: event.event_ms,
+          line: event.line
+        })),
+        runtime_events: runtimeSummary.events.map((event) => ({
+          room: event.room,
+          self_idx: event.self_idx,
+          peer_idx: event.peer_idx,
+          self_mac: event.self_mac,
+          peer_mac: event.peer_mac,
+          self_group_mask: event.self_group_mask,
+          peer_group_mask: event.peer_group_mask,
+          rssi: event.rssi,
+          event_ms: event.event_ms
+        })),
+        runtime_scoreboard: {
+          source: runtimeSummary.by_source.map((item) => ({ idx: item.idx, label: item.label, count: item.count })),
+          source_groups: runtimeSummary.by_source_group.map((item) => ({ label: item.label, count: item.count }))
+        },
         notes: room.notes || '',
         updated_at: nowIso()
       };
@@ -4086,6 +5077,8 @@
       await persistStateToServer();
       persistRecordsCache();
       logDebug(`结束游戏 | ${room.name} / ${record.duration}`);
+      state.roomFinalizeModal = roomFinalizeAudit(room);
+      renderDialogs();
       render();
     } catch (err) {
       logDebug(`停止游戏失败 | ${room.name} | ${err.message}`);
@@ -4102,15 +5095,28 @@
       alert('请先停止正在进行的游戏，再删除房间。');
       return;
     }
-    if (!confirm(`确认删除房间「${target.name || '未命名房间'}」？此操作不会删除本局历史记录。`)) return;
+    if (!confirm(`确认删除房间「${target.name || '未命名房间'}」？此操作会同时删除这个房间的历史记录。`)) return;
     const rooms = ensureRoomCollection();
     state.localState.rooms = rooms.filter((room) => room.id !== target.id);
+    state.roomRecords = state.roomRecords.filter((record) => String(record.room_id || '') !== String(target.id));
+    state.localState.room_history = Array.isArray(state.localState.room_history)
+      ? state.localState.room_history.filter((record) => String(record.room_id || '') !== String(target.id))
+      : [];
     const nextActive = state.localState.rooms.find((room) => room.id !== target.id) || state.localState.rooms[0] || null;
     syncActiveRoomAlias(nextActive);
     if (!state.localState.rooms.length) {
       state.selectedTemplateId = state.localState.ui.selected_template_id || builtinTemplates[0].id;
     }
+    try {
+      await requestJson(`/api/local/records?room_id=${encodeURIComponent(String(target.id || ''))}`, {
+        method: 'DELETE',
+        timeoutMs: 8000
+      });
+    } catch (err) {
+      logDebug(`删除历史记录失败 | ${err.message}`);
+    }
     await persistStateToServer();
+    persistRecordsCache();
     logDebug(`删除房间 | ${target.name || target.id}`);
     render();
   }
@@ -4118,6 +5124,7 @@
   async function saveLocalConfig() {
     try {
       setBusy('save', true);
+      await persistStateToServer();
       const ok = await persistDraftToServer();
       if (ok) {
         logDebug('本地草稿已保存到控制端可发布配置文件');
@@ -4129,6 +5136,10 @@
   }
 
   async function publishConfig() {
+    if (state.busy.publish || state.preparingRoomId) {
+      logDebug('发布正在进行，已忽略重复点击');
+      return;
+    }
     const payload = buildControllerPayload();
     const limitError = validateDeviceGroupLimit(payload);
     if (limitError) {
@@ -4137,11 +5148,12 @@
     }
     try {
       setBusy('publish', true);
+      showRuntimeWarnings(payload);
       const saved = await persistDraftToServer();
       if (!saved) return;
       await requestJson('/api/publish', {
         method: 'POST',
-        timeoutMs: 20000,
+        timeoutMs: 60000,
         body: JSON.stringify({ source: 'ui_rebuild' })
       });
       logDebug(`发布成功 | devices=${payload.devices.length} groups=${payload.groups.length}`);
@@ -4262,6 +5274,11 @@
   }
 
   function renderOverview() {
+    const runtime = state.controllerState?.runtime || { running: false, events: [], receiver_stats: [] };
+    const runtimeEvents = Array.isArray(runtime.events)
+      ? runtime.events.filter((event) => runtimeEventMatchesRoomDirection(event, currentRoom()) && normalizeNumber(event?.room, -1) === runtimeRoomHash(currentRoom())).slice(-6).reverse()
+      : [];
+    const runtimeStats = Array.isArray(runtime.receiver_stats) ? runtime.receiver_stats.slice().sort((a, b) => normalizeNumber(a.seen_ms, 999999) - normalizeNumber(b.seen_ms, 999999)).slice(0, 6) : [];
     return `
       <section class="rounded-[16px] border border-[rgba(88,116,154,0.34)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-3.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
         <div class="mb-3 flex items-start justify-between gap-3">
@@ -4274,8 +5291,8 @@
         <div class="grid gap-2.5 [grid-template-columns:repeat(3,minmax(0,1fr))] max-[1680px]:grid-cols-3 max-[1160px]:grid-cols-2">
           <div class="min-h-[98px] rounded-[16px] border border-[rgba(75,169,255,0.35)] bg-[rgba(19,26,38,0.94)] p-2.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
             <div class="mb-2.5 flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(75,169,255,0.18)] text-[#7ec6ff]">${svgIcon('device')}</span><span class="text-[11px] font-bold text-[#c7d5eb]">在线设备</span></div>
-            <div class="text-[23px] font-extrabold leading-none">${onlineCount()} <span class="text-[13px] font-normal text-[#9fb2c8]">/ ${controllerDevices().length}</span></div>
-            <div class="mt-2.5 text-[11px] leading-[1.35] text-[#aabbd1]">当前加载进页面的设备数量</div>
+            <div class="text-[23px] font-extrabold leading-none">${onlineCount()} <span class="text-[13px] font-normal text-[#9fb2c8]">/ ${retainedDeviceCount()}</span></div>
+            <div class="mt-2.5 text-[11px] leading-[1.35] text-[#aabbd1]">在线 / 已扫描保留设备，状态旧了请再次扫描</div>
           </div>
           <div class="min-h-[98px] rounded-[16px] border border-[rgba(240,201,85,0.35)] bg-[rgba(19,26,38,0.94)] p-2.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
             <div class="mb-2.5 flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(240,201,85,0.18)] text-[#f3c44d]">${svgIcon('device')}</span><span class="text-[11px] font-bold text-[#c7d5eb]">未分组设备</span></div>
@@ -4301,6 +5318,43 @@
             <div class="mb-2.5 flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(75,169,255,0.18)] text-[#7ec6ff]">${svgIcon('room')}</span><span class="text-[11px] font-bold text-[#c7d5eb]">当前游戏房间</span></div>
             <div class="text-[19px] font-extrabold leading-[1.08]">${escapeHtml(selectedTemplateName())}</div>
             <div class="mt-2.5 text-[11px] leading-[1.35] text-[#aabbd1]">房间状态：${currentRoomStatusLabel()} · ${formatTime(currentRoom()?.started_at || '') || '未开始'}</div>
+          </div>
+        </div>
+      </section>
+      <section class="mt-3 rounded-[16px] border border-[rgba(88,116,154,0.34)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-3.5 shadow-[0_16px_44px_rgba\(0,0,0,0\.34\)]">
+        <div class="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 class="m-0 text-[16px] font-extrabold leading-none">运行统计</h3>
+            <div class="mt-1 text-[11px] leading-[1.45] text-[#aabbd1]">开始后接收端自主判断，这里只显示控制端收到的事件和摘要。</div>
+          </div>
+          <div class="flex flex-wrap justify-end gap-2">
+            ${makePill(runtime.running ? '运行中' : '未运行', runtime.running)}
+            ${makePill(`事件 ${runtimeEvents.length}`)}
+            ${makePill(`摘要 ${runtimeStats.length}`)}
+          </div>
+        </div>
+        <div class="grid gap-2 lg:grid-cols-2">
+          <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+            <div class="mb-2 text-[11px] font-bold text-[#c7d5eb]">最近找到记录</div>
+            <div class="grid gap-1.5 text-[12px] leading-[1.45] text-[#dbe5f6]">
+              ${runtimeEvents.length ? runtimeEvents.map((event) => `
+                <div class="flex flex-wrap items-center justify-between gap-2 rounded-[12px] bg-[rgba(18,25,36,0.82)] px-2.5 py-2">
+                  <span><b>${escapeHtml(deviceLabelFromRuntime(event, 'self'))}</b> 找到了 <b>${escapeHtml(deviceLabelFromRuntime(event, 'peer'))}</b></span>
+                  <span class="text-[10.5px] text-[#94a9c4]">${escapeHtml(event.rssi)} dBm · ${escapeHtml(formatClockTime(event.event_ms))}</span>
+                </div>
+              `).join('') : '<div class="text-[#8fa4bf]">暂无触发事件。</div>'}
+            </div>
+          </div>
+          <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+            <div class="mb-2 text-[11px] font-bold text-[#c7d5eb]">接收端摘要</div>
+            <div class="grid gap-1.5 text-[12px] leading-[1.45] text-[#dbe5f6]">
+              ${runtimeStats.length ? runtimeStats.map((stat) => `
+                <div class="flex flex-wrap items-center justify-between gap-2 rounded-[12px] bg-[rgba(18,25,36,0.82)] px-2.5 py-2">
+                  <span><b>${escapeHtml(deviceLabelByIndex(stat.self_idx ?? deviceByMac(stat.self_mac)?.idx ?? -1))}</b> 已见 ${escapeHtml(stat.seen_count)} / 已找到 ${escapeHtml(stat.found_count)}</span>
+                  <span class="text-[10.5px] text-[#94a9c4]">${escapeHtml(formatAgo(stat.seen_ms))}</span>
+                </div>
+              `).join('') : '<div class="text-[#8fa4bf]">暂无摘要。接收端运行后每 2 分钟补发一次。</div>'}
+            </div>
           </div>
         </div>
       </section>
@@ -4339,6 +5393,7 @@
   function renderTabs() {
     const tabs = [
       ['overview', '总览'],
+      ['history', '历史数据库'],
       ['devices', '设备'],
       ['groups', '分组'],
       ['effects', '灯效库'],
@@ -4355,6 +5410,9 @@
         <div class="grid gap-0">
           <section class="p-3.5" data-page="overview" style="display:${state.activeTab === 'overview' ? 'block' : 'none'}">
             ${renderOverview()}
+          </section>
+          <section class="p-3.5" data-page="history" style="display:${state.activeTab === 'history' ? 'block' : 'none'}">
+            ${renderHistoryPage()}
           </section>
           <section class="p-3.5" data-page="devices" style="display:${state.activeTab === 'devices' ? 'block' : 'none'}">
             ${renderDevicesPage()}
@@ -4417,7 +5475,7 @@
           <div class="pill-actions">
             <label class="checkbox-line">
               <input type="checkbox" data-action="toggle-show-offline" ${state.localState?.ui?.show_offline_devices ? 'checked' : ''}>
-              显示离线设备
+              显示未扫描/离线设备
             </label>
             <button class="ghost-btn" type="button" data-action="clear-selected-groups">${svgIcon('trash')}取消所选设备分组</button>
             <button class="ghost-btn" type="button" data-action="clear-selection">${svgIcon('refresh')}清空选择</button>
@@ -4431,6 +5489,8 @@
     const idx = normalizeNumber(device.idx, 0);
     const mac = String(device.mac || '');
     const online = isDeviceOnline(device);
+    const retained = isDeviceScanRetained(device);
+    const statusLabel = deviceScanStatusLabel(device);
     const editing = state.editingMac === mac;
     const name = deviceDisplayName(device);
     const note = deviceDraftNote(device);
@@ -4438,7 +5498,7 @@
     const groupIds = visibleGroupIdsForDevice(device);
     const draftName = editing ? state.editingDraftName : name;
     const draftNote = editing ? state.editingDraftNote : note;
-    const rowClass = [selected ? 'is-selected' : '', online ? 'is-online' : 'is-offline'].filter(Boolean).join(' ');
+    const rowClass = [selected ? 'is-selected' : '', online ? 'is-online' : retained ? 'is-stale' : 'is-offline'].filter(Boolean).join(' ');
     const groupCells = controllerGroups().map((group) => {
       const checked = groupIds.includes(group.id);
       return `
@@ -4463,7 +5523,7 @@
                 ${editing
                   ? `<input class="name-editor" data-role="device-name-input" data-mac="${escapeHtml(mac)}" value="${escapeHtml(draftName)}">`
                   : `<div>${escapeHtml(name)}</div>`}
-                <div class="status-line" style="margin-top:4px"><span class="tiny-dot" style="background:${online ? '#42d96f' : '#f0c955'}"></span>${online ? '在线' : '离线'} · ${normalizeNumber(device.group_mask, 0) ? `${groupIds.length} 组` : '未分组'}</div>
+                <div class="status-line" style="margin-top:4px"><span class="tiny-dot" style="background:${online ? '#42d96f' : retained ? '#f0c955' : '#7c8798'}"></span>${escapeHtml(statusLabel)} · ${normalizeNumber(device.group_mask, 0) ? `${groupIds.length} 组` : '未分组'}</div>
                 ${editing
                   ? `<textarea class="name-editor" data-role="device-note-input" data-mac="${escapeHtml(mac)}" style="min-height:56px;resize:vertical;margin-top:6px" placeholder="备注">${escapeHtml(draftNote)}</textarea>`
                   : `<div class="device-note" style="margin-top:4px;color:#8ea1bc;font-size:12px;line-height:1.35">${escapeHtml(note || '无备注')}</div>`}
@@ -4479,16 +5539,127 @@
           </div>
         </td>
         <td>${escapeHtml(mac)}</td>
-        <td>${online ? `<span class="rssi">${normalizeNumber(device.rssi, 0)} dBm</span><span class="signal-icon" style="color:${normalizeNumber(device.rssi, 0) > -50 ? '#57da78' : '#f0c955'}"><span></span><span></span><span></span><span></span></span>` : '<span style="color:#8ea1bc">离线</span>'}</td>
+        <td>${retained ? `<span class="rssi">${normalizeNumber(device.rssi, 0)} dBm</span><span class="signal-icon" style="color:${online && normalizeNumber(device.rssi, 0) > -50 ? '#57da78' : '#f0c955'}"><span></span><span></span><span></span><span></span></span>${online ? '' : '<span style="display:block;margin-top:3px;color:#8ea1bc;font-size:11px">上次 RSSI</span>'}` : '<span style="color:#8ea1bc">离线</span>'}</td>
         <td>${escapeHtml(formatAgo(device.seen_ms))}</td>
         <td>
           <div class="device-name-actions">
-            ${online ? `<button class="table-btn" type="button" data-action="identify-device" data-idx="${idx}">点名</button>` : ''}
-            ${online ? `<button class="table-btn save" type="button" data-action="save-device-row" data-mac="${escapeHtml(mac)}">保存设备</button>` : ''}
+            ${retained ? `<button class="table-btn" type="button" data-action="identify-device" data-idx="${idx}">点名</button>` : ''}
+            ${retained ? `<button class="table-btn save" type="button" data-action="save-device-row" data-mac="${escapeHtml(mac)}">保存设备</button>` : ''}
           </div>
         </td>
         <td><div class="group-cell">${groupCells || '<span style="color:#8ea1bc">无可选分组</span>'}</div></td>
       </tr>
+    `;
+  }
+
+  function renderHistoryPage() {
+    const records = historySessionRecords();
+    const players = historyPlayerSummary(records);
+    const groups = historyGroupSummary(records);
+    const discoveries = historyDiscoveryRows(records);
+    const totalScore = records.reduce((sum, record) => sum + normalizeNumber(record?.score_total, Array.isArray(record?.runtime_discoveries) ? record.runtime_discoveries.length : 0), 0);
+    const latestSession = records[0] || null;
+    const playerRows = players.slice(0, 12).map((item, index) => `
+      <tr>
+        <td>${escapeHtml(index + 1)}</td>
+        <td><b>${escapeHtml(item.label)}</b><div style="margin-top:3px;color:#8ea3bf;font-size:11px">最近：${escapeHtml(item.last_room || '无')}</div></td>
+        <td>${escapeHtml(item.score)}</td>
+        <td>${escapeHtml(item.sessions)}</td>
+        <td>${escapeHtml(formatTime(item.last_time))}</td>
+      </tr>
+    `).join('');
+    const sessionRows = records.slice(0, 16).map((record) => `
+      <tr>
+        <td><b>${escapeHtml(record.room_name || '未命名房间')}</b><div style="margin-top:3px;color:#8ea3bf;font-size:11px">${escapeHtml(record.template_name || record.sense_mode || '未设置')}</div></td>
+        <td>${escapeHtml(formatTime(record.started_at))}</td>
+        <td>${escapeHtml(formatTime(record.ended_at || record.updated_at))}</td>
+        <td>${escapeHtml(record.duration || formatDuration(record.started_at, record.ended_at))}</td>
+        <td>${escapeHtml(normalizeNumber(record.score_total, Array.isArray(record.runtime_discoveries) ? record.runtime_discoveries.length : 0))}</td>
+      </tr>
+    `).join('');
+    const groupRows = groups.slice(0, 8).map((item, index) => `
+      <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(13,21,34,0.78)] px-4 py-3">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="text-[11px] font-black tracking-[0.16em] text-[#8ea3bf]">GROUP #${escapeHtml(index + 1)}</div>
+            <div class="mt-1 text-[15px] font-extrabold text-white">${escapeHtml(item.label)}</div>
+            <div class="mt-1 text-[11px] text-[#8ea3bf]">参与场次 ${escapeHtml(item.sessions)}</div>
+          </div>
+          <div class="text-right text-[28px] font-black text-[#ffd166]">${escapeHtml(item.score)}</div>
+        </div>
+      </div>
+    `).join('');
+    const discoveryRows = discoveries.slice(0, 12).map((item) => `
+      <div class="rounded-[14px] border border-[rgba(88,116,154,0.16)] bg-[rgba(8,13,22,0.72)] px-3 py-2.5">
+        <div class="text-[12px] font-extrabold text-white">${escapeHtml(item.line || '发现记录')}</div>
+        <div class="mt-1 text-[10.5px] leading-[1.45] text-[#8ea3bf]">${escapeHtml(item.room_name)} · ${escapeHtml(formatClockTime(item.event_ms))} · RSSI ${escapeHtml(item.rssi)} dBm</div>
+      </div>
+    `).join('');
+    return `
+      <div class="page-section-head">
+        <div>
+          <h3>历史数据库</h3>
+          <p>这里读取本地 JSONL 场次库，当前场次和历史场次分开统计，用来评估玩家长期表现。</p>
+        </div>
+        <div class="page-actions">
+          <button class="ghost-btn ${state.busy.records ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="refresh-records" ${state.busy.records ? 'disabled' : ''}>${svgIcon('refresh')}${state.busy.records ? '刷新中...' : '刷新历史'}</button>
+        </div>
+      </div>
+      <div class="grid gap-3 md:grid-cols-4">
+        <div class="rounded-[18px] border border-[rgba(75,169,255,0.28)] bg-[rgba(15,24,38,0.88)] p-4">
+          <div class="text-[11px] font-bold text-[#9fb2c8]">历史场次</div>
+          <div class="mt-2 text-[30px] font-black text-white">${escapeHtml(records.length)}</div>
+        </div>
+        <div class="rounded-[18px] border border-[rgba(93,225,143,0.28)] bg-[rgba(15,24,38,0.88)] p-4">
+          <div class="text-[11px] font-bold text-[#9fb2c8]">累计发现</div>
+          <div class="mt-2 text-[30px] font-black text-[#75eda4]">${escapeHtml(totalScore)}</div>
+        </div>
+        <div class="rounded-[18px] border border-[rgba(240,201,85,0.28)] bg-[rgba(15,24,38,0.88)] p-4">
+          <div class="text-[11px] font-bold text-[#9fb2c8]">有积分玩家</div>
+          <div class="mt-2 text-[30px] font-black text-[#ffd166]">${escapeHtml(players.length)}</div>
+        </div>
+        <div class="rounded-[18px] border border-[rgba(160,111,255,0.28)] bg-[rgba(15,24,38,0.88)] p-4">
+          <div class="text-[11px] font-bold text-[#9fb2c8]">最近场次</div>
+          <div class="mt-2 truncate text-[18px] font-black text-white">${escapeHtml(latestSession?.room_name || '暂无')}</div>
+          <div class="mt-1 text-[11px] text-[#8ea3bf]">${escapeHtml(formatTime(latestSession?.ended_at || latestSession?.updated_at))}</div>
+        </div>
+      </div>
+      <div class="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+        <section class="table-panel">
+          <div class="table-title"><div><h3>玩家长期排行</h3><p>按历史场次累计发现次数排序。</p></div></div>
+          <table>
+            <thead><tr><th>排名</th><th>玩家</th><th>累计积分</th><th>有效场次</th><th>最近时间</th></tr></thead>
+            <tbody>${playerRows || '<tr><td colspan="5" style="color:#8ea3bf">暂无玩家积分记录。结束一局游戏后这里会自动出现。</td></tr>'}</tbody>
+          </table>
+        </section>
+        <section class="table-panel">
+          <div class="table-title"><div><h3>房间场次</h3><p>每次开始/结束会形成一条独立场次。</p></div></div>
+          <table>
+            <thead><tr><th>房间</th><th>开始</th><th>结束</th><th>时长</th><th>积分</th></tr></thead>
+            <tbody>${sessionRows || '<tr><td colspan="5" style="color:#8ea3bf">暂无历史场次。</td></tr>'}</tbody>
+          </table>
+        </section>
+      </div>
+      <div class="mt-3 grid gap-3 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+        <section class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(13,21,34,0.82)] p-4">
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 class="m-0 text-[15px] font-extrabold text-white">小组累计</h3>
+              <p class="mt-1 text-[11px] text-[#9fb2c8]">用于双人组/共享组的长期统计。</p>
+            </div>
+          </div>
+          <div class="grid gap-2">${groupRows || '<div class="notice">暂无小组积分。</div>'}</div>
+        </section>
+        <section class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(13,21,34,0.82)] p-4">
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 class="m-0 text-[15px] font-extrabold text-white">最近发现明细</h3>
+              <p class="mt-1 text-[11px] text-[#9fb2c8]">保留“谁发现了谁”的原始播报。</p>
+            </div>
+          </div>
+          <div class="grid gap-2">${discoveryRows || '<div class="notice">暂无发现明细。</div>'}</div>
+        </section>
+      </div>
     `;
   }
 
@@ -4499,7 +5670,7 @@
       <div class="page-section-head">
         <div>
           <h3>设备</h3>
-          <p>这里负责命名、备注、筛选、批量分组和点名。默认隐藏离线设备，先看未分组设备，避免漏掉新接入设备。</p>
+          <p>这里负责命名、备注、筛选、批量分组和点名。扫描过的设备会保留显示，状态旧了请再次扫描刷新。</p>
         </div>
         <div class="pill-actions">
           ${makePill(`总数 ${controllerDevices().length}`)}
@@ -4510,7 +5681,7 @@
       <div class="page-section-body" style="display:grid;grid-template-columns:minmax(0,1.7fr) ${collapsed ? '58px' : '360px'};gap:14px;align-items:start">
         <div class="table-panel" style="padding:14px 14px 16px">
           <h4 style="margin:0 0 8px;font-size:17px;">设备列表</h4>
-          <div style="color:#9db0c8;font-size:14px;margin-bottom:10px">默认隐藏离线设备，备注和名称会跟随本地草稿保存，方便你在大规模设备里快速区分。</div>
+          <div style="color:#9db0c8;font-size:14px;margin-bottom:10px">默认隐藏从未扫描或长期离线的设备；最近扫描过的设备会保留，备注和名称会跟随本地草稿保存。</div>
           ${renderDevicesToolbar()}
           <div style="overflow:auto">
             <table>
@@ -4731,17 +5902,24 @@
                 <div class="field"><label>感应方式</label><select class="fake-select" data-role="feature-preset-field" data-preset-field="sense_mode"><option value="ring" ${String(selected.feature_ui?.sense_mode || 'ring') === 'ring' ? 'selected' : ''}>轮巡</option><option value="shared" ${String(selected.feature_ui?.sense_mode || '') === 'shared' ? 'selected' : ''}>组共享</option><option value="response" ${String(selected.feature_ui?.sense_mode || '') === 'response' ? 'selected' : ''}>纯响应</option></select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">轮巡：每个组里的人都可以依次找到，找到后先停留约 2 秒再触发灯效；触发后本人不能再次触发。组共享：每个组里只要有一个人找到，先停留约 2 秒再触发灯效；触发后本组所有人都不能再次触发。纯响应：任何人都可以找到，先停留约 2 秒再触发灯效；触发后仍然可以重复触发。</div></div>
                 <div class="field xl:col-span-2">
                   <label>触发条件</label>
-                  <div class="grid gap-2 md:grid-cols-2">
+                  <div class="grid gap-2 md:grid-cols-3">
+                    <div class="field">
+                      <label>比较方向</label>
+                      <select class="fake-select" data-role="feature-preset-field" data-preset-field="signal_compare">
+                        <option value="gte" ${triggerCompareValue(selected.feature_ui?.signal_ui?.trigger_compare) === 'gte' ? 'selected' : ''}>大于等于</option>
+                        <option value="lte" ${triggerCompareValue(selected.feature_ui?.signal_ui?.trigger_compare) === 'lte' ? 'selected' : ''}>小于等于</option>
+                      </select>
+                    </div>
                     <div class="field">
                       <label>触发信号强度（dBm）</label>
-                      <input class="fake-input" data-role="feature-preset-field" data-preset-field="signal_rssi_threshold" type="number" step="1" value="${escapeHtml(selected.feature_ui?.signal_ui?.trigger_rssi_threshold ?? -10)}">
+                      <input class="fake-input" data-role="feature-preset-field" data-preset-field="signal_rssi_threshold" type="number" step="1" value="${escapeHtml(selected.feature_ui?.signal_ui?.trigger_rssi_threshold ?? DEFAULT_TRIGGER_RSSI)}">
                     </div>
                     <div class="field">
                       <label>触发停留时间（ms）</label>
                       <input class="fake-input" data-role="feature-preset-field" data-preset-field="signal_hold_ms" type="number" step="50" value="${escapeHtml(selected.feature_ui?.signal_ui?.trigger_hold_ms ?? 2000)}">
                     </div>
                   </div>
-                  <div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">当源组和目标组的信号都达到阈值并持续保持到设定时间后才触发。默认阈值 -10 dBm，默认停留 2000 ms；如果你想更严格，可以把阈值再调低一些。</div>
+                  <div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">大于等于 -25 表示越近越容易触发；小于等于用于弱信号/远离类玩法。默认阈值 -25 dBm，默认停留 2000 ms。</div>
                 </div>
                 <div class="field"><label>空闲灯效</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="idle_effect_id" value="${escapeHtml(selected.feature_ui?.idle_effect_id || '')}"></div>
                 <div class="field"><label>触发灯效</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="trigger_effect_id" value="${escapeHtml(selected.feature_ui?.trigger_effect_id || '')}"></div>
@@ -5342,7 +6520,7 @@
         </div>
         ${metaRow}
         ${summaryGrid}
-        ${compact ? '' : `<div class="mt-2 text-[10.5px] leading-[1.45] text-[#8ea3bf]">触发条件：信号强度 ≥ ${escapeHtml(normalizeNumber(featureSignal.trigger_rssi_threshold, -10))} dBm，持续 ${escapeHtml(normalizeNumber(featureSignal.trigger_hold_ms, 2000))} ms 后触发。</div>`}
+        ${compact ? '' : `<div class="mt-2 text-[10.5px] leading-[1.45] text-[#8ea3bf]">触发条件：${escapeHtml(triggerConditionText(featureSignal.trigger_compare, featureSignal.trigger_rssi_threshold, featureSignal.trigger_hold_ms))} 后触发。</div>`}
         ${actionRow ? `<div class="mt-3 flex flex-wrap gap-2">${actionRow}</div>` : ''}
       </div>
     `;
@@ -5377,6 +6555,8 @@
       : '未设置';
     const roomCountdown = roomCountdownActive(room?.id);
     const roomCountdownRemainingText = roomCountdownRemaining(room?.id);
+    const prepareBusy = !!state.busy.publish || !!state.preparingRoomId;
+    const runtimeSummary = roomRuntimeSummary(room);
     const roomStatusClass = roomCountdown
       ? 'border-[rgba(245,201,95,0.42)] bg-[rgba(42,32,12,0.96)] text-[#ffd88a]'
       : room?.status === 'running'
@@ -5392,7 +6572,7 @@
           const itemValidation = validateRoomReady(item);
           const itemCountdown = roomCountdownActive(item.id);
           const itemCountdownRemaining = roomCountdownRemaining(item.id);
-          const canItemPrepare = item.status !== 'running' && itemValidation.issues.length === 0 && !itemCountdown;
+          const canItemPrepare = item.status !== 'running' && itemValidation.issues.length === 0 && !itemCountdown && !prepareBusy;
           const canItemStart = item.status === 'published' && !itemCountdown;
           const canItemStop = item.status === 'running';
           const canItemDelete = item.status !== 'running';
@@ -5426,6 +6606,9 @@
           const itemScoreText = item.scoring && typeof item.scoring === 'object' && item.scoring.mode
             ? String(item.scoring.mode)
             : '未设置';
+          const itemDiscoveryLine = Array.isArray(item.runtime_discoveries) && item.runtime_discoveries.length
+            ? String(item.runtime_discoveries[0]?.line || '')
+            : '';
           return `
             <article class="${[
               'rounded-[18px] border p-4 transition',
@@ -5444,7 +6627,7 @@
                 <div class="flex flex-wrap justify-end gap-2">
                   <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px" type="button" data-action="select-room" data-room-id="${escapeHtml(item.id)}">${svgIcon('check')}设为当前</button>
                   <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px" type="button" data-action="room-open-wizard" data-room-id="${escapeHtml(item.id)}">${svgIcon('edit')}${item.status === 'draft' ? '继续编辑' : '查看'}</button>
-                  <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border-0 bg-gradient-to-b from-[#4caeff] to-[#428fe0] px-3.5 text-[11px] font-extrabold whitespace-nowrap text-white transition hover:brightness-105 active:translate-y-px ${canItemPrepare ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="prepare-room" data-room-id="${escapeHtml(item.id)}" ${canItemPrepare ? '' : 'disabled'}>${svgIcon('save')}${item.status === 'published' ? '重新预备' : '设备预备'}</button>
+                  <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border-0 bg-gradient-to-b from-[#4caeff] to-[#428fe0] px-3.5 text-[11px] font-extrabold whitespace-nowrap text-white transition hover:brightness-105 active:translate-y-px ${canItemPrepare ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="prepare-room" data-room-id="${escapeHtml(item.id)}" ${canItemPrepare ? '' : 'disabled'}>${svgIcon('save')}${prepareBusy && String(state.preparingRoomId || '') === String(item.id || '') ? '预备中...' : item.status === 'published' ? '重新预备' : '设备预备'}</button>
                   ${itemCountdown
                     ? `<button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(245,201,95,0.34)] bg-[rgba(42,32,12,0.96)] px-3 text-[11px] font-bold whitespace-nowrap text-[#ffd88a] transition hover:brightness-105 active:translate-y-px" type="button" data-action="cancel-room-countdown">${svgIcon('pause')}取消倒计时</button>`
                     : `<button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border-0 bg-gradient-to-b from-[#62d89a] to-[#48bb7c] px-3.5 text-[11px] font-extrabold whitespace-nowrap text-white transition hover:brightness-105 active:translate-y-px ${canItemStart ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="start-room" data-room-id="${escapeHtml(item.id)}" ${canItemStart ? '' : 'disabled'}>${svgIcon('play')}开始游戏</button>`}
@@ -5480,19 +6663,19 @@
               </div>
 
               <div class="mt-3 rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.55] text-[#9fb2c8]">
-                ${escapeHtml(item.notes || '这里记录本局的开始、结束和房间摘要。')}
+                ${escapeHtml(item.notes || '这里记录本局的开始、结束和房间摘要。')}${itemDiscoveryLine ? `<div class="mt-1 text-[#cfe4ff]">${escapeHtml(itemDiscoveryLine)}</div>` : ''}
               </div>
             </article>
           `;
         }).join('')
       : '<div class="rounded-[18px] border border-dashed border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.86)] px-4 py-6 text-[12px] leading-[1.6] text-[#9fb2c8]">当前还没有房间。点击“向导开局”或在模板页使用“创建房间”开始一个新局。</div>';
     return `
-      <div class="grid gap-3 xl:grid-cols-[minmax(0,1.28fr)_minmax(320px,0.72fr)]">
-        <section class="rounded-[20px] border border-[rgba(88,116,154,0.26)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
+      <div class="grid gap-3 xl:grid-cols-[minmax(0,1.72fr)_minmax(300px,0.48fr)]">
+        <section class="order-1 rounded-[20px] border border-[rgba(88,116,154,0.26)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0">
               <div class="text-[17px] font-extrabold leading-none text-white">房间列表</div>
-              <div class="mt-1.5 text-[12px] leading-[1.5] text-[#aabbd1]">同一种模板可以同时开多个房间，只是设备组不同。这里显示的是本地所有草稿、已预备、进行中和已结束房间。</div>
+              <div class="mt-1.5 text-[12px] leading-[1.5] text-[#aabbd1]">这里只显示摘要信息，方便快速切换房间。详细的实时积分和发现记录在左侧大屏。</div>
             </div>
             <div class="flex flex-wrap justify-end gap-2">
               <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px" type="button" data-action="toggle-room-sort">${svgIcon('arrow')}${sortOrder === 'asc' ? '正序' : '倒序'}</button>
@@ -5503,11 +6686,11 @@
             ${roomCards}
           </div>
         </section>
-        <aside class="rounded-[20px] border border-[rgba(88,116,154,0.26)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
+        <aside class="order-2 rounded-[20px] border border-[rgba(88,116,154,0.26)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0">
-              <div class="text-[17px] font-extrabold leading-none text-white">当前房间</div>
-              <div class="mt-1.5 text-[12px] leading-[1.5] text-[#aabbd1]">这是当前选中的房间实例。开始前请确认模板、源组和目标组。</div>
+              <div class="text-[17px] font-extrabold leading-none text-white">当前游戏大屏</div>
+              <div class="mt-1.5 text-[12px] leading-[1.5] text-[#aabbd1]">这里显示本局实时积分、组排名和发现记录，触发后会自动刷新。</div>
             </div>
             ${makePill(`步骤 ${wizardState().step + 1}/5`, true)}
           </div>
@@ -5553,7 +6736,7 @@
               </div>
             </div>
             <div class="flex flex-wrap gap-2 pt-1">
-              <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px ${room?.status !== 'running' && validation.issues.length === 0 && !roomCountdown ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="prepare-room" ${room?.status !== 'running' && validation.issues.length === 0 && !roomCountdown ? '' : 'disabled'}>${svgIcon('save')}${room?.status === 'published' ? '重新预备' : '设备预备'}</button>
+              <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px ${room?.status !== 'running' && validation.issues.length === 0 && !roomCountdown && !prepareBusy ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="prepare-room" ${room?.status !== 'running' && validation.issues.length === 0 && !roomCountdown && !prepareBusy ? '' : 'disabled'}>${svgIcon('save')}${prepareBusy ? '预备中...' : room?.status === 'published' ? '重新预备' : '设备预备'}</button>
               ${roomCountdown
                 ? `<button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(245,201,95,0.34)] bg-[rgba(42,32,12,0.96)] px-3 text-[11px] font-bold whitespace-nowrap text-[#ffd88a] transition hover:brightness-105 active:translate-y-px" type="button" data-action="cancel-room-countdown">${svgIcon('pause')}取消倒计时</button>`
                 : `<button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px ${room?.status === 'published' ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="start-room" ${room?.status === 'published' ? '' : 'disabled'}>${svgIcon('play')}开始游戏</button>`}
@@ -5566,49 +6749,660 @@
             <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.55] text-[#99acc5]">
               ${validation.issues.length ? escapeHtml(validation.issues[0]) : roomCountdown ? `正在倒计时 ${roomCountdownRemainingText} 秒，点击取消可回到已预备状态。` : '当前房间配置已满足设备预备和开始条件。'}
             </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.55] text-[#99acc5]">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span>实时得分：<b class="text-white">${escapeHtml(runtimeSummary.score_total)}</b> 次</span>
+                <span>房间哈希：<code>${escapeHtml(runtimeSummary.roomHash)}</code></span>
+              </div>
+              <div class="mt-2 space-y-1">
+                ${runtimeSummary.latest ? `
+                  <div>最近：<b class="text-white">${escapeHtml(deviceLabelFromRuntime(runtimeSummary.latest, 'self'))}</b> 发现 <b class="text-white">${escapeHtml(deviceLabelFromRuntime(runtimeSummary.latest, 'peer'))}</b></div>
+                  <div>分组：<b class="text-white">${escapeHtml(groupLabelFromMask(runtimeSummary.latest.self_group_mask))}</b> → <b class="text-white">${escapeHtml(groupLabelFromMask(runtimeSummary.latest.peer_group_mask))}</b></div>
+                  <div>RSSI：<b class="text-white">${escapeHtml(runtimeSummary.latest.rssi)} dBm</b> · 时间：<b class="text-white">${escapeHtml(formatClockTime(runtimeSummary.latest.event_ms))}</b></div>
+                ` : '<div>暂无触发事件，说明还没有收到满足条件的源/目标信号。</div>'}
+              </div>
+              ${(runtimeSummary.by_source.length || runtimeSummary.by_source_group.length) ? `
+                <div class="mt-2 grid gap-2 md:grid-cols-2">
+                  <div class="rounded-[12px] border border-[rgba(88,116,154,0.14)] bg-[rgba(18,25,36,0.72)] px-2.5 py-2">
+                    <div class="mb-1 text-[10px] font-bold text-[#c7d5eb]">源组积分</div>
+                    ${runtimeSummary.by_source.map((item) => `<div class="text-[10.5px] leading-[1.4] text-[#dbe5f6]"><b class="text-white">${escapeHtml(item.label)}</b>：${escapeHtml(item.count)} 分</div>`).join('')}
+                  </div>
+                  <div class="rounded-[12px] border border-[rgba(88,116,154,0.14)] bg-[rgba(18,25,36,0.72)] px-2.5 py-2">
+                    <div class="mb-1 text-[10px] font-bold text-[#c7d5eb]">组排名</div>
+                    ${runtimeSummary.by_source_group.map((item) => `<div class="text-[10.5px] leading-[1.4] text-[#dbe5f6]"><b class="text-white">${escapeHtml(item.label)}</b>：${escapeHtml(item.count)} 次</div>`).join('')}
+                  </div>
+                </div>
+              ` : ''}
+              <div class="mt-2 rounded-[12px] border border-[rgba(88,116,154,0.14)] bg-[rgba(18,25,36,0.72)] px-2.5 py-2">
+                <div class="mb-1 text-[10px] font-bold text-[#c7d5eb]">发现记录</div>
+                <div class="space-y-1">
+                  ${runtimeSummary.discoveries.length ? runtimeSummary.discoveries.slice(0, 5).map((event) => `<div class="text-[10.5px] leading-[1.45] text-[#dbe5f6]">${escapeHtml(event.line || formatRuntimeDiscovery(event))}</div>`).join('') : '<div class="text-[10.5px] leading-[1.45] text-[#8ea3bf]">暂无发现记录。</div>'}
+                </div>
+              </div>
+            </div>
           </div>
         </aside>
       </div>
     `;
   }
 
-  function renderRoomPage() {
-    return `
-      <div class="page-section-head">
-        <div>
-          <h3>游戏房间</h3>
-          <p>房间是一次实际开局的运行实例。先保存草稿，再做设备预备，最后通过倒计时开始本局。同一种模板可以同时存在多个房间实例。</p>
+  function renderBroadcastRoomPanel() {
+    const rooms = sortedRoomList();
+    const sortOrder = roomSortOrder();
+    const room = currentRoom();
+    const validation = validateRoomReady(room);
+    const roomCountdown = roomCountdownActive(room?.id);
+    const roomCountdownRemainingText = roomCountdownRemaining(room?.id);
+    const prepareBusy = !!state.busy.publish || !!state.preparingRoomId;
+    const runtimeSummary = roomRuntimeSummary(room);
+    const leaderboard = runtimeSummary.by_source.slice().sort((a, b) => b.count - a.count);
+    const groupLeaderboard = runtimeSummary.by_source_group.slice().sort((a, b) => b.count - a.count);
+    const leader = leaderboard[0] || null;
+    const latest = runtimeSummary.latest || null;
+    const sourceText = Array.isArray(room?.source_group_ids) && room.source_group_ids.length
+      ? room.source_group_ids.map((gid) => groupNameById(gid)).join(' / ')
+      : '未选择';
+    const targetText = Array.isArray(room?.target_group_ids) && room.target_group_ids.length
+      ? room.target_group_ids.map((gid) => groupNameById(gid)).join(' / ')
+      : '未选择';
+    const statusText = currentRoomStatusLabel();
+    const broadcastStateClass = room?.status === 'running'
+      ? 'border-[rgba(83,229,147,0.48)] bg-[rgba(16,34,25,0.92)] text-[#9ff2bd]'
+      : room?.status === 'published'
+        ? 'border-[rgba(99,172,255,0.44)] bg-[rgba(18,31,49,0.92)] text-[#cfe4ff]'
+        : roomCountdown
+          ? 'border-[rgba(245,201,95,0.44)] bg-[rgba(42,32,12,0.94)] text-[#ffd88a]'
+          : 'border-[rgba(111,136,170,0.32)] bg-[rgba(15,23,35,0.9)] text-[#d8e5f5]';
+    const canPrepare = room?.status !== 'running' && validation.issues.length === 0 && !roomCountdown && !prepareBusy;
+    const roomCards = rooms.length ? rooms.map((item) => {
+      const active = item.id === activeRoomId();
+      const itemCountdown = roomCountdownActive(item.id);
+      const status = itemCountdown
+        ? `倒计时 ${roomCountdownRemaining(item.id)} 秒`
+        : item.status === 'running'
+          ? '进行中'
+          : item.status === 'published'
+            ? '已预备'
+            : item.status === 'ended'
+              ? '已结束'
+              : '草稿';
+      return `
+        <button class="${[
+          'w-full rounded-[14px] border px-3 py-2.5 text-left transition',
+          active
+            ? 'border-[rgba(125,190,255,0.72)] bg-[rgba(34,54,83,0.98)] shadow-[0_0_0_1px_rgba(125,190,255,0.14)]'
+            : 'border-[rgba(88,116,154,0.2)] bg-[rgba(13,20,31,0.86)] hover:border-[rgba(125,190,255,0.34)]'
+        ].join(' ')}" type="button" data-action="select-room" data-room-id="${escapeHtml(item.id)}">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <div class="truncate text-[12px] font-extrabold text-white">${escapeHtml(item.name || '未命名房间')}</div>
+              <div class="mt-1 truncate text-[10.5px] leading-[1.35] text-[#8fa3bf]">${escapeHtml(item.notes || item.template_name || '无备注')}</div>
+            </div>
+            <span class="shrink-0 rounded-full border border-[rgba(103,130,169,0.24)] bg-[rgba(8,13,21,0.58)] px-2 py-0.5 text-[10px] font-bold text-[#dbe6f8]">${escapeHtml(status)}</span>
+          </div>
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            ${makeChip(`开始 ${escapeHtml(formatTime(item.started_at || item.created_at || item.updated_at))}`, true)}
+            ${makeChip(`分 ${escapeHtml(roomRuntimeSummary(item).score_total)}`)}
+          </div>
+        </button>
+      `;
+    }).join('') : '<div class="rounded-[14px] border border-dashed border-[rgba(88,116,154,0.22)] bg-[rgba(13,20,31,0.8)] px-3 py-5 text-[12px] leading-[1.55] text-[#8fa3bf]">暂无房间。</div>';
+    const scoreRows = leaderboard.length ? leaderboard.map((item, index) => {
+      const medalClass = index === 0
+        ? 'bg-[linear-gradient(180deg,#ffe58a,#f3a51f)] text-[#171007] shadow-[0_0_24px_rgba(255,194,67,0.24)]'
+        : index === 1
+          ? 'bg-[linear-gradient(180deg,#eef4ff,#9fb2c8)] text-[#101820]'
+          : index === 2
+            ? 'bg-[linear-gradient(180deg,#ffbe7b,#b96b38)] text-[#180e08]'
+            : 'bg-[rgba(90,124,165,0.28)] text-[#e8f2ff]';
+      return `
+        <div class="mw-b-score-row grid min-h-[92px] grid-cols-[68px_minmax(0,1fr)_118px] items-center gap-4 rounded-[22px] border border-[rgba(182,205,232,0.18)] bg-[linear-gradient(90deg,rgba(17,26,38,0.98),rgba(9,14,23,0.94))] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <div class="mw-b-rank flex h-16 w-16 items-center justify-center rounded-[20px] ${medalClass} text-[28px] font-black">${index + 1}</div>
+          <div class="min-w-0">
+            <div class="mw-b-player truncate text-[28px] font-black leading-none text-white">${escapeHtml(item.label)}</div>
+            <div class="mt-2 inline-flex rounded-full border border-[rgba(88,222,164,0.22)] bg-[rgba(30,79,57,0.28)] px-3 py-1 text-[11px] font-black text-[#a8f0ca]">源组得分</div>
+          </div>
+          <div class="text-right">
+            <div class="mw-b-score text-[52px] font-black leading-none text-[#fff3c1]">${escapeHtml(item.count)}</div>
+            <div class="mt-1 text-[11px] font-black tracking-[0.18em] text-[#9fb4cf]">SCORE</div>
+          </div>
         </div>
-        <div class="pill-actions">
-          ${makePill('先保存草稿', true)}
-          ${makePill('再设备预备')}
-          ${makePill('开始 / 结束')}
+      `;
+    }).join('') : '<div class="mw-b-empty-large flex min-h-[260px] flex-col items-center justify-center rounded-[26px] border border-[rgba(164,190,220,0.16)] bg-[linear-gradient(180deg,rgba(15,23,36,0.9),rgba(7,12,20,0.9))] text-center text-[28px] font-black leading-[1.25] text-[#d9e7f8]"><div>等待第一条发现</div><div style="margin-top:10px;font-size:14px;line-height:1.4;color:#8298b3;font-weight:800">源组发现目标组后，这里会立刻进入排行榜</div></div>';
+    const groupRows = groupLeaderboard.length ? groupLeaderboard.map((item, index) => `
+      <div class="flex items-center justify-between gap-3 rounded-[18px] border border-[rgba(182,205,232,0.14)] bg-[rgba(12,18,29,0.76)] px-4 py-3">
+        <div class="min-w-0">
+          <div class="truncate text-[18px] font-black text-white">${escapeHtml(item.label)}</div>
+          <div class="mt-1 text-[10px] font-black tracking-[0.16em] text-[#88a4c4]">GROUP #${index + 1}</div>
+        </div>
+        <div class="text-[34px] font-black text-[#fff3c1]">${escapeHtml(item.count)}</div>
+      </div>
+    `).join('') : '<div class="rounded-[18px] border border-[rgba(164,190,220,0.14)] bg-[rgba(9,14,23,0.62)] px-4 py-6 text-[15px] font-black text-[#8298b3]">暂无组排名</div>';
+    const discoveryRows = runtimeSummary.discoveries.length ? runtimeSummary.discoveries.slice(0, 7).map((event, index) => `
+      <div class="rounded-[18px] border border-[rgba(182,205,232,0.14)] bg-[rgba(12,18,29,0.78)] px-4 py-3">
+        <div class="flex items-start gap-3">
+          <div class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[12px] bg-[rgba(72,181,255,0.16)] text-[13px] font-black text-[#8bd1ff]">${index + 1}</div>
+          <div class="min-w-0">
+            <div class="mw-b-discovery-line text-[17px] font-black leading-[1.32] text-white">${escapeHtml(event.line || formatRuntimeDiscovery(event))}</div>
+            <div class="mt-1 text-[11px] font-black tracking-[0.14em] text-[#8fa8c7]">RSSI ${escapeHtml(event.rssi)} dBm</div>
+          </div>
         </div>
       </div>
-      <div class="page-section-body stack-col">
-        ${renderRoomPanel()}
-        <div class="room-panel">
-          <div class="room-toolbar">
-            <div>
-              <div class="room-title">房间历史</div>
-              <div class="room-meta">结束房间时会写入本地 JSONL，便于统计和回放。</div>
-            </div>
-            <button class="ghost-btn" type="button" data-action="refresh-records">${svgIcon('refresh')}刷新记录</button>
-          </div>
-          <div class="group-mini-list">
-            ${state.roomRecords.slice(0, 6).map((record) => `
-              <div class="group-mini-item">
-                <div>
-                  <div class="title">${escapeHtml(record.room_name || record.name || '未命名房间')}</div>
-                  <div class="desc">${escapeHtml(record.template_name || '')} · ${escapeHtml(record.status || 'ended')} · ${escapeHtml(record.duration || formatDuration(record.started_at, record.ended_at))}</div>
+    `).join('') : '<div class="flex min-h-[160px] items-center justify-center rounded-[22px] border border-[rgba(164,190,220,0.14)] bg-[rgba(9,14,23,0.62)] text-[21px] font-black text-[#8298b3]">暂无发现播报</div>';
+    return `
+      <style>
+        .mw-b-layout{display:grid;grid-template-columns:minmax(920px,1fr) 300px;gap:16px;align-items:start;overflow-x:auto}
+        .mw-b-header-grid{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:20px;align-items:stretch}
+        .mw-b-group-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+        .mw-b-title{font-size:56px;line-height:.95;font-weight:900}
+        .mw-b-total-card{width:260px;text-align:right}
+        .mw-b-total-number{font-size:104px;line-height:.82;font-weight:900}
+        .mw-b-content-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(380px,.85fr);gap:20px}
+        .mw-b-section-title{font-size:32px;line-height:1;font-weight:900}
+        .mw-b-small-title{font-size:26px;line-height:1;font-weight:900}
+        .mw-b-score-row{display:grid;grid-template-columns:68px minmax(0,1fr) 118px}
+        .mw-b-rank{width:64px;height:64px;font-size:28px}
+        .mw-b-player{font-size:28px;line-height:1}
+        .mw-b-score{font-size:52px;line-height:1}
+        .mw-b-latest-name{font-size:38px;line-height:1.02;font-weight:900}
+        .mw-b-empty-large{min-height:260px;font-size:28px;line-height:1.25}
+        .mw-b-empty-latest{min-height:230px;font-size:30px;line-height:1.2}
+        .mw-b-discovery-line{font-size:17px;line-height:1.32}
+      </style>
+      <div data-room-broadcast="layout" class="mw-b-layout grid gap-4 overflow-x-auto" style="grid-template-columns:minmax(920px,1fr) 300px;align-items:start;">
+        <section data-room-broadcast="main" class="min-h-[720px] overflow-hidden rounded-[30px] border border-[rgba(196,216,238,0.24)] bg-[#080d14] shadow-[0_28px_90px_rgba(0,0,0,0.5)]">
+          <div class="border-b border-[rgba(196,216,238,0.16)] bg-[linear-gradient(180deg,#172235,#0a1019)] px-7 py-6">
+            <div class="mw-b-header-grid grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px]">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="inline-flex h-8 items-center rounded-full border border-[rgba(120,191,255,0.28)] bg-[rgba(76,169,255,0.14)] px-3 text-[11px] font-black tracking-[0.18em] text-[#8fd0ff]">LIVE SCOREBOARD</span>
+                  <span class="inline-flex h-8 items-center rounded-full border ${broadcastStateClass} px-3 text-[11px] font-black">${escapeHtml(statusText)}</span>
                 </div>
-                <span class="pill">${escapeHtml(formatTime(record.updated_at || record.ended_at || record.started_at))}</span>
+                <div class="mw-b-title mt-4 truncate text-[56px] font-black leading-[0.95] text-white">${escapeHtml(room?.name || '当前房间未创建')}</div>
+                <div class="mw-b-group-grid mt-4 grid gap-2 md:grid-cols-2">
+                  <div class="rounded-[18px] border border-[rgba(88,222,164,0.18)] bg-[rgba(21,56,43,0.38)] px-4 py-3">
+                    <div class="text-[11px] font-black tracking-[0.16em] text-[#92e9bd]">SOURCE</div>
+                    <div class="mt-1 truncate text-[22px] font-black text-white">${escapeHtml(sourceText)}</div>
+                  </div>
+                  <div class="rounded-[18px] border border-[rgba(255,204,102,0.18)] bg-[rgba(78,51,21,0.34)] px-4 py-3">
+                    <div class="text-[11px] font-black tracking-[0.16em] text-[#ffd78c]">TARGET</div>
+                    <div class="mt-1 truncate text-[22px] font-black text-white">${escapeHtml(targetText)}</div>
+                  </div>
+                </div>
               </div>
-            `).join('') || '<div class="notice">暂无房间历史，先保存一个房间草稿，再进行设备预备和开始。</div>'}
+              <div class="mw-b-total-card rounded-[28px] border border-[rgba(255,221,142,0.28)] bg-[linear-gradient(180deg,#2f2514,#100d09)] px-5 py-5 text-right shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                <div class="text-[12px] font-black tracking-[0.22em] text-[#ffe7a6]">TOTAL SCORE</div>
+                <div class="mw-b-total-number mt-2 text-[104px] font-black leading-[0.82] text-[#fff2bd]">${escapeHtml(runtimeSummary.score_total)}</div>
+                <div class="mt-3 text-[14px] font-black text-[#d8c38b]">本局实时得分</div>
+              </div>
+            </div>
           </div>
+
+          <div class="mw-b-content-grid grid gap-5 p-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,0.85fr)]">
+            <div class="grid gap-5">
+              <div class="rounded-[28px] border border-[rgba(196,216,238,0.16)] bg-[linear-gradient(180deg,rgba(18,26,39,0.98),rgba(8,13,21,0.96))] p-5">
+                <div class="flex items-end justify-between gap-3">
+                  <div>
+                    <div class="text-[12px] font-black tracking-[0.22em] text-[#8fd0ff]">PLAYER RANKING</div>
+                    <div class="mw-b-section-title mt-1 text-[32px] font-black leading-none text-white">源组积分榜</div>
+                  </div>
+                  <div class="rounded-full border border-[rgba(196,216,238,0.18)] bg-[rgba(255,255,255,0.05)] px-4 py-2 text-[12px] font-black text-[#cfe0f5]">玩家 ${escapeHtml(leaderboard.length)}</div>
+                </div>
+                <div class="mt-5 grid gap-3">${scoreRows}</div>
+              </div>
+
+              <div class="rounded-[28px] border border-[rgba(196,216,238,0.14)] bg-[linear-gradient(180deg,rgba(15,23,36,0.94),rgba(8,13,21,0.92))] p-5">
+                <div class="flex items-end justify-between gap-3">
+                  <div>
+                    <div class="text-[12px] font-black tracking-[0.22em] text-[#8fd0ff]">TEAM BOARD</div>
+                    <div class="mw-b-small-title mt-1 text-[26px] font-black leading-none text-white">小组排名</div>
+                  </div>
+                  <div class="rounded-full border border-[rgba(196,216,238,0.18)] bg-[rgba(255,255,255,0.05)] px-4 py-2 text-[12px] font-black text-[#cfe0f5]">组 ${escapeHtml(groupLeaderboard.length)}</div>
+                </div>
+                <div class="mt-4 grid gap-2">${groupRows}</div>
+              </div>
+            </div>
+
+            <div class="grid gap-5">
+              <div class="rounded-[28px] border border-[rgba(196,216,238,0.16)] bg-[linear-gradient(180deg,rgba(20,31,48,0.98),rgba(8,13,21,0.96))] p-5">
+                <div class="text-[12px] font-black tracking-[0.22em] text-[#8fd0ff]">LATEST DISCOVERY</div>
+                <div class="mt-4 rounded-[26px] border border-[rgba(196,216,238,0.16)] bg-[rgba(4,8,14,0.72)] p-5">
+                  ${latest ? `
+                    <div class="mw-b-latest-name text-[38px] font-black leading-[1.02] text-white">${escapeHtml(deviceLabelFromRuntime(latest, 'self'))}</div>
+                    <div class="my-4 inline-flex rounded-full bg-[#3c9cff] px-4 py-2 text-[13px] font-black tracking-[0.2em] text-white">发现</div>
+                    <div class="mw-b-latest-name text-[38px] font-black leading-[1.02] text-[#fff2bd]">${escapeHtml(deviceLabelFromRuntime(latest, 'peer'))}</div>
+                    <div class="mt-5 rounded-[18px] border border-[rgba(196,216,238,0.12)] bg-[rgba(255,255,255,0.04)] px-4 py-3 text-[14px] font-black leading-[1.5] text-[#b8cbe2]">${escapeHtml(groupLabelFromMask(latest.self_group_mask))} -> ${escapeHtml(groupLabelFromMask(latest.peer_group_mask))}</div>
+                    <div class="mt-3 text-[13px] font-black tracking-[0.12em] text-[#8fa8c7]">${escapeHtml(formatClockTime(latest.event_ms))} · RSSI ${escapeHtml(latest.rssi)} dBm</div>
+                  ` : `
+                    <div class="mw-b-empty-latest flex min-h-[230px] flex-col items-center justify-center text-center text-[30px] font-black leading-[1.2] text-[#d9e7f8]">
+                      <div>等待发现</div>
+                      <div style="margin-top:12px;font-size:14px;line-height:1.45;color:#8298b3;font-weight:800">触发后显示“谁发现了谁”和信号强度</div>
+                    </div>
+                  `}
+                </div>
+              </div>
+
+              <div class="rounded-[28px] border border-[rgba(196,216,238,0.14)] bg-[linear-gradient(180deg,rgba(15,23,36,0.94),rgba(8,13,21,0.92))] p-5">
+                <div class="flex items-end justify-between gap-3">
+                  <div>
+                    <div class="text-[12px] font-black tracking-[0.22em] text-[#8fd0ff]">PLAY BY PLAY</div>
+                    <div class="mw-b-small-title mt-1 text-[26px] font-black leading-none text-white">发现播报</div>
+                  </div>
+                  <div class="rounded-full border border-[rgba(196,216,238,0.18)] bg-[rgba(255,255,255,0.05)] px-4 py-2 text-[12px] font-black text-[#cfe0f5]">记录 ${escapeHtml(runtimeSummary.discoveries.length)}</div>
+                </div>
+                <div class="mt-4 grid gap-2">${discoveryRows}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="border-t border-[rgba(196,216,238,0.12)] bg-[rgba(5,9,15,0.72)] px-5 py-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex flex-wrap gap-2">
+                <button class="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[rgba(196,216,238,0.18)] bg-[rgba(255,255,255,0.06)] px-5 text-[12px] font-black text-[#e6f0fb] ${canPrepare ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="prepare-room" ${canPrepare ? '' : 'disabled'}>${svgIcon('save')}${prepareBusy ? '预备中...' : room?.status === 'published' ? '重新预备' : '设备预备'}</button>
+                ${roomCountdown
+                  ? `<button class="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[rgba(255,221,142,0.34)] bg-[rgba(78,51,21,0.64)] px-5 text-[12px] font-black text-[#ffe2a4]" type="button" data-action="cancel-room-countdown">${svgIcon('pause')}取消倒计时</button>`
+                  : `<button class="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[rgba(89,222,164,0.26)] bg-[rgba(34,124,83,0.54)] px-5 text-[12px] font-black text-[#c0f8d8] ${room?.status === 'published' ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="start-room" ${room?.status === 'published' ? '' : 'disabled'}>${svgIcon('play')}开始游戏</button>`}
+                <button class="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[rgba(255,130,130,0.24)] bg-[rgba(117,44,44,0.42)] px-5 text-[12px] font-black text-[#ffd2d2] ${room?.status === 'running' ? '' : 'opacity-45 pointer-events-none'}" type="button" data-action="stop-room" ${room?.status === 'running' ? '' : 'disabled'}>${svgIcon('pause')}停止游戏</button>
+              </div>
+              <div class="rounded-full border border-[rgba(196,216,238,0.12)] bg-[rgba(255,255,255,0.04)] px-4 py-2 text-[12px] font-black text-[#a9bdd5]">${validation.issues.length ? escapeHtml(validation.issues[0]) : roomCountdown ? `正在倒计时 ${roomCountdownRemainingText} 秒` : `时长 ${escapeHtml(currentRoomDuration())}`}</div>
+            </div>
+          </div>
+        </section>
+
+        <aside data-room-broadcast="side" class="rounded-[24px] border border-[rgba(122,147,178,0.22)] bg-[linear-gradient(180deg,rgba(17,24,35,0.94),rgba(11,16,25,0.94))] p-3 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-[14px] font-black text-white">房间列表</div>
+              <div class="mt-1 text-[10.5px] leading-[1.35] text-[#8fa3bf]">切换和管理房间</div>
+            </div>
+            <div class="flex gap-1.5">
+              <button class="inline-flex h-8 items-center justify-center rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-2.5 text-[10.5px] font-bold text-[#dbe5f4]" type="button" data-action="toggle-room-sort">${sortOrder === 'asc' ? '正序' : '倒序'}</button>
+              <button class="inline-flex h-8 items-center justify-center rounded-full border-0 bg-[#3f91df] px-2.5 text-[10.5px] font-black text-white" type="button" data-action="open-wizard">新局</button>
+            </div>
+          </div>
+          <div class="mt-3 grid max-h-[760px] gap-2 overflow-auto pr-1">${roomCards}</div>
+        </aside>
+      </div>
+    `;
+  }
+
+  function renderBroadcastRoomPanelV2() {
+    const rooms = sortedRoomList();
+    const sortOrder = roomSortOrder();
+    const room = currentRoom();
+    const validation = validateRoomReady(room);
+    const roomCountdown = roomCountdownActive(room?.id);
+    const roomCountdownRemainingText = roomCountdownRemaining(room?.id);
+    const prepareBusy = !!state.busy.publish || !!state.preparingRoomId;
+    const runtimeSummary = roomRuntimeSummary(room);
+    const leaderboard = runtimeSummary.by_source.slice().sort((a, b) => b.count - a.count);
+    const groupLeaderboard = runtimeSummary.by_source_group.slice().sort((a, b) => b.count - a.count);
+    const latest = runtimeSummary.latest || null;
+    const sourceIds = Array.isArray(room?.source_group_ids) ? room.source_group_ids : [];
+    const targetIds = Array.isArray(room?.target_group_ids) ? room.target_group_ids : [];
+    const sourceMask = groupMaskFromIds(sourceIds);
+    const targetMask = groupMaskFromIds(targetIds);
+    const sourceText = sourceIds.length ? sourceIds.map((gid) => groupNameById(gid)).join(' / ') : '未选择源组';
+    const targetText = targetIds.length ? targetIds.map((gid) => groupNameById(gid)).join(' / ') : '未选择目标组';
+    const sourceDevices = controllerDevices().filter((device) => (normalizeNumber(device?.group_mask, 0) & sourceMask) !== 0);
+    const targetDevices = controllerDevices().filter((device) => (normalizeNumber(device?.group_mask, 0) & targetMask) !== 0);
+    const participantCount = Math.max(sourceDevices.length, leaderboard.length);
+    const onlineCount = controllerDevices().filter((device) => isDeviceOnline(device)).length;
+    const retainedCount = retainedDeviceCount();
+    const statusText = currentRoomStatusLabel();
+    const statusClass = room?.status === 'running'
+      ? 'mw-tv-status--running'
+      : room?.status === 'published'
+        ? 'mw-tv-status--ready'
+        : roomCountdown
+          ? 'mw-tv-status--countdown'
+          : room?.status === 'ended'
+            ? 'mw-tv-status--ended'
+            : 'mw-tv-status--draft';
+    const canPrepare = room?.status !== 'running' && validation.issues.length === 0 && !roomCountdown && !prepareBusy;
+    const timeText = roomCountdown ? `${roomCountdownRemainingText}s` : currentRoomDuration();
+    const nowText = new Date().toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).replace(/\//g, '-');
+    const podiumOrder = [
+      { item: leaderboard[1] || null, rank: 2, tone: 'silver' },
+      { item: leaderboard[0] || null, rank: 1, tone: 'gold' },
+      { item: leaderboard[2] || null, rank: 3, tone: 'bronze' }
+    ];
+    const scoreByGroup = new Map(groupLeaderboard.map((item) => [item.label, item.count]));
+    const groupSeeds = groupLeaderboard.length
+      ? groupLeaderboard.slice(0, 3)
+      : (sourceIds.length ? sourceIds.map((gid) => ({ label: groupNameById(gid), count: 0 })) : [{ label: '源组A', count: 0 }, { label: '源组B', count: 0 }, { label: '源组C', count: 0 }]);
+    const roomCards = rooms.length ? rooms.map((item) => {
+      const active = item.id === activeRoomId();
+      const summary = roomRuntimeSummary(item);
+      const itemValidation = validateRoomReady(item);
+      const itemCountdown = roomCountdownActive(item.id);
+      const canItemPrepare = item.status !== 'running' && itemValidation.issues.length === 0 && !itemCountdown && !prepareBusy;
+      const canItemStart = item.status === 'published' && !itemCountdown;
+      const canItemStop = item.status === 'running';
+      const canItemDelete = item.status !== 'running';
+      const status = itemCountdown
+        ? `倒计时 ${roomCountdownRemaining(item.id)}s`
+        : item.status === 'running'
+          ? '进行中'
+          : item.status === 'published'
+            ? '已预备'
+            : item.status === 'ended'
+              ? '已结束'
+              : '等待中';
+      const cardClass = active ? 'mw-tv-room-card is-active' : 'mw-tv-room-card';
+      return `
+        <article class="${cardClass}">
+          <button class="mw-tv-room-select" type="button" data-action="select-room" data-room-id="${escapeHtml(item.id)}">
+            <div class="mw-tv-room-line">
+              <div class="mw-tv-room-name">${escapeHtml(item.name || '未命名房间')}</div>
+              <span class="mw-tv-room-status">${escapeHtml(status)}</span>
+            </div>
+            <div class="mw-tv-room-note">${escapeHtml(item.notes || item.template_name || '无备注')}</div>
+            <div class="mw-tv-room-meta">
+              <span>${svgIcon('device')}${escapeHtml(participantCount || controllerDevices().length || 0)}</span>
+              <span>${svgIcon('record')}${escapeHtml(summary.score_total)} 分</span>
+            </div>
+          </button>
+          <div class="mw-tv-room-controls">
+            <button class="mw-tv-mini-btn" type="button" data-action="select-room" data-room-id="${escapeHtml(item.id)}">当前</button>
+            <button class="mw-tv-mini-btn" type="button" data-action="room-open-wizard" data-room-id="${escapeHtml(item.id)}">${item.status === 'draft' ? '编辑' : '查看'}</button>
+            <button class="mw-tv-mini-btn" type="button" data-action="prepare-room" data-room-id="${escapeHtml(item.id)}" ${canItemPrepare ? '' : 'disabled'}>${prepareBusy && String(state.preparingRoomId || '') === String(item.id || '') ? '预备中' : item.status === 'published' ? '重预备' : '预备'}</button>
+            ${itemCountdown
+              ? `<button class="mw-tv-mini-btn danger" type="button" data-action="cancel-room-countdown" data-room-id="${escapeHtml(item.id)}">取消</button>`
+              : `<button class="mw-tv-mini-btn primary" type="button" data-action="start-room" data-room-id="${escapeHtml(item.id)}" ${canItemStart ? '' : 'disabled'}>开始</button>`}
+            <button class="mw-tv-mini-btn danger" type="button" data-action="stop-room" data-room-id="${escapeHtml(item.id)}" ${canItemStop ? '' : 'disabled'}>停止</button>
+            <button class="mw-tv-mini-btn danger" type="button" data-action="delete-room" data-room-id="${escapeHtml(item.id)}" ${canItemDelete ? '' : 'disabled'}>删除</button>
+          </div>
+        </article>
+      `;
+    }).join('') : '<div class="mw-tv-empty-side">暂无房间</div>';
+    const podiumCards = podiumOrder.map(({ item, rank, tone }) => {
+      const score = item ? item.count : 0;
+      const name = item ? item.label : '等待上榜';
+      const groupLabel = item?.idx !== undefined ? devicePrimaryGroupLabel(controllerDevices()[item.idx]) : sourceText;
+      return `
+        <div class="mw-tv-podium mw-tv-podium--${tone}">
+          <div class="mw-tv-medal">${rank}</div>
+          <div class="mw-tv-avatar">${svgIcon('device')}</div>
+          <div class="mw-tv-player">${escapeHtml(name)}</div>
+          <div class="mw-tv-player-group">${escapeHtml(groupLabel || '源组')}</div>
+          <div class="mw-tv-points">${escapeHtml(score)} <span>分</span></div>
+        </div>
+      `;
+    }).join('');
+    const tableRows = (leaderboard.length ? leaderboard.slice(3, 8) : sourceDevices.slice(0, 5).map((device, index) => ({
+      label: deviceDisplayName(device),
+      count: 0,
+      idx: controllerDevices().indexOf(device),
+      rankOffset: index + 4
+    }))).map((item, index) => {
+      const rank = item.rankOffset || index + 4;
+      const groupLabel = item?.idx !== undefined ? devicePrimaryGroupLabel(controllerDevices()[item.idx]) : sourceText;
+      return `
+        <div class="mw-tv-table-row">
+          <span>${escapeHtml(rank)}</span>
+          <b>${escapeHtml(item.label)}</b>
+          <span>${escapeHtml(groupLabel || '源组')}</span>
+          <span>${escapeHtml(item.count)}</span>
+          <strong>${escapeHtml(item.count)}</strong>
+        </div>
+      `;
+    }).join('') || '<div class="mw-tv-table-empty">等待源组玩家上榜</div>';
+    const discoveryRows = runtimeSummary.discoveries.length ? runtimeSummary.discoveries.slice(0, 6).map((event) => `
+      <div class="mw-tv-event">
+        <div class="mw-tv-event-time">${escapeHtml(formatClockTime(event.event_ms))}</div>
+        <div class="mw-tv-event-main">
+          <b>${escapeHtml(deviceLabelFromRuntime(event, 'self'))}</b>
+          <span>发现</span>
+          <strong>${escapeHtml(deviceLabelFromRuntime(event, 'peer'))}</strong>
+        </div>
+        <div class="mw-tv-event-sub">${escapeHtml(groupLabelFromMask(event.self_group_mask))} -> ${escapeHtml(groupLabelFromMask(event.peer_group_mask))} · RSSI ${escapeHtml(event.rssi)} dBm</div>
+      </div>
+    `).join('') : '<div class="mw-tv-event-empty">等待第一条发现事件</div>';
+    const groupCards = groupSeeds.slice(0, 3).map((item, index) => {
+      const tone = index === 0 ? 'gold' : index === 1 ? 'silver' : 'bronze';
+      const memberCount = sourceIds.length
+        ? sourceDevices.filter((device) => devicePrimaryGroupIds(device).some((gid) => groupNameById(gid) === item.label)).length
+        : 0;
+      const score = scoreByGroup.has(item.label) ? scoreByGroup.get(item.label) : item.count;
+      return `
+        <div class="mw-tv-group-card mw-tv-group-card--${tone}">
+          <div class="mw-tv-group-medal">${index + 1}</div>
+          <div>
+            <div class="mw-tv-group-name">${escapeHtml(item.label)}</div>
+            <div class="mw-tv-group-sub">成员：${escapeHtml(memberCount || '-')}</div>
+          </div>
+          <div class="mw-tv-group-score">${escapeHtml(score)} <span>分</span></div>
+        </div>
+      `;
+    }).join('');
+    return `
+      <style>
+        .mw-tv{min-width:1320px;padding:18px;background:radial-gradient(circle at 28% 4%,rgba(103,80,255,.22),transparent 34%),linear-gradient(180deg,#07102a,#08132c 42%,#071025);color:#f7fbff;border-radius:20px;box-shadow:0 28px 80px rgba(0,0,0,.42);font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif}
+        .mw-tv *{box-sizing:border-box}
+        .mw-tv-top{display:grid;grid-template-columns:270px minmax(0,1fr);gap:22px;align-items:center;margin-bottom:16px}
+        .mw-tv-brand{height:96px;display:flex;align-items:center;gap:14px}
+        .mw-tv-brand-mark{width:58px;height:58px;color:#9a5cff}
+        .mw-tv-brand-title{font-size:25px;font-weight:900;letter-spacing:.06em;line-height:1;background:linear-gradient(90deg,#be5cff,#4aa5ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+        .mw-tv-brand-sub{margin-top:10px;font-size:14px;letter-spacing:.42em;color:#b8c3e0;font-weight:800}
+        .mw-tv-statusbar{height:96px;border:1px solid rgba(132,156,216,.18);border-radius:12px;background:linear-gradient(180deg,rgba(23,35,74,.72),rgba(13,24,58,.72));display:grid;grid-template-columns:minmax(0,1.3fr) 160px 160px 230px;align-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+        .mw-tv-status-cell{height:58px;padding:0 26px;display:flex;flex-direction:column;justify-content:center;border-left:1px solid rgba(132,156,216,.12)}
+        .mw-tv-status-cell:first-child{border-left:0}
+        .mw-tv-label{font-size:12px;color:#8d9abd;font-weight:800}
+        .mw-tv-room-title{margin-top:6px;font-size:29px;line-height:1;font-weight:900}
+        .mw-tv-room-desc{margin-top:8px;font-size:13px;color:#9da8c7;font-weight:700}
+        .mw-tv-badge{align-self:flex-start;margin-top:7px;padding:9px 22px;border-radius:10px;font-size:17px;font-weight:900}
+        .mw-tv-status--running{background:rgba(21,116,86,.46);color:#39f493}
+        .mw-tv-status--ready{background:rgba(40,89,165,.5);color:#7dc0ff}
+        .mw-tv-status--countdown{background:rgba(138,88,24,.52);color:#ffd178}
+        .mw-tv-status--ended{background:rgba(101,113,139,.42);color:#d1daef}
+        .mw-tv-status--draft{background:rgba(56,74,115,.46);color:#a9b9df}
+        .mw-tv-timebox{align-self:flex-start;margin-top:7px;min-width:104px;text-align:center;padding:8px 14px;border-radius:10px;background:rgba(42,93,184,.42);color:#5ca7ff;font-size:19px;font-weight:900}
+        .mw-tv-now{margin-top:8px;font-size:16px;color:#f1f5ff}
+        .mw-tv-main{display:grid;grid-template-columns:minmax(0,1fr) 328px;gap:16px}
+        .mw-tv-panel{border:1px solid rgba(132,156,216,.2);border-radius:9px;background:linear-gradient(180deg,rgba(19,34,78,.68),rgba(10,24,58,.78));overflow:hidden}
+        .mw-tv-tabs{height:52px;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid rgba(132,156,216,.16);background:rgba(18,28,67,.58)}
+        .mw-tv-tab{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;font-size:17px;font-weight:900;color:#a8b2d6}
+        .mw-tv-tab svg{width:20px;height:20px}
+        .mw-tv-tab.is-active{color:#fff;background:linear-gradient(90deg,rgba(174,77,255,.24),rgba(76,126,255,.08))}
+        .mw-tv-tab.is-active:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:linear-gradient(90deg,#a44cff,#5b8dff);box-shadow:0 0 18px rgba(164,76,255,.7)}
+        .mw-tv-grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(360px,.9fr);gap:12px;padding:12px}
+        .mw-tv-card{border:1px solid rgba(132,156,216,.18);border-radius:8px;background:linear-gradient(180deg,rgba(22,42,92,.6),rgba(10,25,62,.72));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+        .mw-tv-ranking{padding:18px 20px 16px;min-height:424px}
+        .mw-tv-podiums{height:205px;display:grid;grid-template-columns:1fr 1.05fr 1fr;gap:14px;align-items:end;margin-bottom:14px}
+        .mw-tv-podium{position:relative;min-height:150px;border:1px solid rgba(147,172,226,.34);border-radius:7px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:24px 16px 18px;background:linear-gradient(180deg,rgba(57,78,139,.28),rgba(14,29,72,.7))}
+        .mw-tv-podium--gold{min-height:184px;border-color:rgba(255,192,64,.58);background:linear-gradient(180deg,rgba(118,80,18,.48),rgba(22,29,63,.78))}
+        .mw-tv-podium--silver{border-color:rgba(183,204,245,.45)}
+        .mw-tv-podium--bronze{border-color:rgba(255,149,117,.42);background:linear-gradient(180deg,rgba(109,58,65,.36),rgba(22,29,63,.76))}
+        .mw-tv-medal{position:absolute;top:-28px;left:50%;transform:translateX(-50%);width:62px;height:62px;display:flex;align-items:center;justify-content:center;clip-path:polygon(50% 0,92% 25%,92% 75%,50% 100%,8% 75%,8% 25%);font-size:26px;font-weight:900;color:#1f2030;background:linear-gradient(180deg,#ffe477,#f5a419);box-shadow:0 0 26px rgba(255,196,61,.36)}
+        .mw-tv-podium--silver .mw-tv-medal{background:linear-gradient(180deg,#e6f0ff,#95a8c7)}
+        .mw-tv-podium--bronze .mw-tv-medal{background:linear-gradient(180deg,#ffb390,#d06d56)}
+        .mw-tv-avatar{width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#dce7ff;background:radial-gradient(circle at 34% 26%,#fff,#9fb9ff 46%,#705cff);border:2px solid rgba(255,255,255,.62)}
+        .mw-tv-avatar svg{width:26px;height:26px}
+        .mw-tv-player{margin-top:10px;font-size:17px;font-weight:900}
+        .mw-tv-player-group{margin-top:4px;font-size:12px;color:#9ca9cc;font-weight:800}
+        .mw-tv-points{margin-top:8px;font-size:30px;font-weight:900;color:#7db2ff}
+        .mw-tv-podium--gold .mw-tv-points{font-size:38px;color:#ff9f1f}
+        .mw-tv-podium--bronze .mw-tv-points{color:#d96bff}
+        .mw-tv-points span{font-size:16px}
+        .mw-tv-table{border:1px solid rgba(132,156,216,.15);border-radius:8px;overflow:hidden;background:rgba(8,20,52,.5)}
+        .mw-tv-table-head,.mw-tv-table-row{display:grid;grid-template-columns:70px minmax(0,1.2fr) minmax(0,.9fr) 100px 100px;align-items:center}
+        .mw-tv-table-head{height:38px;padding:0 18px;background:rgba(39,61,119,.4);font-size:13px;color:#9eabd0;font-weight:800}
+        .mw-tv-table-row{height:48px;padding:0 18px;border-top:1px solid rgba(132,156,216,.11);font-size:15px}
+        .mw-tv-table-row b{font-weight:900}
+        .mw-tv-table-row strong{color:#d86dff}
+        .mw-tv-table-empty{height:96px;display:flex;align-items:center;justify-content:center;color:#8f9abd;font-weight:900}
+        .mw-tv-participants{margin-top:16px;color:#9ca8c8;font-size:14px;font-weight:800}
+        .mw-tv-events{padding:18px;min-height:424px}
+        .mw-tv-card-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+        .mw-tv-card-title b{font-size:19px}
+        .mw-tv-card-title span{font-size:12px;color:#9da8c7;border:1px solid rgba(132,156,216,.18);border-radius:999px;padding:6px 10px}
+        .mw-tv-event{padding:13px 14px;border-radius:9px;background:rgba(13,29,68,.58);border:1px solid rgba(132,156,216,.11);margin-bottom:10px}
+        .mw-tv-event-time{font-size:12px;color:#9eaad0}
+        .mw-tv-event-main{margin-top:7px;font-size:15px}
+        .mw-tv-event-main b{color:#d65dff}
+        .mw-tv-event-main span{margin:0 8px;color:#fff}
+        .mw-tv-event-main strong{color:#ff9f1f}
+        .mw-tv-event-sub{margin-top:7px;color:#9da8c7;font-size:12px;font-weight:800}
+        .mw-tv-event-empty{height:250px;display:flex;align-items:center;justify-content:center;color:#8f9abd;font-size:18px;font-weight:900}
+        .mw-tv-groups{margin-top:12px}
+        .mw-tv-section-title{height:46px;display:flex;align-items:center;gap:10px;padding:0 18px;border-bottom:1px solid rgba(132,156,216,.15);font-size:18px;font-weight:900}
+        .mw-tv-section-title svg{width:22px;height:22px;color:#925eff}
+        .mw-tv-group-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:12px}
+        .mw-tv-group-card{min-height:126px;border:1px solid rgba(132,156,216,.18);border-radius:8px;padding:20px 22px;display:grid;grid-template-columns:76px minmax(0,1fr) 120px;align-items:center;background:linear-gradient(90deg,rgba(25,46,98,.68),rgba(12,27,68,.75))}
+        .mw-tv-group-card--gold{background:linear-gradient(90deg,rgba(90,64,18,.56),rgba(12,27,68,.75))}
+        .mw-tv-group-card--bronze{background:linear-gradient(90deg,rgba(91,43,52,.5),rgba(12,27,68,.75))}
+        .mw-tv-group-medal{width:58px;height:58px;display:flex;align-items:center;justify-content:center;clip-path:polygon(50% 0,92% 25%,92% 75%,50% 100%,8% 75%,8% 25%);background:linear-gradient(180deg,#ffd66b,#f2a10e);color:#20180a;font-size:25px;font-weight:900}
+        .mw-tv-group-card--silver .mw-tv-group-medal{background:linear-gradient(180deg,#e5efff,#91a7c8)}
+        .mw-tv-group-card--bronze .mw-tv-group-medal{background:linear-gradient(180deg,#ffb08b,#d57057)}
+        .mw-tv-group-name{font-size:20px;font-weight:900}
+        .mw-tv-group-sub{margin-top:12px;color:#9ca8c8;font-size:13px;font-weight:800}
+        .mw-tv-group-score{text-align:right;font-size:40px;font-weight:900;color:#ffc21d}
+        .mw-tv-group-score span{font-size:18px}
+        .mw-tv-side{min-height:782px;padding:16px;background:linear-gradient(180deg,rgba(22,34,80,.7),rgba(9,21,54,.82))}
+        .mw-tv-side-title{display:flex;align-items:center;gap:10px;margin-bottom:16px;font-size:19px;font-weight:900}
+        .mw-tv-side-title svg{width:22px;height:22px;color:#9864ff}
+        .mw-tv-room-card{width:100%;border:1px solid rgba(132,156,216,.13);border-radius:9px;background:linear-gradient(180deg,rgba(28,45,91,.62),rgba(16,31,71,.68));padding:12px;margin-bottom:12px;text-align:left;color:#fff;transition:filter .15s,border-color .15s}
+        .mw-tv-room-card:hover{filter:brightness(1.08)}
+        .mw-tv-room-card.is-active{border-color:#b45bff;box-shadow:0 0 0 1px rgba(180,91,255,.35),0 0 28px rgba(110,63,255,.18)}
+        .mw-tv-room-select{display:block;width:100%;border:0;background:transparent;color:inherit;text-align:left;padding:4px 4px 10px}
+        .mw-tv-room-line{display:flex;align-items:center;justify-content:space-between;gap:10px}
+        .mw-tv-room-name{font-size:18px;font-weight:900}
+        .mw-tv-room-status{border-radius:999px;background:rgba(23,115,84,.34);color:#38ef91;padding:5px 10px;font-size:13px;font-weight:900}
+        .mw-tv-room-note{margin-top:9px;color:#9ea9c8;font-size:14px;font-weight:700}
+        .mw-tv-room-meta{margin-top:16px;display:flex;gap:16px;color:#9ea9c8;font-size:14px;font-weight:800}
+        .mw-tv-room-meta span{display:flex;align-items:center;gap:7px}
+        .mw-tv-room-meta svg{width:17px;height:17px}
+        .mw-tv-room-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;border-top:1px solid rgba(132,156,216,.12);padding-top:10px}
+        .mw-tv-mini-btn{height:30px;border:1px solid rgba(132,156,216,.18);border-radius:7px;background:rgba(17,31,70,.72);color:#d8e4ff;font-size:12px;font-weight:900}
+        .mw-tv-mini-btn.primary{background:rgba(26,116,83,.54);color:#bdf7d4}
+        .mw-tv-mini-btn.danger{background:rgba(112,44,55,.48);color:#ffd0d8}
+        .mw-tv-mini-btn:disabled{opacity:.4}
+        .mw-tv-side-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px}
+        .mw-tv-create{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(132,156,216,.2);border-radius:8px;background:rgba(37,55,104,.5);color:#b9c8f5}
+        .mw-tv-create svg{width:17px;height:17px}
+        .mw-tv-side-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+        .mw-tv-action{height:40px;border:1px solid rgba(132,156,216,.18);border-radius:9px;background:rgba(17,31,70,.72);color:#d8e4ff;font-weight:900}
+        .mw-tv-action.primary{background:rgba(26,116,83,.54);color:#bdf7d4}
+        .mw-tv-action.danger{background:rgba(112,44,55,.48);color:#ffd0d8}
+        .mw-tv-action:disabled{opacity:.42}
+        .mw-tv-footer{height:56px;margin-top:16px;border:1px solid rgba(132,156,216,.14);border-radius:9px;background:rgba(16,29,67,.68);display:flex;align-items:center;justify-content:space-between;padding:0 28px;color:#9ea9c8;font-size:14px;font-weight:800}
+        .mw-tv-footer-left{display:flex;gap:36px;align-items:center}
+        .mw-tv-dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:#25df8f;margin-right:10px;box-shadow:0 0 16px rgba(37,223,143,.65)}
+        .mw-tv-version{display:flex;align-items:center;gap:9px}
+        .mw-tv-version:before{content:"";display:block;width:4px;height:14px;border-radius:999px;background:#9d5cff}
+      </style>
+      <div class="mw-tv" data-room-broadcast="layout">
+        <div class="mw-tv-top">
+          <div class="mw-tv-brand">
+            <div class="mw-tv-brand-mark">${svgIcon('effect')}</div>
+            <div>
+              <div class="mw-tv-brand-title">MAGIC WAND</div>
+              <div class="mw-tv-brand-sub">大屏游戏系统</div>
+            </div>
+          </div>
+          <div class="mw-tv-statusbar">
+            <div class="mw-tv-status-cell">
+              <div class="mw-tv-label">当前房间</div>
+              <div class="mw-tv-room-title">${escapeHtml(room?.name || '未命名房间')}</div>
+              <div class="mw-tv-room-desc">${escapeHtml(room?.notes || room?.template_name || '多人寻宝混战')}</div>
+            </div>
+            <div class="mw-tv-status-cell">
+              <div class="mw-tv-label">游戏状态</div>
+              <div class="mw-tv-badge ${statusClass}">${escapeHtml(statusText)}</div>
+            </div>
+            <div class="mw-tv-status-cell">
+              <div class="mw-tv-label">${roomCountdown ? '倒计时' : '当前时长'}</div>
+              <div class="mw-tv-timebox">${escapeHtml(timeText)}</div>
+            </div>
+            <div class="mw-tv-status-cell">
+              <div class="mw-tv-label">当前时间</div>
+              <div class="mw-tv-now">${escapeHtml(nowText)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mw-tv-main">
+          <div>
+            <div class="mw-tv-panel">
+              <div class="mw-tv-tabs">
+                <div class="mw-tv-tab is-active">${svgIcon('device')}个人排行榜</div>
+                <div class="mw-tv-tab">${svgIcon('group')}组排行榜</div>
+              </div>
+              <div class="mw-tv-grid">
+                <div class="mw-tv-card mw-tv-ranking">
+                  <div class="mw-tv-podiums">${podiumCards}</div>
+                  <div class="mw-tv-table">
+                    <div class="mw-tv-table-head"><span>排名</span><span>玩家</span><span>所属组</span><span>发现次数</span><span>积分</span></div>
+                    ${tableRows}
+                  </div>
+                  <div class="mw-tv-participants">共 ${escapeHtml(participantCount)} 名源组玩家参与 · 目标设备 ${escapeHtml(targetDevices.length)} 个</div>
+                </div>
+                <div class="mw-tv-card mw-tv-events">
+                  <div class="mw-tv-card-title"><b>最新发现</b><span>实时播报</span></div>
+                  ${latest ? `
+                    <div class="mw-tv-event">
+                      <div class="mw-tv-event-time">${escapeHtml(formatClockTime(latest.event_ms))}</div>
+                      <div class="mw-tv-event-main"><b>${escapeHtml(deviceLabelFromRuntime(latest, 'self'))}</b><span>发现</span><strong>${escapeHtml(deviceLabelFromRuntime(latest, 'peer'))}</strong></div>
+                      <div class="mw-tv-event-sub">${escapeHtml(groupLabelFromMask(latest.self_group_mask))} -> ${escapeHtml(groupLabelFromMask(latest.peer_group_mask))} · RSSI ${escapeHtml(latest.rssi)} dBm · +1 分</div>
+                    </div>
+                  ` : '<div class="mw-tv-event-empty">等待源组发现目标组</div>'}
+                  <div class="mw-tv-card-title" style="margin-top:18px"><b>发现记录</b><span>${escapeHtml(runtimeSummary.discoveries.length)} 条</span></div>
+                  ${discoveryRows}
+                </div>
+              </div>
+            </div>
+
+            <div class="mw-tv-panel mw-tv-groups">
+              <div class="mw-tv-section-title">${svgIcon('group')}组排行榜</div>
+              <div class="mw-tv-group-grid">${groupCards}</div>
+            </div>
+          </div>
+
+          <aside class="mw-tv-panel mw-tv-side" data-room-broadcast="side">
+            <div class="mw-tv-side-head">
+              <div class="mw-tv-side-title">${svgIcon('room')}房间列表</div>
+              <button class="mw-tv-create" type="button" title="创建新房间" data-action="open-wizard">${svgIcon('plus')}</button>
+            </div>
+            ${roomCards}
+            <div class="mw-tv-side-actions">
+              <button class="mw-tv-action" type="button" data-action="load-controller">读取状态</button>
+              <button class="mw-tv-action" type="button" data-action="scan-devices">扫描设备</button>
+              <button class="mw-tv-action" type="button" data-action="room-open-wizard" data-room-id="${escapeHtml(room?.id || '')}" ${room ? '' : 'disabled'}>${room?.status === 'draft' ? '编辑房间' : '查看房间'}</button>
+              <button class="mw-tv-action" type="button" data-action="refresh-records">刷新记录</button>
+              <button class="mw-tv-action" type="button" data-action="prepare-room" ${canPrepare ? '' : 'disabled'}>${prepareBusy ? '预备中' : room?.status === 'published' ? '重新预备' : '设备预备'}</button>
+              ${roomCountdown
+                ? `<button class="mw-tv-action danger" type="button" data-action="cancel-room-countdown">取消倒计时</button>`
+                : `<button class="mw-tv-action primary" type="button" data-action="start-room" ${room?.status === 'published' ? '' : 'disabled'}>开始游戏</button>`}
+              <button class="mw-tv-action danger" type="button" data-action="stop-room" ${room?.status === 'running' ? '' : 'disabled'}>停止游戏</button>
+              <button class="mw-tv-action danger" type="button" data-action="delete-room" data-room-id="${escapeHtml(room?.id || '')}" ${room && room.status !== 'running' ? '' : 'disabled'}>删除房间</button>
+              <button class="mw-tv-action" type="button" data-action="toggle-room-sort">${sortOrder === 'asc' ? '正序' : '倒序'}</button>
+            </div>
+          </aside>
+        </div>
+
+        <div class="mw-tv-footer">
+          <div class="mw-tv-footer-left">
+            <span><i class="mw-tv-dot"></i>${state.controllerOnline ? '系统连接正常' : '控制端未连接'}</span>
+            <span>设备在线：${escapeHtml(onlineCount)} / 已扫描 ${escapeHtml(retainedCount)}</span>
+            <span>${validation.issues.length ? escapeHtml(validation.issues[0]) : '房间配置可用'}</span>
+          </div>
+          <div class="mw-tv-version">Magic Wand 游戏系统 v1.0.0</div>
         </div>
       </div>
     `;
+  }
+
+ function renderRoomPage() {
+   return renderBroadcastRoomPanelV2();
   }
 
   function renderTemplatesPage() {
@@ -5710,38 +7504,91 @@
   function renderRoomPrepareModal() {
     const modal = state.roomPrepareModal;
     if (!modal) return '';
-    const offline = Array.isArray(modal.offlineDevices) ? modal.offlineDevices : [];
+    const room = roomById(modal.roomId) || currentRoom();
+    const audit = roomPreparationAudit(room);
+    const devices = audit.devices.map(devicePrepareViewItem);
+    const stale = devices.filter((item) => !item.online && item.retained);
+    const offline = devices.filter((item) => !item.retained);
+    const onlineCount = devices.filter((item) => item.online).length;
+    const runtimeRows = roomRuntimeEffectDiagnostics(room);
+    const busy = !!state.busy.publish || !!state.busy.testEffect || !!state.preparingRoomId;
+    const stopBusy = !!state.busy.stopEffect;
     return `
       <div class="fixed inset-0 z-[150] flex items-center justify-center bg-[rgba(3,6,12,0.88)] px-4 py-8 backdrop-blur-[3px]">
         <div class="w-full overflow-auto rounded-[20px] border border-[rgba(103,130,169,0.42)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.72)]" style="width:min(800px,calc(100vw - 48px));max-height:calc(100vh - 64px);background:#0d1520;">
           <div class="flex items-start justify-between gap-3">
             <div>
               <h3 class="m-0 text-[18px] font-extrabold leading-none text-white">设备预备检查</h3>
-              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">当前房间「${escapeHtml(modal.roomName || '未命名房间')}」里有设备暂时离线。你可以先检查并修复，也可以继续预备。</p>
+              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">当前房间「${escapeHtml(modal.roomName || '未命名房间')}」参与设备 ${devices.length} 台，在线 ${onlineCount} 台，待刷新 ${stale.length} 台，离线 ${offline.length} 台。</p>
             </div>
             <button class="ghost-btn" type="button" data-action="cancel-room-prepare">返回检查</button>
           </div>
           <div class="mt-4 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.55] text-[#99acc5]">
-            设备预备会把本局配置下发到设备，并检查源组和目标组中的设备是否在线。离线设备可能导致任务无法完成。
+            设备预备会把本局配置下发到设备。扫描结果会保留，若设备显示“待刷新”，请点“再次扫描”确认现场状态。
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            ${makeChip(`参与设备 ${devices.length}`, true)}
+            ${makeChip(`在线 ${onlineCount}`)}
+            ${makeChip(`待刷新 ${stale.length}`)}
+            ${makeChip(`离线 ${offline.length}`)}
+            ${makeChip(`分组 ${(Array.isArray(audit.groupIds) ? audit.groupIds : []).length}`)}
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button class="ghost-btn ${busy || state.busy.scan ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="scan-devices" ${busy || state.busy.scan ? 'disabled' : ''}>${state.busy.scan ? '扫描中...' : '再次扫描'}</button>
+            <button class="ghost-btn bg-[linear-gradient(180deg,rgba(126,91,255,0.96),rgba(82,116,235,0.98))] text-white ${busy ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="test-room-effects" ${busy ? 'disabled' : ''}>${state.busy.testEffect ? '测试中...' : '测试效果'}</button>
+            <button class="ghost-btn border-[rgba(255,142,142,0.34)] bg-[rgba(58,24,28,0.96)] text-[#ffd0d0] ${stopBusy ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="stop-room-test-effects" ${stopBusy ? 'disabled' : ''}>${stopBusy ? '停止中...' : '停止测试/熄灭'}</button>
+          </div>
+          <div class="mt-3 rounded-[16px] border border-[rgba(126,91,255,0.24)] bg-[rgba(14,20,34,0.9)] p-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div class="text-[12px] font-extrabold text-white">本次下发灯效诊断</div>
+                <div class="mt-1 text-[10.5px] leading-[1.45] text-[#91a6c2]">这里显示接收端实际收到的短指令。测试效果会播放“触发灯效”，不是待机灯效。</div>
+              </div>
+              ${makePill(`${escapeHtml(triggerCompareLabel(room?.trigger_compare))} ${escapeHtml(normalizeNumber(room?.trigger_signal_rssi, DEFAULT_TRIGGER_RSSI))} dBm / ${escapeHtml(normalizeNumber(room?.trigger_hold_ms, 2000))} ms`, true)}
+            </div>
+            <div class="mt-3 grid gap-2">
+              ${runtimeRows.map((row) => `
+                <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(8,13,22,0.72)] px-3 py-2.5">
+                  <div class="flex flex-wrap items-start justify-between gap-2">
+                    <div class="min-w-0">
+                      <div class="text-[12px] font-extrabold text-white">${escapeHtml(row.group_name)} <span class="text-[10.5px] text-[#9fb2c8]">/ ${escapeHtml(row.role_label)}</span></div>
+                      <div class="mt-1 text-[10.5px] leading-[1.45] text-[#8ea3bf]">设备：${escapeHtml(row.devices.join(' / ') || '本组暂无设备')}</div>
+                    </div>
+                    ${makePill(`触发 ${row.trigger.name}`, true)}
+                  </div>
+                  <div class="mt-2 grid gap-2 md:grid-cols-2">
+                    <div class="rounded-[12px] border border-[rgba(88,116,154,0.14)] bg-[rgba(18,25,36,0.66)] px-2.5 py-2">
+                      <div class="text-[10.5px] font-bold text-[#b7c9df]">待机灯效：${escapeHtml(row.idle.name)}</div>
+                      <code class="mt-1 block break-all text-[10px] leading-[1.45] text-[#7fb8ff]">${escapeHtml(row.idle.spec)}</code>
+                    </div>
+                    <div class="rounded-[12px] border border-[rgba(88,116,154,0.14)] bg-[rgba(18,25,36,0.66)] px-2.5 py-2">
+                      <div class="text-[10.5px] font-bold text-[#b7c9df]">触发灯效：${escapeHtml(row.trigger.name)}</div>
+                      <code class="mt-1 block break-all text-[10px] leading-[1.45] text-[#d8a1ff]">${escapeHtml(row.trigger.spec)}</code>
+                    </div>
+                  </div>
+                  ${row.warnings.length ? `<div class="mt-2 rounded-[10px] border border-[rgba(255,193,87,0.22)] bg-[rgba(255,193,87,0.08)] px-2.5 py-2 text-[10.5px] leading-[1.5] text-[#ffd68a]">${row.warnings.map((warning) => escapeHtml(warning)).join('<br>')}</div>` : ''}
+                </div>
+              `).join('') || '<div class="notice">当前房间还没有可下发的运行分组。</div>'}
+            </div>
           </div>
           <div class="mt-3 grid gap-2">
-            ${offline.map((item) => `
+            ${devices.map((item) => `
               <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.9)] px-3 py-2.5">
                 <div class="flex flex-wrap items-start justify-between gap-2">
                   <div class="min-w-0">
                     <div class="text-[12px] font-extrabold text-white">${escapeHtml(item.name || item.mac || '未知设备')}</div>
                     <div class="mt-1 text-[11px] leading-[1.45] text-[#9fb2c8]">${escapeHtml(item.mac || '')}</div>
                   </div>
-                  ${makePill('离线', true)}
+                  ${makePill(item.status || (item.online ? '在线' : item.retained ? '待刷新' : '离线'), item.online)}
                 </div>
                 <div class="mt-2 text-[11px] leading-[1.5] text-[#b8c7da]">所属分组：${escapeHtml((Array.isArray(item.groups) ? item.groups : []).join(' / ') || '无')}</div>
-                <div class="mt-1 text-[11px] leading-[1.5] text-[#8ea3bf]">RSSI ${escapeHtml(normalizeNumber(item.rssi, 0))} dBm · 最近上线 ${escapeHtml(normalizeNumber(item.seen_ms, 0))} ms 前</div>
+                <div class="mt-1 text-[11px] leading-[1.5] text-[#8ea3bf]">RSSI ${escapeHtml(normalizeNumber(item.rssi, 0))} dBm · 上次扫描 ${escapeHtml(formatAgo(item.seen_ms))}</div>
               </div>
-            `).join('')}
+            `).join('') || '<div class="notice">当前房间选择了分组，但这些分组里还没有设备。请先到设备页给设备分组。</div>'}
           </div>
           <div class="mt-4 flex flex-wrap justify-end gap-2">
-            <button class="ghost-btn" type="button" data-action="cancel-room-prepare">取消预备</button>
-            <button class="ghost-btn bg-[linear-gradient(180deg,rgba(74,171,255,0.96),rgba(56,132,214,0.98))] text-white" type="button" data-action="confirm-room-prepare">继续预备</button>
+            <button class="ghost-btn ${busy ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="cancel-room-prepare" ${busy ? 'disabled' : ''}>取消预备</button>
+            <button class="ghost-btn bg-[linear-gradient(180deg,rgba(74,171,255,0.96),rgba(56,132,214,0.98))] text-white ${busy ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="confirm-room-prepare" ${busy ? 'disabled' : ''}>${busy ? '正在下发...' : '下发预备'}</button>
           </div>
         </div>
       </div>
@@ -5774,6 +7621,60 @@
           </div>
           <div class="mt-4 flex flex-wrap justify-end gap-2">
             <button class="ghost-btn" type="button" data-action="cancel-room-countdown">取消开始</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderRoomFinalizeModal() {
+    const modal = state.roomFinalizeModal;
+    if (!modal) return '';
+    const room = modal.room || currentRoom();
+    const missing = Array.isArray(modal.missingDevices) ? modal.missingDevices : [];
+    const stats = Array.isArray(modal.stats) ? modal.stats : [];
+    return `
+      <div class="fixed inset-0 z-[156] flex items-center justify-center bg-[rgba(3,6,12,0.9)] px-4 py-8 backdrop-blur-[4px]">
+        <div class="w-full rounded-[24px] border border-[rgba(103,130,169,0.42)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.78)]" style="width:min(820px,calc(100vw - 40px));background:#0d1520;">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="m-0 text-[20px] font-extrabold leading-none text-white">场次汇总</h3>
+              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">房间「${escapeHtml(room?.name || '未命名房间')}」已结束。你可以先看汇总，再决定是否继续刷新控制端结果。</p>
+            </div>
+            <button class="ghost-btn" type="button" data-action="room-finalize-ignore">完成汇总</button>
+          </div>
+          <div class="mt-4 grid gap-3 md:grid-cols-3">
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">当前得分</div>
+              <div class="mt-1 text-[26px] font-black leading-none text-white">${escapeHtml(modal.scoreTotal ?? 0)}</div>
+            </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">已汇总设备</div>
+              <div class="mt-1 text-[26px] font-black leading-none text-white">${escapeHtml(stats.length)}</div>
+            </div>
+            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+              <div class="text-[11px] font-bold text-[#c7d5eb]">待汇总设备</div>
+              <div class="mt-1 text-[26px] font-black leading-none text-white">${escapeHtml(missing.length)}</div>
+            </div>
+          </div>
+          <div class="mt-4 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+            <div class="text-[11px] font-bold text-[#c7d5eb]">最新发现</div>
+            <div class="mt-1 text-[12px] leading-[1.55] text-[#dbe5f6]">${escapeHtml(modal.latestLine || '暂无发现记录。')}</div>
+          </div>
+          <div class="mt-4 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+            <div class="text-[11px] font-bold text-[#c7d5eb]">待汇总设备</div>
+            <div class="mt-2 grid gap-2">
+              ${missing.length ? missing.map((item) => `
+                <div class="rounded-[14px] border border-[rgba(88,116,154,0.16)] bg-[rgba(18,25,36,0.72)] px-3 py-2">
+                  <div class="text-[12px] font-extrabold text-white">${escapeHtml(item.device?.name || item.device?.mac || '未知设备')}</div>
+                  <div class="mt-1 text-[10.5px] leading-[1.45] text-[#95a8c2]">${escapeHtml(item.device?.mac || '')}</div>
+                </div>
+              `).join('') : '<div class="text-[11px] leading-[1.55] text-[#8ea3bf]">全部设备都已经汇总。</div>'}
+            </div>
+          </div>
+          <div class="mt-4 flex flex-wrap justify-end gap-2">
+            <button class="ghost-btn" type="button" data-action="room-finalize-refresh">重新汇总</button>
+            <button class="ghost-btn bg-[linear-gradient(180deg,rgba(74,171,255,0.96),rgba(56,132,214,0.98))] text-white" type="button" data-action="room-finalize-ignore">忽略并完成</button>
           </div>
         </div>
       </div>
@@ -6091,6 +7992,32 @@
                     <div class="text-[11px] font-bold text-[#c7d5eb]">房间备注</div>
                     <textarea class="mt-2 min-h-[132px] w-full resize-y rounded-[14px] border border-[rgba(88,116,154,0.28)] bg-[rgba(12,18,28,0.92)] px-3 py-2.5 text-[12px] leading-[1.55] text-[#f5f8ff] outline-none transition placeholder:text-[#7184a1] focus:border-[rgba(103,174,254,0.5)]" data-role="wizard-room-notes" placeholder="记录本局说明、临时备注、NPC 提示等。">${escapeHtml(room.notes || '')}</textarea>
                   </div>
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5 xl:col-span-2">
+                    <div class="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div class="text-[11px] font-bold text-[#c7d5eb]">本局触发条件</div>
+                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">默认继承功能包，可在当前房间覆盖。大于等于表示越近越容易触发；小于等于用于弱信号/远离类玩法。</div>
+                      </div>
+                      ${makePill(triggerConditionText(room.trigger_compare ?? templateSignalUi.trigger_compare, room.trigger_signal_rssi ?? templateSignalUi.trigger_rssi_threshold, room.trigger_hold_ms ?? templateSignalUi.trigger_hold_ms), true)}
+                    </div>
+                    <div class="mt-3 grid gap-2 md:grid-cols-3">
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">比较方向</span>
+                        <select class="fake-select h-9 w-full px-2 text-[12px]" data-role="wizard-trigger-compare">
+                          <option value="gte" ${triggerCompareValue(room.trigger_compare ?? templateSignalUi.trigger_compare) === 'gte' ? 'selected' : ''}>大于等于</option>
+                          <option value="lte" ${triggerCompareValue(room.trigger_compare ?? templateSignalUi.trigger_compare) === 'lte' ? 'selected' : ''}>小于等于</option>
+                        </select>
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">RSSI 阈值（dBm）</span>
+                        <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-trigger-rssi" type="number" step="1" value="${escapeHtml(normalizeNumber(room.trigger_signal_rssi ?? templateSignalUi.trigger_rssi_threshold, DEFAULT_TRIGGER_RSSI))}">
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">持续时间（ms）</span>
+                        <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-trigger-hold" type="number" step="50" value="${escapeHtml(normalizeNumber(room.trigger_hold_ms ?? templateSignalUi.trigger_hold_ms, DEFAULT_TRIGGER_HOLD_MS))}">
+                      </label>
+                    </div>
+                  </div>
                   <div class="rounded-[18px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3.5 xl:col-span-2">
                     <div class="flex flex-wrap items-center justify-between gap-2">
                       <div>
@@ -6215,7 +8142,7 @@
                       <div>源组：<span class="font-bold text-white">${escapeHtml(summaryGroups(room.source_group_ids || []))}</span></div>
                       <div>目标组：<span class="font-bold text-white">${escapeHtml(summaryGroups(room.target_group_ids || []))}</span></div>
                       <div>感应：<span class="font-bold text-white">${escapeHtml(room.sense_mode || templateSenseText || '未设置')}</span></div>
-                      <div>触发条件：<span class="font-bold text-white">≥ ${escapeHtml(normalizeNumber(room.trigger_signal_rssi ?? templateSignalUi.trigger_rssi_threshold, -10))} dBm / ${escapeHtml(normalizeNumber(room.trigger_hold_ms ?? templateSignalUi.trigger_hold_ms, 2000))} ms</span></div>
+                      <div>触发条件：<span class="font-bold text-white">${escapeHtml(triggerConditionText(room.trigger_compare ?? templateSignalUi.trigger_compare, room.trigger_signal_rssi ?? templateSignalUi.trigger_rssi_threshold, room.trigger_hold_ms ?? templateSignalUi.trigger_hold_ms))}</span></div>
                       <div>空闲灯效：<span class="font-bold text-white">${escapeHtml(effectNameById(room.idle_effect_id || template.idle_effect_id || ''))}</span></div>
                       <div>触发灯效：<span class="font-bold text-white">${escapeHtml(effectNameById(room.trigger_effect_id || template.trigger_effect_id || ''))}</span></div>
                       <div>灯效矩阵：<span class="font-bold text-white">${escapeHtml(Array.isArray(room.effect_rules) ? room.effect_rules.length : 0)} 条</span></div>
@@ -6304,7 +8231,7 @@
     const loadHint = state.controllerOnline
       ? `页面当前已联机，可以继续扫描和点名。`
       : `先连接到控制端所在网络，再点“从控制端读取”。如果暂时连不上，也可以继续离线编辑。`;
-    const tagText = `UI v0.8.2`;
+    const tagText = `UI v0.8.3`;
     return `
       <div id="mw-app" class="mx-auto my-3 w-[min(1860px,calc(100vw-40px))] text-[12px] leading-[1.4]">
         <section class="rounded-[18px] border border-[rgba(88,116,154,0.24)] bg-[linear-gradient(180deg,rgba(13,22,35,0.88),rgba(9,16,27,0.84))] px-3.5 py-3 shadow-[0_14px_36px_rgba(0,0,0,0.26)] backdrop-blur-sm">
@@ -6333,7 +8260,7 @@
   function renderDialogs() {
     const root = document.getElementById('mw-dialog-root');
     if (!root) return;
-    root.innerHTML = `${renderRoomPrepareModal()}${renderRoomCountdownOverlay()}${renderGroupDialogs()}${renderEffectDialogs()}${renderTemplateDialogs()}`;
+    root.innerHTML = `${renderRoomPrepareModal()}${renderRoomCountdownOverlay()}${renderRoomFinalizeModal()}${renderGroupDialogs()}${renderEffectDialogs()}${renderTemplateDialogs()}`;
   }
 
   function render() {
@@ -6368,6 +8295,31 @@
 
   function bindMediaQueryFixes() {
     // no-op placeholder for future responsive tweaks
+  }
+
+  function isInteractiveEditorOpen() {
+    if (wizardState().open) return true;
+    if (state.templateFormModal || state.effectFormModal || state.groupFormModal) return true;
+    return false;
+  }
+
+  function isEditingFocusableElement(el) {
+    if (!el || typeof el.closest !== 'function') return false;
+    if (el.matches('input, textarea, select')) return true;
+    if (el.isContentEditable) return true;
+    if (el.closest('[data-wizard-scroll-root]')) return true;
+    if (el.closest('[data-role^="wizard-"]')) return true;
+    if (el.closest('[data-role="template-form-input"]')) return true;
+    if (el.closest('[data-role="effect-form-input"]')) return true;
+    if (el.closest('[data-role="group-form-input"]')) return true;
+    return false;
+  }
+
+  function shouldPauseAutoRefresh() {
+    if (isInteractiveEditorOpen()) return true;
+    const active = document.activeElement;
+    if (isEditingFocusableElement(active)) return true;
+    return false;
   }
 
   async function loadInitialState() {
@@ -6408,7 +8360,7 @@
       if (!state.roomRecords.length) {
         state.roomRecords = state.localState.room_history || [];
       }
-      state.debugLines.unshift(`page init | ui=v0.8.2 launcher=${window.location.protocol !== 'file:'} controllerBase=${state.controllerBase}`);
+      state.debugLines.unshift(`page init | ui=v0.8.3 launcher=${window.location.protocol !== 'file:'} controllerBase=${state.controllerBase}`);
       state.debugLines = state.debugLines.slice(0, MAX_VISIBLE_LOG_LINES);
       persistLocalCache();
       persistRecordsCache();
@@ -6453,6 +8405,7 @@
       setBusy('records', true);
       const response = await fetchRecords();
       state.roomRecords = normalizeRoomRecords(response);
+      if (state.localState) state.localState.room_history = state.roomRecords.slice(0, 5000);
       persistRecordsCache();
       render();
       logDebug('刷新房间记录成功');
@@ -6481,7 +8434,7 @@
     }
   }
 
-  function handleClick(event) {
+  async function handleClick(event) {
     const target = event.target.closest('[data-action]');
     if (!target) return;
     const action = target.dataset.action;
@@ -6513,6 +8466,7 @@
         loadFromController();
         break;
       case 'publish':
+        if (state.busy.publish || state.preparingRoomId) break;
         publishConfig();
         break;
       case 'scan-devices':
@@ -6733,23 +8687,48 @@
         deleteRoom(roomId || activeRoomId());
         break;
       case 'publish-room':
+        if (state.busy.publish || state.preparingRoomId) break;
         if (roomId) setActiveRoom(roomId);
         prepareRoom(currentRoom());
         break;
       case 'prepare-room':
+        if (state.busy.publish || state.preparingRoomId) break;
         if (roomId) setActiveRoom(roomId);
         prepareRoom(currentRoom());
         break;
       case 'confirm-room-prepare':
+        if (state.busy.publish || state.preparingRoomId) break;
         if (state.roomPrepareModal?.roomId) setActiveRoom(state.roomPrepareModal.roomId);
         prepareRoom(roomById(state.roomPrepareModal?.roomId) || currentRoom(), { force: true });
         break;
+      case 'test-room-effects':
+        if (state.busy.publish || state.busy.testEffect || state.preparingRoomId) break;
+        if (state.roomPrepareModal?.roomId) setActiveRoom(state.roomPrepareModal.roomId);
+        testRoomTriggerEffects(roomById(state.roomPrepareModal?.roomId) || currentRoom());
+        break;
+      case 'stop-room-test-effects':
+        if (state.busy.stopEffect) break;
+        if (state.roomPrepareModal?.roomId) setActiveRoom(state.roomPrepareModal.roomId);
+        stopRoomTestEffects(roomById(state.roomPrepareModal?.roomId) || currentRoom());
+        break;
       case 'cancel-room-prepare':
+        if (state.busy.publish || state.busy.testEffect || state.preparingRoomId) break;
         state.roomPrepareModal = null;
         renderDialogs();
         break;
       case 'cancel-room-countdown':
         clearRoomCountdown();
+        break;
+      case 'room-finalize-refresh':
+        if (state.roomFinalizeModal?.room) {
+          await loadFromController();
+          state.roomFinalizeModal = roomFinalizeAudit(state.roomFinalizeModal.room);
+          renderDialogs();
+        }
+        break;
+      case 'room-finalize-ignore':
+        state.roomFinalizeModal = null;
+        renderDialogs();
         break;
       case 'toggle-room-sort':
         setRoomSortOrder(roomSortOrder() === 'asc' ? 'desc' : 'asc');
@@ -6918,12 +8897,56 @@
       persistLocalCache();
       return;
     }
+    if (target.matches('[data-role="wizard-trigger-compare"]')) {
+      const room = ensureRoomDraft();
+      room.trigger_compare = triggerCompareValue(target.value);
+      room.updated_at = nowIso();
+      persistLocalCache();
+      render();
+      return;
+    }
+    if (target.matches('[data-role="wizard-trigger-rssi"]')) {
+      const room = ensureRoomDraft();
+      room.trigger_signal_rssi = normalizeNumber(target.value, DEFAULT_TRIGGER_RSSI);
+      room.updated_at = nowIso();
+      persistLocalCache();
+      return;
+    }
+    if (target.matches('[data-role="wizard-trigger-hold"]')) {
+      const room = ensureRoomDraft();
+      room.trigger_hold_ms = normalizeNumber(target.value, DEFAULT_TRIGGER_HOLD_MS);
+      room.updated_at = nowIso();
+      persistLocalCache();
+      return;
+    }
     if (target.matches('[data-role="wizard-effect-rule"]')) {
       updateWizardEffectRule(target.dataset.sourceGid, target.dataset.targetGid, target.dataset.ruleField, target.value);
       return;
     }
     if (target.matches('[data-role="wizard-effect-batch"]')) {
       applyWizardEffectRuleBatch(target.dataset.ruleField, target.value);
+      return;
+    }
+    if (target.matches('[data-role="wizard-trigger-compare"]')) {
+      const room = ensureRoomDraft();
+      room.trigger_compare = triggerCompareValue(target.value);
+      room.updated_at = nowIso();
+      persistLocalCache();
+      render();
+      return;
+    }
+    if (target.matches('[data-role="wizard-trigger-rssi"]')) {
+      const room = ensureRoomDraft();
+      room.trigger_signal_rssi = normalizeNumber(target.value, DEFAULT_TRIGGER_RSSI);
+      room.updated_at = nowIso();
+      persistLocalCache();
+      return;
+    }
+    if (target.matches('[data-role="wizard-trigger-hold"]')) {
+      const room = ensureRoomDraft();
+      room.trigger_hold_ms = normalizeNumber(target.value, DEFAULT_TRIGGER_HOLD_MS);
+      room.updated_at = nowIso();
+      persistLocalCache();
       return;
     }
     if (target.matches('[data-role="template-form-input"]')) {
@@ -7187,6 +9210,16 @@
       if (state.previewPlaying) state.previewTick++;
       updateEffectPreviewNodes();
     }, PREVIEW_FRAME_MS);
+    setInterval(() => {
+      if (!state.controllerOnline) return;
+      if (state.busy.controller || state.busy.publish || state.preparingRoomId) return;
+      if (shouldPauseAutoRefresh()) return;
+      const room = currentRoom();
+      const shouldRefresh = state.activeTab === 'room' || !!state.roomPrepareModal || !!state.roomStartCountdown || (room && (room.status === 'running' || room.status === 'published'));
+      if (shouldRefresh) {
+        loadFromController();
+      }
+    }, 2500);
   }
 
   window.__mwRebuild = {
