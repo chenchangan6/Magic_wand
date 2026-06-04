@@ -30,12 +30,11 @@ static const char *TAG = "MAGIC_WAND_RX";
 // ESP32-C6 modules normally stay on channel 1. If you later fix a channel on
 // the transmitter, keep this value the same.
 #define ESPNOW_CHANNEL 1
-#define RUNTIME_SPEC_LEN 240
+#define RUNTIME_SPEC_LEN 384
 #define RUNTIME_BEACON_MS 300
 #define RUNTIME_STAT_MS 120000
 #define RUNTIME_TRIGGER_COOLDOWN_MS 5000
 #define RUNTIME_PEER_LIMIT 16
-#define TEST_EFFECT_MS 0
 
 typedef enum {
     CMD_START = 1,
@@ -63,8 +62,6 @@ static char runtime_idle_spec[RUNTIME_SPEC_LEN] = "silent";
 static char runtime_trigger_spec[RUNTIME_SPEC_LEN] = "silent";
 static uint8_t controller_mac[6] = {0};
 static int64_t last_trigger_ms = 0;
-static volatile int64_t test_effect_until_ms = 0;
-static volatile bool test_effect_restore_running = true;
 static uint32_t beacon_seq = 0;
 static uint32_t stat_seq = 0;
 
@@ -493,20 +490,6 @@ static void led_self_test_task(void *pvParameter)
 
         leds_already_cleared = false;
         default_effect_render_frame();
-        int64_t test_until = test_effect_until_ms;
-        if (test_until > 0 && (esp_timer_get_time() / 1000) >= test_until) {
-            char idle_spec[RUNTIME_SPEC_LEN] = {0};
-            portENTER_CRITICAL(&runtime_mux);
-            snprintf(idle_spec, sizeof(idle_spec), "%s", runtime_idle_spec);
-            portEXIT_CRITICAL(&runtime_mux);
-            default_effect_set_spec(idle_spec[0] ? idle_spec : "silent");
-            test_effect_until_ms = 0;
-            effect_running = test_effect_restore_running;
-            if (!effect_running) {
-                leds_already_cleared = false;
-            }
-            ESP_LOGI(TAG, "TEST_EFFECT finished, restored %s.", effect_running ? "idle effect" : "stopped state");
-        }
         wait_or_control_change(30);
     }
 }
@@ -555,8 +538,6 @@ static void apply_command(wand_cmd_t cmd)
             snprintf(trigger_spec, sizeof(trigger_spec), "silent");
         }
         if (default_effect_set_spec(trigger_spec)) {
-            test_effect_restore_running = effect_running;
-            test_effect_until_ms = 0;
             effect_running = true;
             identify_cancel_requested = true;
             identify_restore_running = true;
@@ -587,7 +568,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
         return;
     }
 
-    char msg[250];
+    char msg[512];
     int copy_len = data_len;
     if (copy_len >= (int)sizeof(msg)) {
         copy_len = sizeof(msg) - 1;

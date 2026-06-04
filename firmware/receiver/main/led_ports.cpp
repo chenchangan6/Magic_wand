@@ -17,6 +17,7 @@ static const char *TAG = "LED_PORTS";
 
 #define LED_PORT_COUNT 3
 #define DEFAULT_LED_COUNT 25
+#define MAX_LED_COUNT 200
 
 typedef struct {
     const char *label;
@@ -33,6 +34,17 @@ static led_port_t led_ports[LED_PORT_COUNT] = {
 };
 
 static int active_led_port_count = 0;
+
+static led_strip_handle_t init_led_strip_spi_fixed(int gpio_num, int led_num);
+static led_strip_handle_t init_led_strip_rmt_fixed(int gpio_num, int led_num);
+
+static led_strip_handle_t create_strip_for_port(const led_port_t *cfg, int led_num)
+{
+    if (!cfg || led_num <= 0) return NULL;
+    return cfg->use_spi
+        ? init_led_strip_spi_fixed(cfg->gpio, led_num)
+        : init_led_strip_rmt_fixed(cfg->gpio, led_num);
+}
 
 static led_strip_handle_t init_led_strip_spi_fixed(int gpio_num, int led_num)
 {
@@ -94,9 +106,7 @@ bool led_ports_init(void)
 
     for (int port = 0; port < LED_PORT_COUNT; port++) {
         led_port_t *cfg = &led_ports[port];
-        cfg->strip = cfg->use_spi
-            ? init_led_strip_spi_fixed(cfg->gpio, cfg->led_count)
-            : init_led_strip_rmt_fixed(cfg->gpio, cfg->led_count);
+        cfg->strip = create_strip_for_port(cfg, cfg->led_count);
 
         if (cfg->strip) {
             ESP_LOGI(TAG, "%s ready: GPIO%d, %d LEDs, backend=%s",
@@ -138,6 +148,39 @@ int led_ports_led_count(int port_index)
         return 0;
     }
     return led_ports[port_index].led_count;
+}
+
+bool led_ports_set_count(int port_index, int led_count)
+{
+    if (port_index < 0 || port_index >= LED_PORT_COUNT) {
+        return false;
+    }
+    if (led_count < 1) led_count = 1;
+    if (led_count > MAX_LED_COUNT) led_count = MAX_LED_COUNT;
+
+    led_port_t *cfg = &led_ports[port_index];
+    if (cfg->strip && cfg->led_count == led_count) {
+        return true;
+    }
+
+    led_strip_handle_t next = create_strip_for_port(cfg, led_count);
+    if (!next) {
+        ESP_LOGW(TAG, "%s reconfigure failed, keeping %d LEDs", cfg->label, cfg->led_count);
+        return false;
+    }
+
+    if (cfg->strip) {
+        led_strip_clear(cfg->strip);
+        led_strip_refresh(cfg->strip);
+        led_strip_del(cfg->strip);
+    } else {
+        active_led_port_count++;
+    }
+    cfg->strip = next;
+    cfg->led_count = led_count;
+    ESP_LOGI(TAG, "%s reconfigured: GPIO%d, %d LEDs, backend=%s",
+             cfg->label, cfg->gpio, cfg->led_count, cfg->use_spi ? "SPI" : "RMT");
+    return true;
 }
 
 const char *led_ports_label(int port_index)

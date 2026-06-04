@@ -82,6 +82,7 @@
     { id: 'builtin-pulse', name: '脉冲跑马', note: '渐变、起止速度、结束停留。', mode: 'pulse_chase', kind: 'effect', colorA: '#FFD24D', colorB: '#FFFBF0', colorC: '#FFFFFF' }
   ];
   const builtinEffects = builtinEffectCatalog.filter((effect) => effect.kind !== 'utility');
+  const MCU_EFFECT_TEXT_LIMIT = 360;
 
   const builtinTemplates = [
     {
@@ -2950,7 +2951,6 @@
 
   function mcuModeForTrack(track, fallback = 'silent') {
     const mode = String(track?.mode || fallback || 'silent');
-    if (mode === 'gradient') return 'solid';
     if (mode === 'pulse_chase') return 'pulse';
     return mode;
   }
@@ -2972,7 +2972,7 @@
     const repeat = clamp(normalizeNumber(track?.repeat, 0), 0, 9999);
     const accel = clamp(normalizeNumber(track?.accel, 0), 0, 100);
     const hold = clamp(normalizeNumber(track?.end_hold_ms, 0), 0, 30000);
-    if (mode === 'solid') return JSON.stringify([mode, start, length, gap, c1, c2, c3, brightness]);
+    if (mode === 'solid' || mode === 'gradient') return JSON.stringify([mode, start, length, gap, c1, c2, c3, period, brightness, repeat, accel, hold]);
     if (mode === 'breath') {
       const speed = breathSpeedForMcu(track);
       return JSON.stringify([mode, start, length, gap, c1, c2, c3, speed, brightness, repeat, accel, hold]);
@@ -3018,7 +3018,8 @@
     const repeat = clamp(normalizeNumber(track?.repeat, 0), 0, 9999);
     const accel = clamp(normalizeNumber(track?.accel, 0), 0, 100);
     const hold = clamp(normalizeNumber(track?.end_hold_ms, 0), 0, 30000);
-    if (mode === 'solid' || mode === 'gradient') return `solid3|${portMask}|${start}|${length}|${gap}|${c1}|${c2}|${c3}|${brightness}`;
+    if (mode === 'solid') return `solid3|${portMask}|${start}|${length}|${gap}|${c1}|${c2}|${c3}|${brightness}`;
+    if (mode === 'gradient') return `gradient3|${portMask}|${start}|${length}|${gap}|${c1}|${c2}|${c3}|${period}|${brightness}|${repeat}|${accel}|${hold}`;
     if (mode === 'breath') {
       const speed = breathSpeedForMcu(track);
       return `breath3|${portMask}|${start}|${length}|${gap}|${c1}|${c2}|${c3}|${speed}|${brightness}|${repeat}|${accel}|${hold}`;
@@ -3043,7 +3044,7 @@
       const specs = tracks.slice(0, 3).map((track) => effectTrackSpecForMcu(track, portMaskForMcu(track), fallback)).filter((spec) => spec && spec !== 'silent');
       if (specs.length > 1) {
         const multi = `multi2;${specs.join(';')}`;
-        if (multi.length <= 180) return multi;
+        if (multi.length <= MCU_EFFECT_TEXT_LIMIT) return multi;
       }
     }
     const portMask = combinedPortMaskForMcu(effect, primary, fallback);
@@ -3062,14 +3063,11 @@
     if (ignored.length && !spec.startsWith('multi2;')) {
       warnings.push(`固件本次只执行 ${applied.map((track) => `LED${normalizeNumber(track.port, 1)}`).join(' / ')}；${ignored.map((track) => `LED${normalizeNumber(track.port, 1)} ${effectModeLabel(track.mode)}`).join('、')} 暂未下发。`);
     }
-    if (tracks.length > 1 && !spec.startsWith('multi2;') && effectSpecForMcu(effectId, fallback).length > 180) {
+    if (tracks.length > 1 && !spec.startsWith('multi2;') && effectSpecForMcu(effectId, fallback).length > MCU_EFFECT_TEXT_LIMIT) {
       warnings.push('多轨灯效超过 ESP-NOW 安全长度，已退回单轨下发。');
     }
     if (spec.startsWith('multi2;')) {
       warnings.push(`已启用 3 路多轨下发：${tracks.slice(0, 3).map((track) => `LED${normalizeNumber(track.port, 1)} ${effectModeLabel(track.mode)}`).join('、')}。`);
-    }
-    if (String(primary?.mode || '') === 'gradient') {
-      warnings.push('渐变模式在当前固件中按纯色发布。');
     }
     if (!effect && effectId && effectId !== 'builtin-silent') {
       warnings.push('没有找到这个灯效定义，已使用回退灯效。');
@@ -3725,8 +3723,8 @@
         trigger_compare: triggerCompareValue(group.trigger_compare),
         rssi: normalizeNumber(group.rssi, -70),
         hold: normalizeNumber(group.hold, 2000),
-        effect: String(group.effect || 'silent').slice(0, 180),
-        trigger_effect: String(group.trigger_effect || group.effect || 'silent').slice(0, 180),
+        effect: String(group.effect || 'silent').slice(0, MCU_EFFECT_TEXT_LIMIT),
+        trigger_effect: String(group.trigger_effect || group.effect || 'silent').slice(0, MCU_EFFECT_TEXT_LIMIT),
         silence: String(group.silence || '').slice(0, 63),
         peer_mask: remapRuntimeMask(group.peer_mask),
         room_hash: normalizeNumber(group.room_hash, 1)

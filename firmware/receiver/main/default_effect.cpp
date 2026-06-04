@@ -20,6 +20,7 @@ typedef enum {
     EFFECT_MODE_CYCLE = 5,
     EFFECT_MODE_CHASE = 6,
     EFFECT_MODE_PULSE = 7,
+    EFFECT_MODE_GRADIENT = 8,
 } effect_mode_t;
 
 typedef struct {
@@ -158,9 +159,31 @@ static const char *effect_mode_name(effect_mode_t mode)
         case EFFECT_MODE_CYCLE: return "cycle";
         case EFFECT_MODE_CHASE: return "chase";
         case EFFECT_MODE_PULSE: return "pulse";
+        case EFFECT_MODE_GRADIENT: return "gradient";
         case EFFECT_MODE_SELFTEST:
         default:
             return "selftest";
+    }
+}
+
+static void sync_led_counts_from_effects(void)
+{
+    int desired[3] = {0, 0, 0};
+    for (uint8_t i = 0; i < runtime_effect_count && i < MAX_RUNTIME_TRACKS; i++) {
+        const runtime_effect_t *effect = &runtime_effects[i];
+        if (effect->mode == EFFECT_MODE_SILENT || effect->mode == EFFECT_MODE_SELFTEST) continue;
+        int required = (int)effect->start_index + (int)effect->length;
+        if (required < 1) required = 1;
+        if (required > MAX_RENDER_LEDS) required = MAX_RENDER_LEDS;
+        for (int port = 0; port < 3; port++) {
+            if ((effect->port_mask & (1 << port)) == 0) continue;
+            if (required > desired[port]) desired[port] = required;
+        }
+    }
+    for (int port = 0; port < 3; port++) {
+        if (desired[port] > 0 && desired[port] != led_ports_led_count(port)) {
+            led_ports_set_count(port, desired[port]);
+        }
     }
 }
 
@@ -235,7 +258,7 @@ static bool parse_single_effect_spec(const char *spec, runtime_effect_t *out)
         return true;
     }
 
-    char buf[192];
+    char buf[384];
     snprintf(buf, sizeof(buf), "%s", spec);
     char *saveptr = NULL;
     char *mode = strtok_r(buf, "|", &saveptr);
@@ -285,6 +308,17 @@ static bool parse_single_effect_spec(const char *spec, runtime_effect_t *out)
         next_color_token(&saveptr, next.colors[0], &next.colors[1]);
         next_color_token(&saveptr, next.colors[0], &next.colors[2]);
         next.brightness_pct = clamp_u8_int(next_int_token(&saveptr, 100), 0, 100);
+    } else if (strcmp(mode, "gradient3") == 0) {
+        next.mode = EFFECT_MODE_GRADIENT;
+        parse_common_v2(&saveptr, &next);
+        next_color_token(&saveptr, next.colors[0], &next.colors[0]);
+        next_color_token(&saveptr, next.colors[0], &next.colors[1]);
+        next_color_token(&saveptr, next.colors[0], &next.colors[2]);
+        next.period_ms = clamp_u16_int(next_int_token(&saveptr, 1800), 50, 20000);
+        next.brightness_pct = clamp_u8_int(next_int_token(&saveptr, 100), 0, 100);
+        next.repeat_count = clamp_u16_int(next_int_token(&saveptr, 0), 0, 9999);
+        next.accel_pct = (int8_t)clamp_u8_int(next_int_token(&saveptr, 0) + 100, 0, 200) - 100;
+        next.end_hold_ms = clamp_u16_int(next_int_token(&saveptr, 0), 0, 30000);
     } else if (strcmp(mode, "breath2") == 0) {
         next.mode = EFFECT_MODE_BREATH;
         parse_common_v2(&saveptr, &next);
@@ -414,7 +448,7 @@ bool default_effect_set_spec(const char *spec)
     }
 
     if (strncmp(spec, "multi2;", 7) == 0) {
-        char buf[192];
+        char buf[384];
         snprintf(buf, sizeof(buf), "%s", spec + 7);
         char *saveptr = NULL;
         char *part = strtok_r(buf, ";", &saveptr);
@@ -433,6 +467,7 @@ bool default_effect_set_spec(const char *spec)
         }
         runtime_effect_count = count;
         reset_all_effect_states();
+        sync_led_counts_from_effects();
         log_runtime_effects("multi");
         return true;
     }
@@ -440,6 +475,7 @@ bool default_effect_set_spec(const char *spec)
     if (!parse_single_effect_spec(spec, &runtime_effects[0])) return false;
     runtime_effect_count = 1;
     reset_all_effect_states();
+    sync_led_counts_from_effects();
     log_runtime_effects("single");
     return true;
 }
@@ -647,6 +683,21 @@ static void render_breath(runtime_effect_t *effect, runtime_effect_state_t *stat
     }
 }
 
+static void render_gradient(runtime_effect_t *effect, runtime_effect_state_t *state)
+{
+    if (handle_end_state(effect, state, effect->colors[2])) return;
+    uint16_t period = adjusted_period_ms(effect, state);
+    float pos = (float)state->frame_ms / (float)period;
+    if (pos < 0.0f) pos = 0.0f;
+    if (pos > 1.0f) pos = 1.0f;
+    rgb_color_t color = pos < 0.5f
+        ? mix_color(effect->colors[0], effect->colors[1], pos * 2.0f)
+        : mix_color(effect->colors[1], effect->colors[2], (pos - 0.5f) * 2.0f);
+    float brightness = clamp01((float)effect->brightness_pct / 100.0f);
+    set_selected_pattern(effect, color, brightness);
+    update_cycle_count(effect, state, period);
+}
+
 static void render_blink(runtime_effect_t *effect, runtime_effect_state_t *state)
 {
     if (handle_end_state(effect, state, effect->colors[0])) return;
@@ -699,6 +750,8 @@ static void render_chase_like(runtime_effect_t *effect, runtime_effect_state_t *
     if (!pulse) {
         uint16_t head_period = period / active_count;
         if (head_period < 180) head_period = 180;
+        uint32_t loop_period = (uint32_t)head_period * (uint32_t)active_count;
+        if (loop_period < (uint32_t)head_period) loop_period = head_period;
         int head = (int)((state->frame_ms / head_period) % active_count);
         for (int i = 0; i < active_count; i++) {
             int dist = circular_distance_int(i, head, active_count);
@@ -707,7 +760,16 @@ static void render_chase_like(runtime_effect_t *effect, runtime_effect_state_t *
             scales[i] = trail * brightness;
         }
         set_indexed_pattern(effect, colors, scales);
-        update_cycle_count(effect, state, period);
+        state->frame_ms += 30;
+        if (state->frame_ms >= loop_period) {
+            state->frame_ms = 0;
+            if (effect->repeat_count > 0) {
+                state->completed_cycles++;
+                if (state->completed_cycles >= effect->repeat_count) {
+                    state->ended = true;
+                }
+            }
+        }
         return;
     }
 
@@ -788,6 +850,9 @@ void default_effect_render_frame(void)
                 break;
             case EFFECT_MODE_BLINK:
                 render_blink(effect, state);
+                break;
+            case EFFECT_MODE_GRADIENT:
+                render_gradient(effect, state);
                 break;
             case EFFECT_MODE_CYCLE:
                 render_cycle(effect, state);

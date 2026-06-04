@@ -1,16 +1,25 @@
 {
-  "name": "MagicWand Receiver",
-  "version": "2026.06.03.1710",
-  "new_install_prompt_erase": true,
-  "new_install_improv_wait_time": 0,
-  "builds": [
-    {
-      "chipFamily": "ESP32-C6",
-      "parts": [
-        { "path": "bootloader.bin", "offset": 0 },
-        { "path": "partition-table.bin", "offset": 32768 },
-        { "path": "magic_wand_receiver.bin", "offset": 65536 }
-      ]
-    }
-  ]
+    "name":  "MagicWand Receiver",
+    "version":  "2026.06.04.0941",
+    "new_install_prompt_erase":  true,
+    "new_install_improv_wait_time":  0,
+    "builds":  [
+                   {
+                       "chipFamily":  "ESP32-C6",
+                       "parts":  [
+                                     {
+                                         "path":  "bootloader.bin",
+                                         "offset":  0
+                                     },
+                                     {
+                                         "path":  "partition-table.bin",
+                                         "offset":  32768
+                                     },
+                                     {
+                                         "path":  "magic_wand_receiver.bin",
+                                         "offset":  65536
+                                     }
+                                 ]
+                   }
+               ]
 }

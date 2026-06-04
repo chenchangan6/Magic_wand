@@ -28,7 +28,7 @@ LOCAL_STATE_VERSION = 1
 RSSI_DEFAULTS_VERSION = 2
 DEFAULT_TRIGGER_RSSI = -25
 OLD_DEFAULT_TRIGGER_RSSI = -10
-MCU_EFFECT_TEXT_LIMIT = 180
+MCU_EFFECT_TEXT_LIMIT = 360
 
 
 def log_line(level: str, message: str):
@@ -57,7 +57,7 @@ def _load_json_file(path: Path, default: object):
     if not path.exists():
         return default
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception as exc:
         log_exception(f"load json file failed: {path}", exc)
         return default

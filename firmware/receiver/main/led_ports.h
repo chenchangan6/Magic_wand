@@ -13,6 +13,7 @@ void led_ports_clear_all(void);
 int led_ports_count(void);
 int led_ports_active_count(void);
 int led_ports_led_count(int port_index);
+bool led_ports_set_count(int port_index, int led_count);
 const char *led_ports_label(int port_index);
 void led_ports_set_all(int port_index, rgb_color_t color, float scale);
 void led_ports_set_range(int port_index, int start_index, int count, rgb_color_t color, float scale);

@@ -38,7 +38,7 @@ static const char *TAG = "MAGIC_CTRL";
 #define CONFIG_IMPORT_MAX_BODY (32 * 1024)
 
 #define DEVICE_NAME_LEN 32
-#define GROUP_TEXT_LEN 192
+#define GROUP_TEXT_LEN 384
 #define WEB_UI_VERSION "v0.2.6"
 #define CONFIG_SCHEMA_VERSION 2
 
@@ -1432,7 +1432,7 @@ static esp_err_t send_runtime_to_devices(bool start_after_config, bool test_afte
             continue;
         }
 
-        char cfg[250];
+        char cfg[512];
         snprintf(cfg, sizeof(cfg), "CFG|%u|%u|%u|%s|%d|%u|%s",
                  (unsigned int)room_hash,
                  (unsigned int)group_mask,
@@ -1444,7 +1444,7 @@ static esp_err_t send_runtime_to_devices(bool start_after_config, bool test_afte
         esp_err_t ret = send_espnow_command_to(mac, cfg);
         if (ret != ESP_OK) return ret;
 
-        char trg[250];
+        char trg[512];
         snprintf(trg, sizeof(trg), "TRG|%s", trigger[0] ? trigger : idle);
         ret = send_espnow_command_to(mac, trg);
         if (ret != ESP_OK) return ret;
