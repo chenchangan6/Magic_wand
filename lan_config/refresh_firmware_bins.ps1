@@ -2,6 +2,11 @@ $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $out = Join-Path $PSScriptRoot "firmware"
+$releasePath = Join-Path $PSScriptRoot "release.json"
+if (-not (Test-Path $releasePath)) {
+  throw "release.json was not found. Create or update it before refreshing firmware bins."
+}
+$release = Get-Content -Raw -Path $releasePath | ConvertFrom-Json
 
 $items = @(
   @{
@@ -25,7 +30,11 @@ foreach ($item in $items) {
   $manifestPath = Join-Path $target "manifest.json"
   if (Test-Path $manifestPath) {
     $manifest = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json
-    $manifest.version = Get-Date -Format "yyyy.MM.dd.HHmm"
+    $expected = $release.firmware.PSObject.Properties[$item.Name].Value.version
+    if (-not $expected) {
+      throw "Missing firmware version for $($item.Name) in release.json"
+    }
+    $manifest.version = $expected
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($manifestPath, (($manifest | ConvertTo-Json -Depth 10) + "`n"), $utf8NoBom)
   }

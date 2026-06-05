@@ -18,6 +18,7 @@ LOCAL_STATE_FILE = ROOT / "magic_wand_local_state.json"
 ROOM_RECORD_FILE = ROOT / "magic_wand_game_sessions.jsonl"
 LOG_FILE = ROOT / "serve_debug.log"
 FIRMWARE_DIR = ROOT / "firmware"
+RELEASE_FILE = ROOT / "release.json"
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("MAGIC_LAN_PORT", "8777"))
 CONTROLLER_BASE = os.environ.get("MAGIC_CONTROLLER_URL", "http://192.168.4.1").rstrip("/")
@@ -29,6 +30,17 @@ RSSI_DEFAULTS_VERSION = 2
 DEFAULT_TRIGGER_RSSI = -25
 OLD_DEFAULT_TRIGGER_RSSI = -10
 MCU_EFFECT_TEXT_LIMIT = 360
+DEFAULT_RELEASE = {
+    "product": "Magic Wand",
+    "release_version": "v1.0.2",
+    "local_service_version": "1.0.2",
+    "runtime_schema": 3,
+    "config_schema": 3,
+    "firmware": {
+        "controller": {"version": "2026.06.05.1950"},
+        "receiver": {"version": "2026.06.05.1950"},
+    },
+}
 
 
 def log_line(level: str, message: str):
@@ -67,16 +79,41 @@ def _write_json_file(path: Path, payload: object):
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _release_info():
+    release = _load_json_file(RELEASE_FILE, DEFAULT_RELEASE) if RELEASE_FILE.exists() else dict(DEFAULT_RELEASE)
+    if not isinstance(release, dict):
+        release = dict(DEFAULT_RELEASE)
+    firmware = release.get("firmware")
+    if not isinstance(firmware, dict):
+        firmware = {}
+    for role in ("controller", "receiver"):
+        if not isinstance(firmware.get(role), dict):
+            firmware[role] = dict(DEFAULT_RELEASE["firmware"][role])
+        firmware[role].setdefault("version", DEFAULT_RELEASE["firmware"][role]["version"])
+    release["firmware"] = firmware
+    release.setdefault("product", DEFAULT_RELEASE["product"])
+    release.setdefault("release_version", DEFAULT_RELEASE["release_version"])
+    release.setdefault("local_service_version", DEFAULT_RELEASE["local_service_version"])
+    release.setdefault("runtime_schema", DEFAULT_RELEASE["runtime_schema"])
+    release.setdefault("config_schema", DEFAULT_RELEASE["config_schema"])
+    return release
+
+
 def _firmware_info(name: str, app_name: str):
+    release = _release_info()
+    expected_version = str((release.get("firmware") or {}).get(name, {}).get("version") or "")
     manifest_path = FIRMWARE_DIR / name / "manifest.json"
     app_path = FIRMWARE_DIR / name / app_name
     manifest = _load_json_file(manifest_path, {}) if manifest_path.exists() else {}
     app_stat = app_path.stat() if app_path.exists() else None
     manifest_stat = manifest_path.stat() if manifest_path.exists() else None
+    manifest_version = str(manifest.get("version") or "")
     return {
         "manifest": str(manifest_path),
         "manifest_url": f"firmware/{name}/manifest.json",
-        "version": str(manifest.get("version") or ""),
+        "version": manifest_version,
+        "expected_version": expected_version,
+        "matches_expected": bool(expected_version and manifest_version == expected_version),
         "app": str(app_path),
         "app_size": app_stat.st_size if app_stat else 0,
         "app_mtime": datetime.fromtimestamp(app_stat.st_mtime).isoformat(timespec="seconds") if app_stat else "",
@@ -150,6 +187,8 @@ def _compact_controller_payload(payload: object):
                 "group_mask": remap_mask(device.get("group_mask")),
                 "rssi": as_int(device.get("rssi"), 0),
                 "seen_ms": max(0, as_int(device.get("seen_ms"), 0)),
+                "release_version": str(device.get("release_version") or "")[:23],
+                "firmware_version": str(device.get("firmware_version") or device.get("fw_version") or "")[:23],
             }
         )
 
@@ -638,11 +677,13 @@ class ConfigHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/status":
             local_state = _load_local_state()
+            release = _release_info()
             self._send_json(
                 {
                     "ok": True,
                     "server": "magic-wand-lan-config",
-                    "version": "1.0.1",
+                    "version": str(release.get("local_service_version") or DEFAULT_RELEASE["local_service_version"]),
+                    "release": release,
                     "port": PORT,
                     "saved": CONFIG_FILE.exists(),
                     "path": str(CONFIG_FILE),

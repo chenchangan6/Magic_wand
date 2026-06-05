@@ -1,4 +1,4 @@
-// ESP32-C6 receiver: ESP-NOW START/STOP control + three-port runtime effects.
+﻿// ESP32-C6 receiver: ESP-NOW START/STOP control + three-port runtime effects.
 // STOP: stop current effect and turn all LEDs off.
 // START: resume the currently configured runtime effect. Duplicate START/STOP commands are ignored.
 // FXSET|...: update the active effect profile used when START is running.
@@ -40,6 +40,8 @@ static const char *TAG = "MAGIC_WAND_RX";
 #define LED_BLACKOUT_SWEEP_COUNT 200
 #define SIGNAL_METER_RENDER_MS 500
 #define SIGNAL_METER_LOCK_MIN_MS 2000
+#define MAGICWAND_RELEASE_VERSION "v1.0.2"
+#define MAGICWAND_RECEIVER_BUILD "2026.06.05.1950"
 
 typedef enum {
     CMD_START = 1,
@@ -156,9 +158,10 @@ static void send_presence_reply(const uint8_t *dst_mac)
     uint8_t self_mac[6] = {0};
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, self_mac));
 
-    char reply[48];
-    snprintf(reply, sizeof(reply), "PRESENT,%02X:%02X:%02X:%02X:%02X:%02X",
-             self_mac[0], self_mac[1], self_mac[2], self_mac[3], self_mac[4], self_mac[5]);
+    char reply[96];
+    snprintf(reply, sizeof(reply), "PRESENT,%02X:%02X:%02X:%02X:%02X:%02X,%s,%s",
+             self_mac[0], self_mac[1], self_mac[2], self_mac[3], self_mac[4], self_mac[5],
+             MAGICWAND_RELEASE_VERSION, MAGICWAND_RECEIVER_BUILD);
 
     esp_err_t ret = esp_now_send(dst_mac, (const uint8_t *)reply, strlen(reply) + 1);
     if (ret == ESP_OK) {
@@ -1433,3 +1436,4 @@ extern "C" void app_main(void)
         led_ports_force_clear_all(LED_BLACKOUT_SWEEP_COUNT);
     }
 }
+

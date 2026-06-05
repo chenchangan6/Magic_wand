@@ -1,184 +1,60 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Magic Wand 示例设置手册</title>
-  <style>
-:root {
-  --bg: #081120;
-  --panel: #111827;
-  --card: #13203a;
-  --border: #2b3f68;
-  --text: #f1f5f9;
-  --muted: #94a3b8;
-  --blue: #3b82f6;
-  --green: #10b981;
-  --amber: #f59e0b;
-  --red: #ef4444;
-}
-* { box-sizing: border-box; }
-html { background: var(--bg); color: var(--text); font-family: Inter, "Microsoft YaHei", "PingFang SC", Arial, sans-serif; line-height: 1.68; }
-body { margin: 0; background: radial-gradient(circle at 15% 0%, rgba(59,130,246,.2), transparent 32rem), var(--bg); }
-.page { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 56px; }
-.hero, .panel, .card { border: 1px solid var(--border); background: rgba(17,24,39,.86); border-radius: 22px; box-shadow: 0 24px 70px rgba(0,0,0,.28); }
-.hero { padding: 30px; background: linear-gradient(135deg, rgba(17,24,39,.96), rgba(19,32,58,.92)); }
-.panel { padding: 20px; margin-top: 18px; }
-.card { padding: 16px; background: rgba(19,32,58,.72); }
-h1 { margin: 10px 0 8px; font-size: 38px; line-height: 1.14; letter-spacing: 0; }
-h2 { margin: 30px 0 12px; font-size: 25px; line-height: 1.25; }
-h3 { margin: 22px 0 10px; font-size: 19px; }
-h4 { margin: 16px 0 8px; font-size: 16px; color: #dbeafe; }
-p, li { color: #cbd5e1; }
-a { color: #93c5fd; }
-code { color: #bfdbfe; background: rgba(15,23,42,.9); border: 1px solid rgba(148,163,184,.22); border-radius: 8px; padding: 2px 6px; }
-.badge, .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 10px; border: 1px solid rgba(148,163,184,.25); color: #dbeafe; background: rgba(15,23,42,.72); font-size: 12px; font-weight: 800; }
-.pill.green { color: #d1fae5; border-color: rgba(16,185,129,.35); background: rgba(16,185,129,.12); }
-.pill.blue { color: #dbeafe; border-color: rgba(59,130,246,.35); background: rgba(59,130,246,.16); }
-.pill.amber { color: #fef3c7; border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.12); }
-.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.grid { display: grid; gap: 14px; }
-.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.toc { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 18px; }
-.toc a { text-decoration: none; border: 1px solid rgba(43,63,104,.8); border-radius: 14px; padding: 10px 12px; background: rgba(19,32,58,.62); color: #e2e8f0; font-weight: 800; }
-.callout { border: 1px solid rgba(16,185,129,.28); background: rgba(16,185,129,.1); border-radius: 18px; padding: 14px 16px; color: #d1fae5; }
-.warn { border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.1); color: #fef3c7; }
-.danger { border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.1); color: #fee2e2; }
-table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 16px; border: 1px solid var(--border); background: rgba(15,23,42,.82); margin: 12px 0; }
-th, td { border-bottom: 1px solid rgba(43,63,104,.7); padding: 10px 12px; text-align: left; vertical-align: top; font-size: 14px; }
-th { background: rgba(30,41,59,.94); color: #e2e8f0; font-size: 13px; }
-tr:last-child td { border-bottom: 0; }
-.flow { width: 100%; height: auto; border-radius: 18px; border: 1px solid var(--border); background: #0b1220; margin-top: 12px; }
-.small { font-size: 13px; color: var(--muted); }
-@media (max-width: 900px) {
-  .grid.two, .grid.three, .toc { grid-template-columns: 1fr; }
-  h1 { font-size: 30px; }
-  .page { width: min(100% - 24px, 1180px); }
-}
-@media print {
-  @page { size: A4; margin: 12mm; }
-  html, body { background: #fff !important; color: #111827 !important; }
-  body { font-size: 12px; }
-  .page { width: 100%; padding: 0; }
-  .hero, .panel, .card, .callout, .warn, .danger, table { background: #fff !important; color: #111827 !important; box-shadow: none !important; border-color: #9ca3af !important; }
-  h1, h2, h3, h4, p, li, th, td, .small { color: #111827 !important; }
-  code, .badge, .pill { background: #f3f4f6 !important; color: #111827 !important; border-color: #9ca3af !important; }
-  th { background: #e5e7eb !important; }
-  a { color: #1d4ed8 !important; }
-}
-</style>
-</head>
-<body>
-  <main class="page">
-    <section class="hero">
-      <div class="row"><span class="badge">Magic Wand v1.0.1</span><span class="badge">控制端固件 2026.06.05.1652</span><span class="badge">接收端固件 2026.06.05.1820</span></div>
-      <h1>Magic Wand 示例设置手册</h1>
-      <p>这份手册给普通员工、NPC 和现场主持人使用。它说明如何从零开始配置设备、分组、玩法、信号校准、游戏预备和大屏记分。</p>
-      <svg class="flow" viewBox="0 0 1160 160" role="img" aria-label="Magic Wand 开局流程图" xmlns="http://www.w3.org/2000/svg"><rect width="1160" height="160" rx="18" fill="#0b1220"/><rect x="24" y="48" width="120" height="56" rx="14" fill="#13203a" stroke="#2b3f68"/><text x="84" y="82" text-anchor="middle" font-size="15" font-weight="700" fill="#e5f0ff">连接控制端</text><path d="M150 76 H178" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/><path d="M178 76 l-8 -6 v12 z" fill="#3b82f6"/><rect x="164" y="48" width="120" height="56" rx="14" fill="#13203a" stroke="#2b3f68"/><text x="224" y="82" text-anchor="middle" font-size="15" font-weight="700" fill="#e5f0ff">扫描并点名</text><path d="M290 76 H318" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/><path d="M318 76 l-8 -6 v12 z" fill="#3b82f6"/><rect x="304" y="48" width="120" height="56" rx="14" fill="#13203a" stroke="#2b3f68"/><text x="364" y="82" text-anchor="middle" font-size="15" font-weight="700" fill="#e5f0ff">分组/建房</text><path d="M430 76 H458" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/><path d="M458 76 l-8 -6 v12 z" fill="#3b82f6"/><rect x="444" y="48" width="120" height="56" rx="14" fill="#13203a" stroke="#2b3f68"/><text x="504" y="82" text-anchor="middle" font-size="15" font-weight="700" fill="#e5f0ff">信号校准</text><path d="M570 76 H598" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/><path d="M598 76 l-8 -6 v12 z" fill="#3b82f6"/><rect x="584" y="48" width="120" height="56" rx="14" fill="#13203a" stroke="#2b3f68"/><text x="644" y="82" text-anchor="middle" font-size="15" font-weight="700" fill="#e5f0ff">下发预备</text><path d="M710 76 H738" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/><path d="M738 76 l-8 -6 v12 z" fill="#3b82f6"/><rect x="724" y="48" width="120" height="56" rx="14" fill="#13203a" stroke="#2b3f68"/><text x="784" y="82" text-anchor="middle" font-size="15" font-weight="700" fill="#e5f0ff">开始游戏</text><path d="M850 76 H878" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/><path d="M878 76 l-8 -6 v12 z" fill="#3b82f6"/><rect x="864" y="48" width="120" height="56" rx="14" fill="#13203a" stroke="#2b3f68"/><text x="924" y="82" text-anchor="middle" font-size="15" font-weight="700" fill="#e5f0ff">大屏记分</text><path d="M990 76 H1018" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/><path d="M1018 76 l-8 -6 v12 z" fill="#3b82f6"/><rect x="1004" y="48" width="120" height="56" rx="14" fill="#13203a" stroke="#2b3f68"/><text x="1064" y="82" text-anchor="middle" font-size="15" font-weight="700" fill="#e5f0ff">停止入库</text></svg>
-      <div class="toc">
-        <a href="#quick">快速开局</a>
-        <a href="#identify">设备点名</a>
-        <a href="#signal">信号校准</a>
-        <a href="#idle">空闲灯效定义</a>
-        <a href="#samples">玩法参数示例</a>
-        <a href="#trouble">常见问题</a>
-      </div>
-    </section>
-
-    <section class="panel" id="quick">
-      <h2>快速开局流程</h2>
-      <ol>
-        <li>电脑连接控制端热点，打开本地配置页。</li>
-        <li>进入设备页，点击扫描，给设备命名，并用点名确认每台设备身份。</li>
-        <li>进入分组页，把玩家魔杖放入源组，把宝箱/目标放入目标组。可点名全组确认玩家没有拿错设备。</li>
-        <li>进入玩法预设，选择系统玩法或创建“我的玩法预设”。系统玩法不可删除；我的玩法可以编辑、复制和删除。</li>
-        <li>进入游戏房间，选择玩法，选择源组/目标组，设置本局 RSSI、持续时间、计分和灯效矩阵。</li>
-        <li>需要信号灯时，进入信号校准，选择两台设备，设置弱信号、满格信号、压缩比例，点击应用到当前房间。</li>
-        <li>打开设备预备，先再次扫描，然后点名参与设备，确认在线和分组正确，再下发预备。</li>
-        <li>点击开始游戏。开始后接收端自主判断 RSSI，控制端只汇总事件，本地端显示大屏和历史。</li>
-      </ol>
-    </section>
-
-    <section class="panel" id="identify">
-      <h2>设备点名和分组核对</h2>
-      <div class="grid two">
-        <div class="card"><h3>哪里可以点名</h3><ul><li>设备页：全点名、点名选中、单台点名。</li><li>分组页：点名全组、展开后单台点名。</li><li>信号校准：源设备和目标设备卡片都能单台点名。</li><li>设备预备：点名参与设备，也能对单台参与设备点名。</li></ul></div>
-        <div class="card"><h3>点名目的</h3><ul><li>确认设备没死机。</li><li>确认玩家手里拿的是正确设备。</li><li>确认分组没有弄错。</li><li>确认外观相同的设备能被现场 NPC 区分。</li></ul></div>
-      </div>
-    </section>
-
-    <section class="panel" id="signal">
-      <h2>信号校准和信号强度指示灯</h2>
-      <div class="callout">RSSI 是负数，-20 dBm 比 -40 dBm 信号更强。多人寻宝时，信号灯应只给源组/玩家设备开启，不应给宝箱目标组开启。</div>
-      <table>
-        <tbody>
-          <tr><th>默认建议</th><td>LED1，10 格，弱信号 -75 dBm，满格 -20 dBm，压缩 160%，平滑样本 5。</td></tr>
-          <tr><th>刷新节奏</th><td>接收端信号灯约 0.5 秒刷新一次。没有目标信号时不亮。</td></tr>
-          <tr><th>追踪策略</th><td>一次只围绕一个目标信号显示强度，短暂丢失不会马上跳到另一个目标。找到一个目标后，应跳过已找到的目标，继续寻找其他目标。</td></tr>
-          <tr><th>优先级</th><td>点名/测试/触发灯效优先于信号灯。触发完成后，如果这一对设备已完成计分，信号灯不应继续对同一目标常亮。</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section class="panel" id="idle">
-      <h2>空闲灯效的准确定义</h2>
-      <p>空闲灯效指设备已经收到本局配置并进入 START 状态，但尚未触发成功、没有正在点名、没有正在测试灯效、也没有处于 STOP 状态时显示的背景灯效。</p>
-      <div class="grid two">
-        <div class="card"><h3>源组空闲</h3><p>如果启用信号强度指示灯，信号灯优先于源组空闲灯效。魔杖通常只有一路 LED，不要同时叠加信号灯和空闲呼吸灯。</p></div>
-        <div class="card"><h3>目标组空闲</h3><p>寻宝类目标在被找到之前建议静默。目标被找到时短闪，短闪结束后回到静默，不能变成常亮，避免后续玩家直接看到目标。</p></div>
-      </div>
-    </section>
-
-    <section class="panel" id="samples">
-      <h2>玩法参数示例</h2>
-      <p>以下参数是推荐起点。每个房间都可以覆盖 RSSI、持续时间、计分和灯效，不会改掉玩法预设本身。</p>
-    </section>
-    
-        <section class="panel" id="多人寻宝混战">
-          <div class="row"><h2>多人寻宝混战</h2><span class="pill blue">一次触发计分</span></div>
-          <table><tbody><tr><th>对象关系</th><td>多对多，源组 -&gt; 目标组。源组是玩家魔杖，目标组是宝箱或目标物。</td></tr><tr><th>RSSI</th><td>进入范围，RSSI &gt;= -35 dBm，持续 2000 ms，丢失宽限 3000 ms，平滑样本 5。</td></tr><tr><th>计分</th><td>源玩家 +1。目标设备不计分。推荐重复规则为每对设备只算一次，这样多个玩家可以分别找到同一个目标。</td></tr><tr><th>灯效</th><td>源组空闲可用信号强度指示灯；源组触发短闪。目标组空闲必须静默，找到时短闪，短闪结束后回到静默。</td></tr><tr><th>信号指示灯</th><td>只建议给源组开启。LED1，10 格，弱信号 -75 dBm，满格 -20 dBm，压缩 160%。没有目标信号时不亮。</td></tr></tbody></table>
-        </section>
-        
-        <section class="panel" id="单人寻宝">
-          <div class="row"><h2>单人寻宝</h2><span class="pill blue">一次触发计分</span></div>
-          <table><tbody><tr><th>对象关系</th><td>1 对多或 1 对 1。适合单个玩家寻找多个宝箱，也适合一人一目标。</td></tr><tr><th>RSSI</th><td>默认 RSSI &gt;= -35 dBm，持续 2000 ms。房间较小可以提高到 -25 dBm，房间较大可以降低到 -45 dBm。</td></tr><tr><th>计分</th><td>源玩家 +1。每对设备只算一次或冷却后重复，按玩法需要选择。</td></tr><tr><th>灯效</th><td>魔杖显示信号强度，找到后播放触发灯效；目标未找到前静默，找到后短闪再熄灭。</td></tr></tbody></table>
-        </section>
-        
-        <section class="panel" id="双人魔杖共鸣">
-          <div class="row"><h2>双人魔杖共鸣</h2><span class="pill blue">持续达标计分</span></div>
-          <table><tbody><tr><th>对象关系</th><td>1 对 1，指定配对。每对玩家设备需要在房间向导里明确绑定。</td></tr><tr><th>RSSI</th><td>保持在范围内，建议 -40 &lt;= RSSI &lt;= -20 dBm，连续达标 60000 ms。离开范围超过 2000 ms 后计时清零。</td></tr><tr><th>计分</th><td>双方玩家各 +1。重复规则建议冷却 10000 ms 后可再次触发。</td></tr><tr><th>灯效</th><td>双方空闲可轻微呼吸，成功时双方同时播放成功灯效。信号强度指示灯通常关闭，避免干扰共鸣氛围。</td></tr></tbody></table>
-        </section>
-        
-        <section class="panel" id="小组占点">
-          <div class="row"><h2>小组占点</h2><span class="pill blue">竞争归属计分</span></div>
-          <table><tbody><tr><th>对象关系</th><td>多对 1。多个源设备或源小组竞争同一个目标设备。</td></tr><tr><th>RSSI</th><td>RSSI &gt;= -45 dBm 后进入竞争。目标端按平滑 RSSI 选择当前最强者，只给当前最强者累计占领时间。</td></tr><tr><th>计分</th><td>源小组 +1。目标组不计分。建议目标时间 30000 ms，冷却后可重复。</td></tr><tr><th>灯效</th><td>目标空闲可以低亮提示位置，成功占领时播放占领灯效；源设备可显示自身信号或成功反馈。</td></tr></tbody></table>
-        </section>
-        
-        <section class="panel" id="距离保持">
-          <div class="row"><h2>距离保持</h2><span class="pill blue">持续达标计分</span></div>
-          <table><tbody><tr><th>对象关系</th><td>1 对 1 或多对多，按现场玩法选择。</td></tr><tr><th>RSSI</th><td>保持在范围内，例如 -55 &lt;= RSSI &lt;= -35 dBm。触发模式可选周期计分，每 10000 ms 得分一次。</td></tr><tr><th>计分</th><td>源玩家或双方玩家得分。失败后可选择计时暂停或清零。</td></tr><tr><th>灯效</th><td>在范围内可显示稳定灯效，离开范围可播放失败或熄灭。</td></tr></tbody></table>
-        </section>
-        
-        <section class="panel" id="灯效测试">
-          <div class="row"><h2>灯效测试</h2><span class="pill blue">一次触发/不计分</span></div>
-          <table><tbody><tr><th>对象关系</th><td>用于现场验证灯效和设备响应，不作为正式计分玩法。</td></tr><tr><th>RSSI</th><td>可忽略或设置很宽范围。</td></tr><tr><th>计分</th><td>不计分，只触发灯效。</td></tr><tr><th>灯效</th><td>测试效果必须能停止；关闭预备窗口、开始游戏、停止游戏时都应自动结束测试灯效。</td></tr></tbody></table>
-        </section>
-        
-
-    <section class="panel" id="trouble">
-      <h2>常见问题</h2>
-      <table>
-        <thead><tr><th>现象</th><th>处理</th></tr></thead>
-        <tbody>
-          <tr><td>设备列表没有设备</td><td>确认电脑连接控制端热点，点击扫描。仍为空时重启接收端，再扫描。</td></tr>
-          <tr><td>不知道哪台设备是谁</td><td>使用设备页、信号校准、分组页或设备预备里的点名功能。</td></tr>
-          <tr><td>信号灯一直满格</td><td>进入信号校准，把满格信号调高，例如 -20 dBm，并把压缩比例调到 160% 或 200%。</td></tr>
-          <tr><td>宝箱被找到后一直亮</td><td>目标组空闲应设为静默，目标触发灯效应为短闪，停止测试/开始游戏前会自动清灯。</td></tr>
-          <tr><td>大屏没有更新</td><td>确认控制端 /state 有事件；若有事件但页面没刷新，点击刷新历史或重新打开页面。</td></tr>
-        </tbody>
-      </table>
-    </section>
-    </main>
-</body>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Magic Wand 示例设置手册</title><style>
+:root{--bg:#081120;--panel:#111827;--card:#13203a;--border:#2b3f68;--text:#f1f5f9;--muted:#94a3b8;--blue:#3b82f6;--green:#10b981;--amber:#f59e0b;--red:#ef4444}
+*{box-sizing:border-box}
+html{background:var(--bg);color:var(--text);font-family:Inter,"Microsoft YaHei","PingFang SC",Arial,sans-serif;line-height:1.68}
+body{margin:0;background:radial-gradient(circle at 14% 0%,rgba(59,130,246,.2),transparent 32rem),var(--bg)}
+.page{width:min(1180px,calc(100% - 40px));margin:0 auto;padding:28px 0 56px}
+.hero,.panel,.card{border:1px solid var(--border);background:rgba(17,24,39,.86);border-radius:22px;box-shadow:0 24px 70px rgba(0,0,0,.28)}
+.hero{padding:30px;background:linear-gradient(135deg,rgba(17,24,39,.96),rgba(19,32,58,.92))}
+.panel{padding:20px;margin-top:18px}.card{padding:16px;background:rgba(19,32,58,.72)}
+h1{margin:10px 0 8px;font-size:38px;line-height:1.14;letter-spacing:0}h2{margin:30px 0 12px;font-size:25px;line-height:1.25}h3{margin:22px 0 10px;font-size:19px}
+p,li{color:#cbd5e1}.small{font-size:13px;color:var(--muted)}
+.badge,.pill{display:inline-flex;align-items:center;border-radius:999px;padding:5px 10px;border:1px solid rgba(148,163,184,.25);color:#dbeafe;background:rgba(15,23,42,.72);font-size:12px;font-weight:800}
+.pill.green{color:#d1fae5;border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.12)}.pill.blue{color:#dbeafe;border-color:rgba(59,130,246,.35);background:rgba(59,130,246,.16)}.pill.amber{color:#fef3c7;border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.12)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.grid{display:grid;gap:14px}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.toc{display:grid;gap:8px;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:18px}.toc a{text-decoration:none;border:1px solid rgba(43,63,104,.8);border-radius:14px;padding:10px 12px;background:rgba(19,32,58,.62);color:#e2e8f0;font-weight:800}
+.callout{border:1px solid rgba(16,185,129,.28);background:rgba(16,185,129,.1);border-radius:18px;padding:14px 16px;color:#d1fae5}.warn{border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.1);color:#fef3c7}
+code{color:#bfdbfe;background:rgba(15,23,42,.9);border:1px solid rgba(148,163,184,.22);border-radius:8px;padding:2px 6px}
+table{width:100%;border-collapse:collapse;overflow:hidden;border-radius:16px;border:1px solid var(--border);background:rgba(15,23,42,.82);margin:12px 0}th,td{border-bottom:1px solid rgba(43,63,104,.7);padding:10px 12px;text-align:left;vertical-align:top;font-size:14px}th{background:rgba(30,41,59,.94);color:#e2e8f0;font-size:13px}tr:last-child td{border-bottom:0}
+@media(max-width:900px){.grid.two,.grid.three,.toc{grid-template-columns:1fr}h1{font-size:30px}.page{width:min(100% - 24px,1180px)}}
+@media print{@page{size:A4;margin:12mm}html,body{background:#fff!important;color:#111827!important}body{font-size:12px}.page{width:100%;padding:0}.hero,.panel,.card,.callout,.warn,table{background:#fff!important;color:#111827!important;box-shadow:none!important;border-color:#9ca3af!important}h1,h2,h3,p,li,th,td,.small{color:#111827!important}code,.badge,.pill{background:#f3f4f6!important;color:#111827!important;border-color:#9ca3af!important}th{background:#e5e7eb!important}}
+</style></head>
+<body><main class="page">
+      <section class="hero">
+        <div class="row"><span class="badge">Magic Wand v1.0.2</span><span class="badge">控制端 2026.06.05.1950</span><span class="badge">接收端 2026.06.05.1950</span></div>
+        <h1>示例设置手册</h1>
+        <p>给现场 NPC 和普通员工使用。先确认版本，再扫描点名，再配置房间和信号校准。</p>
+        <div class="toc"><a href="#version">版本检查</a><a href="#flow">开局流程</a><a href="#presets">玩法示例</a></div>
+      </section>
+      <section id="version" class="panel">
+        <h2>版本检查</h2>
+        <div class="grid three">
+          <div class="card"><h3>统一版本</h3><p>v1.0.2</p></div>
+          <div class="card"><h3>控制端固件</h3><p>2026.06.05.1950</p></div>
+          <div class="card"><h3>接收端固件</h3><p>2026.06.05.1950</p></div>
+        </div>
+        <p class="small">烧录页会检查 manifest 是否匹配；设备页会显示每台接收端扫描上报的版本。</p>
+      </section>
+      <section id="flow" class="panel">
+        <h2>标准开局流程</h2>
+        <ol>
+          <li>电脑连接控制端热点，打开本地配置页。</li>
+          <li>扫描设备，在设备页、分组页、信号校准页或预备页点名确认身份。</li>
+          <li>创建或选择玩法预设，建立房间，选择源组和目标组。</li>
+          <li>用信号校准页测试源设备到目标设备的 RSSI，设置弱信号、强信号、压缩比例和信号灯 LED 路数。</li>
+          <li>进入设备预备，点名参与设备，确认玩家没有拿错设备，然后下发预备。</li>
+          <li>开始游戏并打开大屏。结束后停止游戏并保存历史。</li>
+        </ol>
+      </section>
+      <section id="presets" class="panel">
+        <h2>玩法示例参数</h2>
+        <table><thead><tr><th>玩法</th><th>说明</th><th>建议参数</th></tr></thead><tbody><tr><td><b>多人寻宝混战</b></td><td>源设备靠近目标设备，RSSI 达标并保持后，源设备得分。目标设备找到前静默，触发时短闪，触发后熄灭。</td><td>RSSI &gt;= -35 dBm，持续 2000 ms；源组启用信号强度灯，目标组禁用信号灯。</td></tr><tr><td><b>双人魔杖共鸣</b></td><td>两名玩家保持指定距离范围，连续达标后双方计分。适合合作玩法。</td><td>-40 &lt;= RSSI &lt;= -20，连续 60 秒；离开超过宽限后清零或暂停。</td></tr><tr><td><b>距离保持</b></td><td>玩家需要持续保持在某个信号范围内，按周期或累计时间计分。</td><td>使用范围 RSSI，建议先在信号校准页测真实距离。</td></tr><tr><td><b>小组占点</b></td><td>多个源设备竞争同一个目标，目标端按最强平滑 RSSI 判断当前占领者。</td><td>适合多人抢点；得分对象通常是源小组。</td></tr><tr><td><b>灯效测试</b></td><td>不计分，只用于确认灯效、点名和硬件灯路。</td><td>测试结束、预备、开始游戏、停止游戏时都应自动清灯。</td></tr></tbody></table>
+      </section>
+      <section class="panel">
+        <h2>无灯宝箱测试设备</h2>
+        <p>无灯设备可以作为纯信号目标。它不会通过灯光暴露位置，但仍然会扫描上报 MAC、RSSI 和固件版本。现场需要靠点名、命名和分组确认它是否进入正确房间。</p>
+      </section>
+    </main></body>
 </html>

@@ -13,6 +13,7 @@ $files = @(
   "index_ui_rebuild.html",
   "index_ui_rebuild.js",
   "tailwind.css",
+  "release.json",
   "serve.py",
   "serve.ps1",
   "serve_macos.sh",

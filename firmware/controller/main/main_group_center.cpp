@@ -1,4 +1,4 @@
-// ESP32-C6 controller - group center edition
+﻿// ESP32-C6 controller - group center edition
 // Keeps the AP web UI, ESP-NOW broadcast commands, device discovery,
 // multi-group assignment, and source->target discovery records.
 
@@ -40,8 +40,12 @@ static const char *TAG = "MAGIC_CTRL";
 #define SIGNAL_TEST_ROOM_HASH 65001
 
 #define DEVICE_NAME_LEN 32
+#define FW_TEXT_LEN 24
 #define GROUP_TEXT_LEN 384
-#define WEB_UI_VERSION "v0.2.6"
+#define WEB_UI_VERSION "v0.2.7"
+#define MAGICWAND_RELEASE_VERSION "v1.0.2"
+#define MAGICWAND_CONTROLLER_BUILD "2026.06.05.1950"
+#define MAGICWAND_EXPECTED_RECEIVER_BUILD "2026.06.05.1950"
 #define CONFIG_SCHEMA_VERSION 3
 
 typedef enum {
@@ -62,6 +66,16 @@ typedef struct {
     uint32_t group_mask;
     int rssi;
     int64_t last_seen_ms;
+} receiver_device_v2_t;
+
+typedef struct {
+    uint8_t mac[6];
+    char name[DEVICE_NAME_LEN];
+    uint32_t group_mask;
+    int rssi;
+    int64_t last_seen_ms;
+    char release_version[FW_TEXT_LEN];
+    char firmware_version[FW_TEXT_LEN];
 } receiver_device_t;
 
 typedef struct {
@@ -162,6 +176,7 @@ static bool next_button_stop = true;
 
 static receiver_device_t devices[MAX_DEVICES];
 static receiver_device_v1_t legacy_devices[MAX_DEVICES];
+static receiver_device_v2_t legacy_devices_v2[MAX_DEVICES];
 static group_config_t groups[MAX_GROUPS];
 static discovery_record_t records[MAX_DISCOVERY_RECORDS];
 static runtime_event_t runtime_events[MAX_RUNTIME_EVENTS];
@@ -480,6 +495,10 @@ static bool parse_import_device_object(json_reader_t *jr, receiver_device_t *dst
             dst->rssi = (int)value;
         } else if (strcmp(key, "seen_ms") == 0) {
             if (!jr_parse_int64(jr, &seen_age_ms) || seen_age_ms < 0) return false;
+        } else if (strcmp(key, "release_version") == 0) {
+            if (!jr_read_string(jr, dst->release_version, sizeof(dst->release_version))) return false;
+        } else if (strcmp(key, "firmware_version") == 0 || strcmp(key, "fw_version") == 0) {
+            if (!jr_read_string(jr, dst->firmware_version, sizeof(dst->firmware_version))) return false;
         } else {
             if (!jr_skip_value(jr)) return false;
         }
@@ -1353,6 +1372,7 @@ restore_dirty:
 static void registry_load(void)
 {
     memset(legacy_devices, 0, sizeof(legacy_devices));
+    memset(legacy_devices_v2, 0, sizeof(legacy_devices_v2));
     memset(devices, 0, sizeof(devices));
     memset(groups, 0, sizeof(groups));
     memset(records, 0, sizeof(records));
@@ -1379,6 +1399,10 @@ static void registry_load(void)
                           saved_device_count > 0 &&
                           saved_device_count <= MAX_DEVICES &&
                           blob_size == sizeof(receiver_device_t) * (size_t)saved_device_count;
+    bool compatible_v2 = ret == ESP_OK &&
+                          saved_device_count > 0 &&
+                          saved_device_count <= MAX_DEVICES &&
+                          blob_size == sizeof(receiver_device_v2_t) * (size_t)saved_device_count;
     bool compatible_old = ret == ESP_OK &&
                           saved_device_count > 0 &&
                           saved_device_count <= MAX_DEVICES &&
@@ -1389,6 +1413,19 @@ static void registry_load(void)
         ret = nvs_get_blob(nvs, "devices", devices, &read_size);
         if (ret == ESP_OK) {
             loaded_devices = saved_device_count;
+        }
+    } else if (compatible_v2) {
+        size_t read_size = blob_size;
+        ret = nvs_get_blob(nvs, "devices", legacy_devices_v2, &read_size);
+        if (ret == ESP_OK) {
+            loaded_devices = saved_device_count;
+            for (int i = 0; i < loaded_devices; i++) {
+                memcpy(devices[i].mac, legacy_devices_v2[i].mac, sizeof(devices[i].mac));
+                snprintf(devices[i].name, sizeof(devices[i].name), "%s", legacy_devices_v2[i].name);
+                devices[i].group_mask = legacy_devices_v2[i].group_mask;
+                devices[i].rssi = legacy_devices_v2[i].rssi;
+                devices[i].last_seen_ms = legacy_devices_v2[i].last_seen_ms;
+            }
         }
     } else if (compatible_old) {
         size_t read_size = blob_size;
@@ -1454,7 +1491,7 @@ static void registry_load(void)
     ESP_LOGI(TAG, "Registry loaded: %d devices, %d group slots, %d records.", loaded_devices, MAX_GROUPS, loaded_records);
 }
 
-static void remember_device(const uint8_t *mac, int rssi)
+static void remember_device_info(const uint8_t *mac, int rssi, const char *release_version, const char *firmware_version)
 {
     if (!mac) return;
     int64_t now_ms = esp_timer_get_time() / 1000;
@@ -1464,6 +1501,14 @@ static void remember_device(const uint8_t *mac, int rssi)
     if (idx >= 0) {
         devices[idx].rssi = rssi;
         devices[idx].last_seen_ms = now_ms;
+        if (release_version && release_version[0]) {
+            if (strncmp(devices[idx].release_version, release_version, sizeof(devices[idx].release_version)) != 0) registry_dirty = true;
+            snprintf(devices[idx].release_version, sizeof(devices[idx].release_version), "%s", release_version);
+        }
+        if (firmware_version && firmware_version[0]) {
+            if (strncmp(devices[idx].firmware_version, firmware_version, sizeof(devices[idx].firmware_version)) != 0) registry_dirty = true;
+            snprintf(devices[idx].firmware_version, sizeof(devices[idx].firmware_version), "%s", firmware_version);
+        }
         portEXIT_CRITICAL(&state_mux);
         return;
     }
@@ -1475,9 +1520,20 @@ static void remember_device(const uint8_t *mac, int rssi)
         devices[idx].group_mask = 0;
         devices[idx].rssi = rssi;
         devices[idx].last_seen_ms = now_ms;
+        if (release_version && release_version[0]) {
+            snprintf(devices[idx].release_version, sizeof(devices[idx].release_version), "%s", release_version);
+        }
+        if (firmware_version && firmware_version[0]) {
+            snprintf(devices[idx].firmware_version, sizeof(devices[idx].firmware_version), "%s", firmware_version);
+        }
         registry_dirty = true;
     }
     portEXIT_CRITICAL(&state_mux);
+}
+
+static void remember_device(const uint8_t *mac, int rssi)
+{
+    remember_device_info(mac, rssi, NULL, NULL);
 }
 
 static void ensure_peer_exists(const uint8_t *mac)
@@ -2075,11 +2131,20 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
 
     if (strncmp(msg, "PRESENT", 7) == 0) {
         int rssi = recv_info->rx_ctrl ? recv_info->rx_ctrl->rssi : 0;
+        char reported_mac[18] = {0};
+        char release_version[FW_TEXT_LEN] = {0};
+        char firmware_version[FW_TEXT_LEN] = {0};
+        int fields = sscanf(msg, "PRESENT,%17[^,],%23[^,],%23s", reported_mac, release_version, firmware_version);
         ensure_peer_exists(recv_info->src_addr);
-        remember_device(recv_info->src_addr, rssi);
+        remember_device_info(recv_info->src_addr, rssi,
+                             fields >= 2 ? release_version : NULL,
+                             fields >= 3 ? firmware_version : NULL);
         char mac_text[18];
         mac_to_string(recv_info->src_addr, mac_text, sizeof(mac_text));
-        ESP_LOGI(TAG, "Receiver present: %s, RSSI=%d", mac_text, rssi);
+        ESP_LOGI(TAG, "Receiver present: %s, RSSI=%d release=%s firmware=%s",
+                 mac_text, rssi,
+                 fields >= 2 ? release_version : "unknown",
+                 fields >= 3 ? firmware_version : "unknown");
     } else if (strncmp(msg, "EVT2|", 5) == 0) {
         ensure_peer_exists(recv_info->src_addr);
         int64_t now_ms = esp_timer_get_time() / 1000;
@@ -2523,23 +2588,33 @@ static esp_err_t state_handler(httpd_req_t *req)
         return httpd_resp_sendstr(req, "Out of memory.");
     }
 
-    sb_appendf(&sb, "{\"devices\":[");
+    sb_appendf(&sb,
+               "{\"release_version\":\"%s\",\"controller_firmware\":\"%s\",\"expected_receiver_firmware\":\"%s\",\"devices\":[",
+               MAGICWAND_RELEASE_VERSION,
+               MAGICWAND_CONTROLLER_BUILD,
+               MAGICWAND_EXPECTED_RECEIVER_BUILD);
     int64_t now_ms = esp_timer_get_time() / 1000;
     for (int i = 0; i < device_snapshot_count; i++) {
         char mac_text[18];
         char display_name[DEVICE_NAME_LEN];
         char escaped_name[DEVICE_NAME_LEN * 2];
+        char escaped_release[FW_TEXT_LEN * 2];
+        char escaped_firmware[FW_TEXT_LEN * 2];
         snprintf(display_name, sizeof(display_name), "%s", device_snapshot[i].name);
         normalize_device_name_for_index(i, display_name, sizeof(display_name));
         mac_to_string(device_snapshot[i].mac, mac_text, sizeof(mac_text));
         json_escape(display_name, escaped_name, sizeof(escaped_name));
+        json_escape(device_snapshot[i].release_version, escaped_release, sizeof(escaped_release));
+        json_escape(device_snapshot[i].firmware_version, escaped_firmware, sizeof(escaped_firmware));
         sb_appendf(&sb,
-                   "%s{\"idx\":%d,\"mac\":\"%s\",\"name\":\"%s\",\"group_mask\":%u,\"rssi\":%d,\"seen_ms\":%lld}",
+                   "%s{\"idx\":%d,\"mac\":\"%s\",\"name\":\"%s\",\"group_mask\":%u,\"rssi\":%d,\"seen_ms\":%lld,\"release_version\":\"%s\",\"firmware_version\":\"%s\"}",
                    i == 0 ? "" : ",",
                    i, mac_text, escaped_name,
                    (unsigned int)device_snapshot[i].group_mask,
                    device_snapshot[i].rssi,
-                   (long long)(now_ms - device_snapshot[i].last_seen_ms));
+                   (long long)(now_ms - device_snapshot[i].last_seen_ms),
+                   escaped_release,
+                   escaped_firmware);
     }
     sb_appendf(&sb, "],\"groups\":[");
     for (int g = 0; g < MAX_GROUPS; g++) {
@@ -3343,5 +3418,6 @@ extern "C" void app_main(void)
     xTaskCreate(registry_task, "registry", 8192, NULL, 4, NULL);
     xTaskCreate(button_task, "button", 4096, NULL, 5, NULL);
 }
+
 
 

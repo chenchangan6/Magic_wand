@@ -1,4 +1,8 @@
 ﻿(() => {
+  const APP_RELEASE_VERSION = 'v1.0.2';
+  const LOCAL_SERVICE_VERSION = '1.0.2';
+  const CONTROLLER_FIRMWARE_VERSION = '2026.06.05.1950';
+  const RECEIVER_FIRMWARE_VERSION = '2026.06.05.1950';
   const MAX_VISIBLE_LOG_LINES = 120;
   const MAX_MCU_GROUPS = 16;
   const DEFAULT_TRIGGER_RSSI = -25;
@@ -188,6 +192,31 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function releaseInfo() {
+    return state.serverStatus?.release && typeof state.serverStatus.release === 'object' ? state.serverStatus.release : null;
+  }
+
+  function appReleaseVersion() {
+    return String(releaseInfo()?.release_version || APP_RELEASE_VERSION);
+  }
+
+  function expectedFirmwareVersion(role) {
+    const releaseFirmware = releaseInfo()?.firmware || {};
+    const fallback = role === 'controller' ? CONTROLLER_FIRMWARE_VERSION : RECEIVER_FIRMWARE_VERSION;
+    return String(releaseFirmware?.[role]?.version || fallback);
+  }
+
+  function deviceFirmwareLabel(device) {
+    const release = String(device?.release_version || '').trim();
+    const firmware = String(device?.firmware_version || device?.fw_version || '').trim();
+    const expectedRelease = appReleaseVersion();
+    const expectedFirmware = expectedFirmwareVersion('receiver');
+    if (!release && !firmware) return { text: '固件未知，重新扫描后仍未知请重烧接收端', tone: 'warn' };
+    if (firmware && firmware !== expectedFirmware) return { text: `接收端 ${firmware}，应为 ${expectedFirmware}`, tone: 'bad' };
+    if (release && release !== expectedRelease) return { text: `发布 ${release}，应为 ${expectedRelease}`, tone: 'bad' };
+    return { text: `接收端 ${firmware || '未知'} · ${release || expectedRelease}`, tone: 'ok' };
   }
 
   function normalizeNumber(value, fallback = 0) {
@@ -2456,7 +2485,9 @@
           name: normalizeDeviceName(d?.name, idx, d?.mac),
           group_mask: normalizeNumber(d?.group_mask, 0) >>> 0,
           rssi: normalizeNumber(d?.rssi, 0),
-          seen_ms: Math.max(0, normalizeNumber(d?.seen_ms, 0))
+          seen_ms: Math.max(0, normalizeNumber(d?.seen_ms, 0)),
+          release_version: String(d?.release_version || '').trim(),
+          firmware_version: String(d?.firmware_version || d?.fw_version || '').trim()
         }));
         out.devices = mergeDeviceSnapshots(incomingDevices, out.devices);
       }
@@ -7176,6 +7207,8 @@
     const draftName = editing ? state.editingDraftName : name;
     const draftNote = editing ? state.editingDraftNote : note;
     const rowClass = [selected ? 'is-selected' : '', online ? 'is-online' : retained ? 'is-stale' : 'is-offline'].filter(Boolean).join(' ');
+    const firmwareLabel = deviceFirmwareLabel(device);
+    const firmwareColor = firmwareLabel.tone === 'ok' ? '#8ff0b0' : firmwareLabel.tone === 'bad' ? '#ff9a9a' : '#ffd88a';
     const groupCells = controllerGroups().map((group) => {
       const checked = groupIds.includes(group.id);
       return `
@@ -7201,6 +7234,7 @@
                   ? `<input class="name-editor" data-role="device-name-input" data-mac="${escapeHtml(mac)}" value="${escapeHtml(draftName)}">`
                   : `<div>${escapeHtml(name)}</div>`}
                 <div class="status-line" style="margin-top:4px"><span class="tiny-dot" style="background:${online ? '#42d96f' : retained ? '#f0c955' : '#7c8798'}"></span>${escapeHtml(statusLabel)} · ${normalizeNumber(device.group_mask, 0) ? `${groupIds.length} 组` : '未分组'}</div>
+                <div class="status-line" style="margin-top:3px;color:${firmwareColor};font-size:11px">${escapeHtml(firmwareLabel.text)}</div>
                 ${editing
                   ? `<textarea class="name-editor" data-role="device-note-input" data-mac="${escapeHtml(mac)}" style="min-height:56px;resize:vertical;margin-top:6px" placeholder="备注">${escapeHtml(draftNote)}</textarea>`
                   : `<div class="device-note" style="margin-top:4px;color:#8ea1bc;font-size:12px;line-height:1.35">${escapeHtml(note || '无备注')}</div>`}
@@ -9767,7 +9801,7 @@
             <span>设备在线：${escapeHtml(onlineCount)} / 已扫描 ${escapeHtml(retainedCount)}</span>
             <span>${validation.issues.length ? escapeHtml(validation.issues[0]) : '房间配置可用'}</span>
           </div>
-          <div class="mw-tv-version">Magic Wand 游戏系统 v1.0.1</div>
+          <div class="mw-tv-version">Magic Wand 游戏系统 ${escapeHtml(appReleaseVersion())}</div>
         </div>
       </div>
     `;
@@ -10829,7 +10863,8 @@
     const loadHint = state.controllerOnline
       ? `页面当前已联机，可以继续扫描和点名。`
       : `先连接到控制端所在网络，再点“从控制端读取”。如果暂时连不上，也可以继续离线编辑。`;
-    const tagText = `Local v1.0.1`;
+    const tagText = `${appReleaseVersion()} · Local ${state.serverStatus?.version || LOCAL_SERVICE_VERSION}`;
+    const firmwareTagText = `控制 ${expectedFirmwareVersion('controller')} / 接收 ${expectedFirmwareVersion('receiver')}`;
     return `
       <div id="mw-app" class="mx-auto my-3 w-[min(1860px,calc(100vw-40px))] text-[12px] leading-[1.4]">
         <section class="rounded-[18px] border border-[rgba(88,116,154,0.24)] bg-[linear-gradient(180deg,rgba(13,22,35,0.88),rgba(9,16,27,0.84))] px-3.5 py-3 shadow-[0_14px_36px_rgba(0,0,0,0.26)] backdrop-blur-sm">
@@ -10840,6 +10875,7 @@
             </div>
             <p class="m-0 shrink-0 text-[11.5px] leading-none text-[#c4d1e3]">为电脑灯效控制系统提供局域网配置、分组管理与效果预览（桌面端操作）。</p>
             <span class="inline-flex h-7 shrink-0 items-center justify-center rounded-full border border-[rgba(103,130,169,0.32)] bg-[rgba(10,17,27,0.58)] px-3 text-[11px] font-medium text-[#dbe6f8]">${escapeHtml(tagText)}</span>
+            <span class="inline-flex h-7 shrink-0 items-center justify-center rounded-full border border-[rgba(103,130,169,0.32)] bg-[rgba(10,17,27,0.58)] px-3 text-[11px] font-medium text-[#dbe6f8]">${escapeHtml(firmwareTagText)}</span>
             <span class="inline-flex h-7 shrink-0 items-center justify-center rounded-full border border-[rgba(103,130,169,0.32)] bg-[rgba(10,17,27,0.58)] px-3 text-[11px] font-medium text-[#dbe6f8]">本地保存已启用</span>
             <span class="inline-flex h-7 shrink-0 items-center justify-center rounded-full border ${state.controllerOnline ? 'border-[rgba(93,225,143,0.34)] bg-[rgba(20,40,30,0.68)] text-[#bdf4cf]' : 'border-[rgba(240,201,85,0.28)] bg-[rgba(42,32,12,0.56)] text-[#ffe2a2]'} px-3 text-[11px] font-medium">${state.controllerOnline ? '在线可编辑' : '离线可编辑'}</span>
           </div>
@@ -11016,7 +11052,7 @@
         }
         await persistStateToServer();
       }
-      state.debugLines.unshift(`page init | ui=v0.8.3 launcher=${window.location.protocol !== 'file:'} controllerBase=${state.controllerBase}`);
+      state.debugLines.unshift(`page init | ui=${appReleaseVersion()} launcher=${window.location.protocol !== 'file:'} controllerBase=${state.controllerBase}`);
       state.debugLines = state.debugLines.slice(0, MAX_VISIBLE_LOG_LINES);
       persistLocalCache();
       persistRecordsCache();
@@ -12363,6 +12399,7 @@
       document.body.innerHTML = `<pre style="color:#fff;background:#111;padding:20px">初始化失败：${escapeHtml(err.message)}</pre>`;
   });
 })();
+
 
 
 

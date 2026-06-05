@@ -1,114 +1,45 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Magic Wand 测试要求与用例</title>
-  <style>
-:root {
-  --bg: #081120;
-  --panel: #111827;
-  --card: #13203a;
-  --border: #2b3f68;
-  --text: #f1f5f9;
-  --muted: #94a3b8;
-  --blue: #3b82f6;
-  --green: #10b981;
-  --amber: #f59e0b;
-  --red: #ef4444;
-}
-* { box-sizing: border-box; }
-html { background: var(--bg); color: var(--text); font-family: Inter, "Microsoft YaHei", "PingFang SC", Arial, sans-serif; line-height: 1.68; }
-body { margin: 0; background: radial-gradient(circle at 15% 0%, rgba(59,130,246,.2), transparent 32rem), var(--bg); }
-.page { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 56px; }
-.hero, .panel, .card { border: 1px solid var(--border); background: rgba(17,24,39,.86); border-radius: 22px; box-shadow: 0 24px 70px rgba(0,0,0,.28); }
-.hero { padding: 30px; background: linear-gradient(135deg, rgba(17,24,39,.96), rgba(19,32,58,.92)); }
-.panel { padding: 20px; margin-top: 18px; }
-.card { padding: 16px; background: rgba(19,32,58,.72); }
-h1 { margin: 10px 0 8px; font-size: 38px; line-height: 1.14; letter-spacing: 0; }
-h2 { margin: 30px 0 12px; font-size: 25px; line-height: 1.25; }
-h3 { margin: 22px 0 10px; font-size: 19px; }
-h4 { margin: 16px 0 8px; font-size: 16px; color: #dbeafe; }
-p, li { color: #cbd5e1; }
-a { color: #93c5fd; }
-code { color: #bfdbfe; background: rgba(15,23,42,.9); border: 1px solid rgba(148,163,184,.22); border-radius: 8px; padding: 2px 6px; }
-.badge, .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 10px; border: 1px solid rgba(148,163,184,.25); color: #dbeafe; background: rgba(15,23,42,.72); font-size: 12px; font-weight: 800; }
-.pill.green { color: #d1fae5; border-color: rgba(16,185,129,.35); background: rgba(16,185,129,.12); }
-.pill.blue { color: #dbeafe; border-color: rgba(59,130,246,.35); background: rgba(59,130,246,.16); }
-.pill.amber { color: #fef3c7; border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.12); }
-.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.grid { display: grid; gap: 14px; }
-.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.toc { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 18px; }
-.toc a { text-decoration: none; border: 1px solid rgba(43,63,104,.8); border-radius: 14px; padding: 10px 12px; background: rgba(19,32,58,.62); color: #e2e8f0; font-weight: 800; }
-.callout { border: 1px solid rgba(16,185,129,.28); background: rgba(16,185,129,.1); border-radius: 18px; padding: 14px 16px; color: #d1fae5; }
-.warn { border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.1); color: #fef3c7; }
-.danger { border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.1); color: #fee2e2; }
-table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 16px; border: 1px solid var(--border); background: rgba(15,23,42,.82); margin: 12px 0; }
-th, td { border-bottom: 1px solid rgba(43,63,104,.7); padding: 10px 12px; text-align: left; vertical-align: top; font-size: 14px; }
-th { background: rgba(30,41,59,.94); color: #e2e8f0; font-size: 13px; }
-tr:last-child td { border-bottom: 0; }
-.flow { width: 100%; height: auto; border-radius: 18px; border: 1px solid var(--border); background: #0b1220; margin-top: 12px; }
-.small { font-size: 13px; color: var(--muted); }
-@media (max-width: 900px) {
-  .grid.two, .grid.three, .toc { grid-template-columns: 1fr; }
-  h1 { font-size: 30px; }
-  .page { width: min(100% - 24px, 1180px); }
-}
-@media print {
-  @page { size: A4; margin: 12mm; }
-  html, body { background: #fff !important; color: #111827 !important; }
-  body { font-size: 12px; }
-  .page { width: 100%; padding: 0; }
-  .hero, .panel, .card, .callout, .warn, .danger, table { background: #fff !important; color: #111827 !important; box-shadow: none !important; border-color: #9ca3af !important; }
-  h1, h2, h3, h4, p, li, th, td, .small { color: #111827 !important; }
-  code, .badge, .pill { background: #f3f4f6 !important; color: #111827 !important; border-color: #9ca3af !important; }
-  th { background: #e5e7eb !important; }
-  a { color: #1d4ed8 !important; }
-}
-</style>
-</head>
-<body>
-  <main class="page">
-    <section class="hero">
-      <div class="row"><span class="badge">Magic Wand v1.0.1</span><span class="badge">测试要求与用例</span><span class="badge">现场 + 开发双视角</span></div>
-      <h1>Magic Wand 测试要求与用例</h1>
-      <p>本文件把最近现场发现的问题固化成回归测试：扫描不稳定、预备弹窗滚动、全屏大屏、信号校准、目标静默、信号灯优先级、点名入口和计分归属。</p>
-    </section>
-
-    <section class="panel">
-      <h2>验收原则</h2>
-      <div class="grid two">
-        <div class="card"><h3>玩家/NPC 视角</h3><ul><li>能知道每台设备是谁。</li><li>能确认玩家拿到正确分组设备。</li><li>能用大屏向玩家展示比分和发现记录。</li><li>宝箱未找到前不暴露位置。</li><li>信号灯能帮助寻找，但不能干扰触发灯效。</li></ul></div>
-        <div class="card"><h3>开发人员视角</h3><ul><li>本地端保存的是本局配置，控制端只下发和汇总。</li><li>接收端自主按 RSSI 判定，不依赖本地端实时参与。</li><li>每次修复后要重新测试相关用例。</li><li>固件和本地工具都要有可见版本号。</li></ul></div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>系统测试用例</h2>
-      <table>
-        <thead><tr><th>编号</th><th>项目</th><th>步骤</th><th>期望结果</th></tr></thead>
-        <tbody><tr><td><b>T01</b></td><td>启动与版本</td><td>打开本地服务，读取 /api/status。</td><td>服务版本为 v1.0.1，控制端固件 2026.06.05.1652，接收端固件 2026.06.05.1820。</td></tr><tr><td><b>T02</b></td><td>设备扫描</td><td>连接控制端热点，点击扫描设备。</td><td>设备列表显示现场设备；不会因 20 秒刷新自动清空。无控制端连接时不显示旧残影。</td></tr><tr><td><b>T03</b></td><td>设备点名</td><td>在设备页、分组页、信号校准和设备预备里分别点名单台、全组、参与设备。</td><td>被点名设备 LED1/LED2/LED3 同时闪烁，便于确认身份和硬件灯路。</td></tr><tr><td><b>T04</b></td><td>信号校准</td><td>选择魔杖1和宝箱1，LED1，10 格，弱 -75，满格 -20，压缩 160%，开始测试。</td><td>魔杖信号灯随距离变化；没有频闪；目标设备保持熄灭。点击停止后全部熄灭。</td></tr><tr><td><b>T05</b></td><td>应用校准</td><td>点击应用到当前房间，再下发预备。</td><td>控制端组配置包含 meter_enabled=1、weak=-75、strong=-20、compression=160；目标组 meter_enabled=0。</td></tr><tr><td><b>T06</b></td><td>预备弹窗</td><td>打开设备预备，滚动列表，等待自动刷新。</td><td>顶部始终有下发预备；滚动位置不被刷新强制拉回顶部；有再次扫描和点名参与设备。</td></tr><tr><td><b>T07</b></td><td>测试灯效生命周期</td><td>点击测试效果，不手动停止，直接下发预备或开始游戏。</td><td>系统先自动停止测试灯效，再下发正式配置；不会留下单颗常亮或呼吸残留。</td></tr><tr><td><b>T08</b></td><td>多人寻宝触发</td><td>源组魔杖靠近目标宝箱，RSSI &gt;= -35 dBm 持续 2 秒。</td><td>事件为魔杖1发现宝箱1，魔杖得分 +1，宝箱不计分。</td></tr><tr><td><b>T09</b></td><td>目标静默</td><td>宝箱被找到后继续观察。</td><td>宝箱只在触发时短闪，随后熄灭；第二个玩家来找时不能因为目标常亮而暴露位置。</td></tr><tr><td><b>T10</b></td><td>信号灯优先级</td><td>魔杖只有一路 LED 时启用信号灯并触发成功。</td><td>触发前显示信号格；触发时播放短闪；触发后不再叠加空闲呼吸和信号灯。</td></tr><tr><td><b>T11</b></td><td>多目标策略</td><td>多个目标存在时，源设备找到其中一个目标。</td><td>只完成这一对设备，不结束整局；信号灯跳过已找到目标，继续追踪其他未完成目标。</td></tr><tr><td><b>T12</b></td><td>大屏</td><td>点击显示大屏并等待自动刷新。</td><td>页面级大屏不退出；排行榜、发现记录和分数随控制端事件刷新。</td></tr><tr><td><b>T13</b></td><td>停止与历史</td><td>停止游戏并确认结算。</td><td>控制端广播 STOP，设备熄灭；本地写入历史场次，当前场次和历史积分分开。</td></tr><tr><td><b>T14</b></td><td>网页烧录</td><td>打开 flash.html，查看自检和固件版本。</td><td>Chrome/Edge 显示 Web Serial 状态；接收端 manifest 为 2026.06.05.1820。</td></tr></tbody>
-      </table>
-    </section>
-
-    <section class="panel">
-      <h2>v1.0.1 当前现场结果</h2>
-      <div class="callout">已与两台接收端实测：多人寻宝触发成功，事件为“魔杖1 发现 宝箱1”，宝箱不计分；宝箱触发时短闪后熄灭；未出现频闪和开机三色呼吸残留；信号灯随距离变化，约 6-8 米仍有 7-8 格，靠近约 1.6 米触发。</div>
-      <div class="warn">仍需在更多设备数量下继续压力测试：多玩家、多宝箱、重复寻找、设备掉电重连、不同场地遮挡。这些不是当前两台设备测试能完全覆盖的风险。</div>
-    </section>
-
-    <section class="panel">
-      <h2>开发回归命令</h2>
-      <table><tbody>
-        <tr><th>JS 语法</th><td><code>node --check lan_config\index_ui_rebuild.js</code></td></tr>
-        <tr><th>Python 语法</th><td><code>python -m py_compile lan_config\serve.py</code></td></tr>
-        <tr><th>服务状态</th><td><code>GET http://127.0.0.1:8777/api/status</code></td></tr>
-        <tr><th>控制端状态</th><td><code>GET http://127.0.0.1:8777/api/controller/state</code></td></tr>
-        <tr><th>打包</th><td><code>cd lan_config; .\make_colleague_package.ps1</code></td></tr>
-      </tbody></table>
-    </section>
-    </main>
-</body>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Magic Wand 测试要求与用例</title><style>
+:root{--bg:#081120;--panel:#111827;--card:#13203a;--border:#2b3f68;--text:#f1f5f9;--muted:#94a3b8;--blue:#3b82f6;--green:#10b981;--amber:#f59e0b;--red:#ef4444}
+*{box-sizing:border-box}
+html{background:var(--bg);color:var(--text);font-family:Inter,"Microsoft YaHei","PingFang SC",Arial,sans-serif;line-height:1.68}
+body{margin:0;background:radial-gradient(circle at 14% 0%,rgba(59,130,246,.2),transparent 32rem),var(--bg)}
+.page{width:min(1180px,calc(100% - 40px));margin:0 auto;padding:28px 0 56px}
+.hero,.panel,.card{border:1px solid var(--border);background:rgba(17,24,39,.86);border-radius:22px;box-shadow:0 24px 70px rgba(0,0,0,.28)}
+.hero{padding:30px;background:linear-gradient(135deg,rgba(17,24,39,.96),rgba(19,32,58,.92))}
+.panel{padding:20px;margin-top:18px}.card{padding:16px;background:rgba(19,32,58,.72)}
+h1{margin:10px 0 8px;font-size:38px;line-height:1.14;letter-spacing:0}h2{margin:30px 0 12px;font-size:25px;line-height:1.25}h3{margin:22px 0 10px;font-size:19px}
+p,li{color:#cbd5e1}.small{font-size:13px;color:var(--muted)}
+.badge,.pill{display:inline-flex;align-items:center;border-radius:999px;padding:5px 10px;border:1px solid rgba(148,163,184,.25);color:#dbeafe;background:rgba(15,23,42,.72);font-size:12px;font-weight:800}
+.pill.green{color:#d1fae5;border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.12)}.pill.blue{color:#dbeafe;border-color:rgba(59,130,246,.35);background:rgba(59,130,246,.16)}.pill.amber{color:#fef3c7;border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.12)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.grid{display:grid;gap:14px}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.toc{display:grid;gap:8px;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:18px}.toc a{text-decoration:none;border:1px solid rgba(43,63,104,.8);border-radius:14px;padding:10px 12px;background:rgba(19,32,58,.62);color:#e2e8f0;font-weight:800}
+.callout{border:1px solid rgba(16,185,129,.28);background:rgba(16,185,129,.1);border-radius:18px;padding:14px 16px;color:#d1fae5}.warn{border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.1);color:#fef3c7}
+code{color:#bfdbfe;background:rgba(15,23,42,.9);border:1px solid rgba(148,163,184,.22);border-radius:8px;padding:2px 6px}
+table{width:100%;border-collapse:collapse;overflow:hidden;border-radius:16px;border:1px solid var(--border);background:rgba(15,23,42,.82);margin:12px 0}th,td{border-bottom:1px solid rgba(43,63,104,.7);padding:10px 12px;text-align:left;vertical-align:top;font-size:14px}th{background:rgba(30,41,59,.94);color:#e2e8f0;font-size:13px}tr:last-child td{border-bottom:0}
+@media(max-width:900px){.grid.two,.grid.three,.toc{grid-template-columns:1fr}h1{font-size:30px}.page{width:min(100% - 24px,1180px)}}
+@media print{@page{size:A4;margin:12mm}html,body{background:#fff!important;color:#111827!important}body{font-size:12px}.page{width:100%;padding:0}.hero,.panel,.card,.callout,.warn,table{background:#fff!important;color:#111827!important;box-shadow:none!important;border-color:#9ca3af!important}h1,h2,h3,p,li,th,td,.small{color:#111827!important}code,.badge,.pill{background:#f3f4f6!important;color:#111827!important;border-color:#9ca3af!important}th{background:#e5e7eb!important}}
+</style></head>
+<body><main class="page">
+      <section class="hero">
+        <div class="row"><span class="badge">Magic Wand v1.0.2</span><span class="badge">测试要求与用例</span></div>
+        <h1>系统测试要求与用例</h1>
+        <p>从玩家、NPC 和开发人员三个角度验收。修复后必须重测对应用例。</p>
+      </section>
+      <section class="panel">
+        <h2>测试用例</h2>
+        <table><thead><tr><th>ID</th><th>场景</th><th>操作</th><th>期望结果</th></tr></thead><tbody><tr><td><b>T01</b></td><td>启动与版本</td><td>打开本地服务并读取 /api/status。</td><td>服务返回 v1.0.2；控制端期望 2026.06.05.1950；接收端期望 2026.06.05.1950。</td></tr><tr><td><b>T02</b></td><td>烧录页版本</td><td>打开 flash.html。</td><td>显示统一发布版本、期望版本、当前 manifest 和匹配状态。</td></tr><tr><td><b>T03</b></td><td>设备扫描版本</td><td>连接控制端热点，扫描设备。</td><td>新版接收端在设备行显示接收端固件版本；旧固件显示未知或需升级。</td></tr><tr><td><b>T04</b></td><td>无灯目标</td><td>加入无灯宝箱设备并扫描。</td><td>能显示设备、RSSI、版本；不依赖 LED 判断是否工作。</td></tr><tr><td><b>T05</b></td><td>设备点名</td><td>在设备、分组、信号校准、设备预备位置点名。</td><td>能点名单台、全组、参与设备；有灯设备三路 LED 闪烁。</td></tr><tr><td><b>T06</b></td><td>信号校准</td><td>选择源设备和目标设备，开始信号灯测试。</td><td>源设备显示信号格，目标保持熄灭；停止后全部熄灭。</td></tr><tr><td><b>T07</b></td><td>多人寻宝</td><td>源设备靠近目标，RSSI &gt;= -35 dBm 持续 2 秒。</td><td>源得分，目标不计分；事件显示“源发现目标”。</td></tr><tr><td><b>T08</b></td><td>目标静默</td><td>第一个玩家找到目标后，第二个玩家继续寻找。</td><td>目标短闪后熄灭，不因常亮暴露位置。</td></tr><tr><td><b>T09</b></td><td>自动刷新</td><td>打开预备页或大屏等待刷新。</td><td>滚动位置不跳回顶部；大屏不退出全屏/展示模式。</td></tr><tr><td><b>T10</b></td><td>停止与历史</td><td>停止游戏并查看历史。</td><td>设备熄灭，场次写入历史，当前分数和历史分数分开。</td></tr></tbody></table>
+      </section>
+      <section class="panel">
+        <h2>开发回归命令</h2>
+        <ul>
+          <li><code>node --check lan_config\index_ui_rebuild.js</code></li>
+          <li><code>python -m py_compile lan_config\serve.py lan_config\make_docs.py</code></li>
+          <li><code>GET http://127.0.0.1:8777/api/status</code></li>
+          <li><code>GET http://127.0.0.1:8777/api/controller/state</code></li>
+          <li><code>cd lan_config; .\make_colleague_package.ps1</code></li>
+        </ul>
+      </section>
+    </main></body>
 </html>

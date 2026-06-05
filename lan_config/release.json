@@ -1,0 +1,29 @@
+{
+  "product": "Magic Wand",
+  "release_version": "v1.0.2",
+  "release_name": "Field validation release",
+  "release_date": "2026-06-05",
+  "git_tag": "v1.0.2",
+  "local_service_version": "1.0.2",
+  "runtime_schema": 3,
+  "config_schema": 3,
+  "firmware": {
+    "controller": {
+      "role": "control",
+      "version": "2026.06.05.1950",
+      "manifest": "firmware/controller/manifest.json",
+      "app": "firmware/controller/magic_wand_controller.bin"
+    },
+    "receiver": {
+      "role": "receiver",
+      "version": "2026.06.05.1950",
+      "manifest": "firmware/receiver/manifest.json",
+      "app": "firmware/receiver/magic_wand_receiver.bin"
+    }
+  },
+  "notes": [
+    "This release keeps the target device silent before discovery and after the short trigger flash.",
+    "Receiver devices report release and firmware build in DISCOVER/PRESENT replies when flashed with this version or newer.",
+    "If a receiver shows unknown firmware, rescan first, then reflash if it still does not report a matching version."
+  ]
+}
