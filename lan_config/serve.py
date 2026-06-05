@@ -24,7 +24,7 @@ CONTROLLER_BASE = os.environ.get("MAGIC_CONTROLLER_URL", "http://192.168.4.1").r
 PROXY_BASE = f"http://{HOST}:{PORT}/api/controller"
 DIRECT_OPENER = build_opener(ProxyHandler({}))
 
-LOCAL_STATE_VERSION = 1
+LOCAL_STATE_VERSION = 3
 RSSI_DEFAULTS_VERSION = 2
 DEFAULT_TRIGGER_RSSI = -25
 OLD_DEFAULT_TRIGGER_RSSI = -10
@@ -178,6 +178,29 @@ def _compact_controller_payload(payload: object):
                 "trigger_compare": compact_compare(group.get("trigger_compare")),
                 "rssi": compact_rssi(group.get("rssi")),
                 "hold": as_int(group.get("hold"), 2000),
+                "rule_id": as_int(group.get("rule_id"), 1),
+                "rule_base": as_int(group.get("rule_base"), 1),
+                "rule_judge": as_int(group.get("rule_judge"), 1),
+                "rule_signal": as_int(group.get("rule_signal"), 1),
+                "rule_rssi_min": as_int(group.get("rule_rssi_min"), compact_rssi(group.get("rssi"))),
+                "rule_rssi_max": as_int(group.get("rule_rssi_max"), -127),
+                "rule_missing_ms": as_int(group.get("rule_missing_ms"), 3000),
+                "rule_smooth_samples": as_int(group.get("rule_smooth_samples"), 5),
+                "rule_trigger": as_int(group.get("rule_trigger"), 1),
+                "rule_target_ms": as_int(group.get("rule_target_ms"), 0),
+                "rule_target_count": as_int(group.get("rule_target_count"), 1),
+                "rule_period_ms": as_int(group.get("rule_period_ms"), 0),
+                "rule_score_target": as_int(group.get("rule_score_target"), 1),
+                "rule_points": as_int(group.get("rule_points"), 1),
+                "rule_repeat": as_int(group.get("rule_repeat"), 2),
+                "rule_cooldown_ms": as_int(group.get("rule_cooldown_ms"), 5000),
+                "rule_after": as_int(group.get("rule_after"), 0),
+                "meter_enabled": as_int(group.get("meter_enabled"), 0),
+                "meter_port": as_int(group.get("meter_port"), 1),
+                "meter_led_count": as_int(group.get("meter_led_count"), 10),
+                "meter_weak_rssi": as_int(group.get("meter_weak_rssi"), -90),
+                "meter_strong_rssi": as_int(group.get("meter_strong_rssi"), as_int(group.get("rule_rssi_min"), compact_rssi(group.get("rssi")))),
+                "meter_compression_x100": max(20, min(500, as_int(group.get("meter_compression_x100"), 100))),
                 "effect": compact_effect_text(group.get("effect"), "silent", f"分组 {gid} 空闲灯效"),
                 "trigger_effect": compact_effect_text(group.get("trigger_effect"), group.get("effect") or "silent", f"分组 {gid} 触发灯效"),
                 "silence": str(group.get("silence") or "")[:63],
@@ -186,9 +209,31 @@ def _compact_controller_payload(payload: object):
             }
         )
 
+    pair_bindings = []
+    for binding in payload.get("pair_bindings") or []:
+        if not isinstance(binding, dict):
+            continue
+        source_mac = str(binding.get("source_mac") or "").strip().upper()
+        target_mac = str(binding.get("target_mac") or "").strip().upper()
+        if not source_mac or not target_mac:
+            continue
+        pair_bindings.append(
+            {
+                "rule_id": as_int(binding.get("rule_id"), 1),
+                "binding_id": as_int(binding.get("binding_id"), len(pair_bindings) + 1),
+                "source_mac": source_mac,
+                "target_mac": target_mac,
+                "source_group_id": group_id_map.get(as_int(binding.get("source_group_id"), -1), -1),
+                "target_group_id": group_id_map.get(as_int(binding.get("target_group_id"), -1), -1),
+            }
+        )
+
     return {
-        "schema_version": as_int(payload.get("schema_version"), 2),
+        "schema_version": as_int(payload.get("schema_version"), 3),
         "rssi_defaults_version": RSSI_DEFAULTS_VERSION,
+        "runtime_schema": as_int(payload.get("runtime_schema"), 3),
+        "play_preset_id": str(payload.get("play_preset_id") or ""),
+        "pair_bindings": pair_bindings,
         "devices": devices,
         "groups": groups,
         "records": [],
@@ -198,6 +243,7 @@ def _compact_controller_payload(payload: object):
 def _default_local_state():
     return {
         "schema": LOCAL_STATE_VERSION,
+        "gameplay_reset_version": LOCAL_STATE_VERSION,
         "updated_at": _now_iso(),
         "device_drafts": {},
         "templates": [],
@@ -215,6 +261,7 @@ def _load_local_state():
     if not isinstance(state, dict):
         state = _default_local_state()
     state.setdefault("schema", LOCAL_STATE_VERSION)
+    state.setdefault("gameplay_reset_version", 0)
     state.setdefault("updated_at", _now_iso())
     state.setdefault("device_drafts", {})
     if not isinstance(state.get("controller_groups"), list) or not state.get("controller_groups"):
@@ -279,6 +326,13 @@ def _delete_room_records(room_id: str | None = None):
     except Exception as exc:
         log_exception("load room records for delete failed", exc)
         return 0
+    if not room_id:
+        try:
+            ROOM_RECORD_FILE.write_text("", encoding="utf-8")
+            return len(lines)
+        except Exception as exc:
+            log_exception("clear room records failed", exc)
+            return 0
     kept = []
     deleted = 0
     for line in lines:
@@ -588,7 +642,7 @@ class ConfigHandler(SimpleHTTPRequestHandler):
                 {
                     "ok": True,
                     "server": "magic-wand-lan-config",
-                    "version": "0.4.6",
+                    "version": "1.0.1",
                     "port": PORT,
                     "saved": CONFIG_FILE.exists(),
                     "path": str(CONFIG_FILE),

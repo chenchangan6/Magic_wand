@@ -20,11 +20,22 @@ $files = @(
   "start_flasher.cmd",
   "start_config_mac.command",
   "start_flasher_mac.command",
-  "README_FOR_COLLEAGUES.md"
+  "README_FOR_COLLEAGUES.md",
+  "GAMEPLAY_GUIDE.md"
 )
 
 foreach ($file in $files) {
   Copy-Item -Force (Join-Path $PSScriptRoot $file) (Join-Path $stage $file)
+}
+
+$extraDocs = Get-ChildItem -LiteralPath $PSScriptRoot -File |
+  Where-Object {
+    ($_.Extension -in @(".html", ".pdf")) -and
+    ($_.Name -notin @("flash.html", "index.html", "index_ui_rebuild.html"))
+  }
+
+foreach ($item in $extraDocs) {
+  Copy-Item -Force -LiteralPath $item.FullName -Destination (Join-Path $stage $item.Name)
 }
 
 Copy-Item -Recurse -Force (Join-Path $PSScriptRoot "firmware") (Join-Path $stage "firmware")

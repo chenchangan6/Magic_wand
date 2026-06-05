@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -10,6 +11,7 @@
 #include "led_ports.h"
 
 static const char *TAG = "MAGIC_EFFECT";
+static uint8_t suppressed_port_mask = 0;
 
 typedef enum {
     EFFECT_MODE_SELFTEST = 0,
@@ -435,6 +437,8 @@ static bool parse_single_effect_spec(const char *spec, runtime_effect_t *out)
 
 bool default_effect_set_spec(const char *spec)
 {
+    led_ports_clear_all();
+
     if (spec == NULL || spec[0] == '\0' || strcmp(spec, "selftest") == 0) {
         set_selftest_defaults();
         log_runtime_effects("selftest");
@@ -485,6 +489,18 @@ void default_effect_reset(void)
     reset_all_effect_states();
 }
 
+void default_effect_set_suppressed_ports(uint8_t port_mask)
+{
+    uint8_t next_mask = port_mask & 0x07;
+    uint8_t newly_suppressed = (uint8_t)(next_mask & ~suppressed_port_mask);
+    suppressed_port_mask = next_mask;
+    for (int port = 0; port < 3; port++) {
+        if ((newly_suppressed & (1 << port)) != 0) {
+            led_ports_clear_port(port);
+        }
+    }
+}
+
 static void clear_selected_ports(const runtime_effect_t *effect)
 {
     rgb_color_t black = {0, 0, 0};
@@ -492,6 +508,7 @@ static void clear_selected_ports(const runtime_effect_t *effect)
     if (port_count > 3) port_count = 3;
     for (int port = 0; port < port_count; port++) {
         if ((effect->port_mask & (1 << port)) == 0) continue;
+        if ((suppressed_port_mask & (1 << port)) != 0) continue;
         led_ports_set_all(port, black, 0.0f);
     }
 }
@@ -502,6 +519,7 @@ static void refresh_selected_ports(const runtime_effect_t *effect)
     if (port_count > 3) port_count = 3;
     for (int port = 0; port < port_count; port++) {
         if ((effect->port_mask & (1 << port)) == 0) continue;
+        if ((suppressed_port_mask & (1 << port)) != 0) continue;
         led_ports_refresh(port);
     }
 }
@@ -514,6 +532,7 @@ static void set_selected_pattern(const runtime_effect_t *effect, rgb_color_t col
     if (step <= 0) step = 1;
     for (int port = 0; port < port_count; port++) {
         if ((effect->port_mask & (1 << port)) == 0) continue;
+        if ((suppressed_port_mask & (1 << port)) != 0) continue;
         led_ports_set_all(port, (rgb_color_t){0, 0, 0}, 0.0f);
         for (int i = 0; i < (int)effect->length; i += step) {
             led_ports_set_range(port, (int)effect->start_index + i, 1, color, scale);
@@ -600,6 +619,7 @@ static void set_indexed_pattern(const runtime_effect_t *effect, const rgb_color_
     int active_count = selected_active_count(effect);
     for (int port = 0; port < port_count; port++) {
         if ((effect->port_mask & (1 << port)) == 0) continue;
+        if ((suppressed_port_mask & (1 << port)) != 0) continue;
         led_ports_set_all(port, (rgb_color_t){0, 0, 0}, 0.0f);
         for (int i = 0; i < active_count; i++) {
             int led_index = (int)effect->start_index + (i * step);
@@ -630,6 +650,7 @@ static void render_selftest(void)
     int effect_count = (int)(sizeof(self_test_effects) / sizeof(self_test_effects[0]));
     if (port_count > effect_count) port_count = effect_count;
     for (int port = 0; port < port_count; port++) {
+        if ((suppressed_port_mask & (1 << port)) != 0) continue;
         float scale = effects_sine_breath_scale(selftest_tick, self_test_effects[port].phase);
         led_ports_set_all(port, self_test_effects[port].color, scale);
         led_ports_refresh(port);

@@ -3,8 +3,8 @@
 #include "led_ports.h"
 
 #define IDENTIFY_VISIBLE_LEDS 10
-#define IDENTIFY_STEP_COUNT 4
-#define IDENTIFY_STEP_MS 500
+#define IDENTIFY_STEP_COUNT 6
+#define IDENTIFY_STEP_MS 300
 
 int identify_effect_step_count(void)
 {
@@ -20,14 +20,16 @@ void identify_effect_render_step(int step_index)
 {
     const rgb_color_t yellow = {255, 180, 0};
     const rgb_color_t blue = {0, 80, 255};
+    const rgb_color_t green = {0, 220, 120};
 
     led_ports_clear_all();
 
     if ((step_index % 2) == 0) {
         led_ports_set_range(0, 0, IDENTIFY_VISIBLE_LEDS, yellow, 1.0f);
-        led_ports_refresh(0);
-    } else {
         led_ports_set_range(1, 0, IDENTIFY_VISIBLE_LEDS, blue, 1.0f);
+        led_ports_set_range(2, 0, IDENTIFY_VISIBLE_LEDS, green, 1.0f);
+        led_ports_refresh(0);
         led_ports_refresh(1);
+        led_ports_refresh(2);
     }
 }

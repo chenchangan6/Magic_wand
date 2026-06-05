@@ -5,6 +5,7 @@
   const OLD_DEFAULT_TRIGGER_RSSI = -10;
   const DEFAULT_TRIGGER_HOLD_MS = 2000;
   const RSSI_DEFAULTS_VERSION = 2;
+  const LOCAL_SCHEMA_VERSION = 3;
   const DEVICE_ONLINE_MS = 5 * 60 * 1000;
   const DEVICE_SCAN_RETAIN_MS = 24 * 60 * 60 * 1000;
   const STORAGE_KEYS = {
@@ -37,10 +38,13 @@
     editingGroupValid: true,
     groupFormModal: null,
     groupDeleteModal: null,
+    playPresetFormModal: null,
+    playPresetDeleteModal: null,
     effectFormModal: null,
     effectDeleteModal: null,
     templateFormModal: null,
     selectedTemplateId: '',
+    selectedPlayPresetId: '',
     currentRoomId: '',
     selectedEffectId: '',
     effectPreviewTemplateId: '',
@@ -54,6 +58,19 @@
     roomStartCountdown: null,
     roomCountdownTimer: null,
     wizardRoomDraft: null,
+    roomPresentationMode: false,
+    signalTest: {
+      running: false,
+      sourceMac: '',
+      targetMac: '',
+      port: 1,
+      ledCount: 10,
+      weakRssi: -90,
+      strongRssi: -35,
+      compressionX100: 160,
+      smoothSamples: 5,
+      roomHash: 65001
+    },
     busy: {
       status: false,
       controller: false,
@@ -65,6 +82,7 @@
       publish: false,
       testEffect: false,
       stopEffect: false,
+      signalTest: false,
       save: false,
       restore: false
     }
@@ -161,7 +179,7 @@
   const EFFECT_TRACK_LIMIT = 3;
   const EFFECT_TEMPLATE_LIMIT = 9999;
   const PREVIEW_FRAME_MS = 80;
-  const WIZARD_STEP_MAX = 4;
+  const WIZARD_STEP_MAX = 6;
 
   function escapeHtml(value) {
     return String(value ?? '')
@@ -913,23 +931,24 @@
       if (sourceTrack) {
         tracks.push(normalizeEffectTrack(sourceTrack, null, i));
       } else {
-        tracks.push(effectTrackFromTemplate('builtin-silent', i, {
+        const templateId = source ? 'builtin-silent' : (i === 0 ? sourceTemplateId : 'builtin-silent');
+        const silentFallback = String(templateId || '') === 'builtin-silent';
+        tracks.push(effectTrackFromTemplate(templateId, i, {
           port: i + 1,
-          enabled: true,
-          led_count: 35,
-          led_start: 1,
-          led_end: 35,
-          brightness: 0,
-          repeat: 0,
-          frequency_hz: 0,
-          period_ms: 700,
-          duty: 50,
-          accel: 0,
-          pulse_speed_start: 0,
-          pulse_speed_end: 100,
-          pulse_duration_ms: 0,
-          end_hold_ms: 0,
-          end_behavior: 'off'
+          enabled: source ? false : i === 0,
+          ...(silentFallback ? {
+            brightness: 0,
+            repeat: 0,
+            frequency_hz: 0,
+            period_ms: 700,
+            duty: 50,
+            accel: 0,
+            pulse_speed_start: 0,
+            pulse_speed_end: 100,
+            pulse_duration_ms: 0,
+            end_hold_ms: 0,
+            end_behavior: 'off'
+          } : {})
         }));
       }
     }
@@ -1204,6 +1223,26 @@
         return shell('<path d="M6.75 4.5h10.5a1.5 1.5 0 0 1 1.5 1.5v12A1.5 1.5 0 0 1 17.25 19.5H6.75A1.5 1.5 0 0 1 5.25 18V6A1.5 1.5 0 0 1 6.75 4.5Z"></path><path d="M9 8.25h6"></path><path d="M9 12h6"></path><path d="M9 15.75h3.75"></path>');
       case 'room':
         return shell('<path d="M3.75 20.25V8.25l8.25-4.5 8.25 4.5v12"></path><path d="M9 20.25V13.5h6v6.75"></path>');
+      case 'target':
+        return shell('<circle cx="12" cy="12" r="7.5"></circle><circle cx="12" cy="12" r="3"></circle><path d="M12 2.75v3"></path><path d="M12 18.25v3"></path><path d="M2.75 12h3"></path><path d="M18.25 12h3"></path>');
+      case 'zap':
+        return shell('<path d="M13.5 2.75 5.25 13.5h6L10.5 21.25l8.25-10.75h-6l.75-7.75Z"></path>');
+      case 'trophy':
+        return shell('<path d="M8.25 21h7.5"></path><path d="M12 17.25V21"></path><path d="M7.5 4.5h9v4.75a4.5 4.5 0 0 1-9 0V4.5Z"></path><path d="M7.5 6H4.25v2.25A3.25 3.25 0 0 0 7.5 11.5"></path><path d="M16.5 6h3.25v2.25a3.25 3.25 0 0 1-3.25 3.25"></path>');
+      case 'sliders':
+        return shell('<path d="M4.5 6h4.25"></path><path d="M13.25 6H19.5"></path><path d="M10 3.75v4.5"></path><path d="M4.5 12h8.25"></path><path d="M17.25 12h2.25"></path><path d="M14 9.75v4.5"></path><path d="M4.5 18h2.25"></path><path d="M11.25 18h8.25"></path><path d="M8 15.75v4.5"></path>');
+      case 'wifi':
+        return shell('<path d="M5.25 9.75a10.5 10.5 0 0 1 13.5 0"></path><path d="M8.25 13.25a6.25 6.25 0 0 1 7.5 0"></path><path d="M11.25 16.75a2 2 0 0 1 1.5 0"></path>');
+      case 'eye':
+        return shell('<path d="M3.75 12s3-5.25 8.25-5.25S20.25 12 20.25 12 17.25 17.25 12 17.25 3.75 12 3.75 12Z"></path><circle cx="12" cy="12" r="2.25"></circle>');
+      case 'user':
+        return shell('<circle cx="12" cy="8" r="3.25"></circle><path d="M5.25 20.25a6.75 6.75 0 0 1 13.5 0"></path>');
+      case 'users':
+        return shell('<circle cx="9" cy="8.25" r="3"></circle><path d="M3.75 20.25a6 6 0 0 1 12 0"></path><path d="M15.75 5.5a3 3 0 0 1 0 5.5"></path><path d="M17.25 14.25a5.5 5.5 0 0 1 3.25 5"></path>');
+      case 'clock':
+        return shell('<circle cx="12" cy="12" r="8.25"></circle><path d="M12 7.5V12l3 2"></path>');
+      case 'calendar':
+        return shell('<rect x="4.5" y="5.25" width="15" height="15" rx="2"></rect><path d="M8.25 3.75v3"></path><path d="M15.75 3.75v3"></path><path d="M4.5 9h15"></path>');
       default:
         return '';
     }
@@ -1250,11 +1289,7 @@
   }
 
   function buildDefaultDevices() {
-    return [
-      { idx: 0, mac: '58:E6:C5:F0:AD:44', name: '碎片1号', group_mask: 1, rssi: -14, seen_ms: 1283 },
-      { idx: 1, mac: '58:E6:C5:F0:C4:74', name: '碎片2', group_mask: 2, rssi: -12, seen_ms: 2150 },
-      { idx: 2, mac: '58:E6:C5:F1:DF:18', name: '碎片3', group_mask: 3, rssi: -16, seen_ms: 1810 }
-    ];
+    return [];
   }
 
   function buildDefaultGroups() {
@@ -1340,7 +1375,7 @@
 
   function buildDefaultControllerState() {
     return {
-      schema_version: 2,
+      schema_version: 3,
       devices: buildDefaultDevices(),
       groups: buildDefaultGroups(),
       records: [],
@@ -1403,40 +1438,173 @@
   }
 
   function buildDefaultFeaturePresets() {
+    return buildDefaultPlayPresets().map(playPresetToFeaturePreset);
+  }
+
+  function buildDefaultPlayPresets() {
     return [
       {
-        id: 'fp-treasure',
-        name: '多人寻宝功能包',
-        note: '寻宝类标准能力包，适合多人并行开局。',
+        id: 'play-treasure-ffa',
+        name: '多人寻宝混战',
+        note: '玩家设备靠近目标设备，发现者个人得分；每个玩家对每个目标只计一次。',
         builtIn: true,
-        feature_ui: {
-          sense_mode: 'ring',
-          signal_ui: { trigger_compare: 'gte', trigger_rssi_threshold: DEFAULT_TRIGGER_RSSI, trigger_hold_ms: DEFAULT_TRIGGER_HOLD_MS },
-          scoring: { mode: 'count_find', max_find: 0 },
-          timer: { mode: 'manual', duration_ms: 0 },
-          idle_effect_id: 'builtin-breath',
-          trigger_effect_id: 'builtin-pulse'
-        },
+        baseTemplate: 'instant_score',
+        relation: { mode: 'many_to_many', match: 'source_to_target', sourceRole: 'player_device', targetRole: 'target_device' },
+        signal: { type: 'enter_range', rssiMin: -35, rssiMax: null, holdMs: 2000, missingMs: 3000, smoothSamples: 5 },
+        trigger: { mode: 'instant', targetMs: 0, targetCount: 1, periodMs: 0 },
+        score: { target: 'source_player', points: 1, type: 'add' },
+        repeat: { mode: 'once_per_pair', cooldownMs: 5000 },
+        afterTrigger: { targetState: 'none', timerAction: 'none' },
+        feedback: { onEnter: 'builtin-breath', onSuccess: 'builtin-pulse', onFail: 'builtin-silent' },
         created_at: '1970-01-01T00:00:00',
         updated_at: '1970-01-01T00:00:00'
       },
       {
-        id: 'fp-rssi',
-        name: '距离提示功能包',
-        note: '只做距离提示与阈值测试。',
+        id: 'play-treasure-solo',
+        name: '单人寻宝',
+        note: '单个玩家设备寻找目标设备，每对设备只计一次。',
         builtIn: true,
-        feature_ui: {
-          sense_mode: 'response',
-          signal_ui: { trigger_compare: 'gte', trigger_rssi_threshold: DEFAULT_TRIGGER_RSSI, trigger_hold_ms: DEFAULT_TRIGGER_HOLD_MS },
-          scoring: { mode: 'rssi_probe', max_find: 0 },
-          timer: { mode: 'manual', duration_ms: 0 },
-          idle_effect_id: 'builtin-breath',
-          trigger_effect_id: 'builtin-blink'
-        },
+        baseTemplate: 'instant_score',
+        relation: { mode: 'one_to_many', match: 'source_to_target', sourceRole: 'player_device', targetRole: 'target_device' },
+        signal: { type: 'enter_range', rssiMin: -35, rssiMax: null, holdMs: 2000, missingMs: 3000, smoothSamples: 5 },
+        trigger: { mode: 'instant', targetMs: 0, targetCount: 1, periodMs: 0 },
+        score: { target: 'source_player', points: 1, type: 'add' },
+        repeat: { mode: 'once_per_pair', cooldownMs: 5000 },
+        afterTrigger: { targetState: 'none', timerAction: 'none' },
+        feedback: { onEnter: 'builtin-breath', onSuccess: 'builtin-blink', onFail: 'builtin-silent' },
+        created_at: '1970-01-01T00:00:00',
+        updated_at: '1970-01-01T00:00:00'
+      },
+      {
+        id: 'play-resonance-duo',
+        name: '双人魔杖共鸣',
+        note: '两名玩家保持在指定 RSSI 范围内，连续达标后双方得分。',
+        builtIn: true,
+        baseTemplate: 'sustain_score',
+        relation: { mode: 'one_to_one', match: 'specified_pair', sourceRole: 'player_device', targetRole: 'player_device' },
+        signal: { type: 'stay_in_range', rssiMin: -40, rssiMax: -20, holdMs: 0, missingMs: 2000, smoothSamples: 5 },
+        trigger: { mode: 'continuous', targetMs: 60000, targetCount: 1, periodMs: 0 },
+        score: { target: 'both_players', points: 1, type: 'add' },
+        repeat: { mode: 'cooldown', cooldownMs: 10000 },
+        afterTrigger: { targetState: 'none', timerAction: 'reset' },
+        feedback: { onEnter: 'builtin-breath', onSuccess: 'builtin-pulse', onFail: 'builtin-blink' },
+        created_at: '1970-01-01T00:00:00',
+        updated_at: '1970-01-01T00:00:00'
+      },
+      {
+        id: 'play-control-point',
+        name: '小组占点',
+        note: '多个玩家或小组竞争同一个目标，目标设备选择占领者。',
+        builtIn: true,
+        baseTemplate: 'competition_score',
+        relation: { mode: 'many_to_one', match: 'source_to_target', sourceRole: 'player_device', targetRole: 'target_device' },
+        signal: { type: 'enter_range', rssiMin: -45, rssiMax: null, holdMs: 0, missingMs: 3000, smoothSamples: 5 },
+        trigger: { mode: 'accumulate', targetMs: 30000, targetCount: 1, periodMs: 0 },
+        score: { target: 'source_group', points: 1, type: 'add' },
+        repeat: { mode: 'cooldown', cooldownMs: 10000 },
+        afterTrigger: { targetState: 'cooldown', timerAction: 'reset' },
+        feedback: { onEnter: 'builtin-gradient', onSuccess: 'builtin-chase', onFail: 'builtin-silent' },
+        created_at: '1970-01-01T00:00:00',
+        updated_at: '1970-01-01T00:00:00'
+      },
+      {
+        id: 'play-distance-keep',
+        name: '距离保持',
+        note: '设备保持在指定 RSSI 范围内，周期或累计计分。',
+        builtIn: true,
+        baseTemplate: 'sustain_score',
+        relation: { mode: 'many_to_many', match: 'any', sourceRole: 'player_device', targetRole: 'player_device' },
+        signal: { type: 'stay_in_range', rssiMin: -55, rssiMax: -25, holdMs: 0, missingMs: 2000, smoothSamples: 5 },
+        trigger: { mode: 'periodic', targetMs: 0, targetCount: 1, periodMs: 10000 },
+        score: { target: 'source_player', points: 1, type: 'add' },
+        repeat: { mode: 'allow_repeat', cooldownMs: 0 },
+        afterTrigger: { targetState: 'none', timerAction: 'none' },
+        feedback: { onEnter: 'builtin-breath', onSuccess: 'builtin-cycle', onFail: 'builtin-blink' },
+        created_at: '1970-01-01T00:00:00',
+        updated_at: '1970-01-01T00:00:00'
+      },
+      {
+        id: 'play-effect-test',
+        name: '灯效测试',
+        note: '不计分，只按 RSSI 或人工预备流程触发灯效。',
+        builtIn: true,
+        baseTemplate: 'instant_score',
+        relation: { mode: 'many_to_many', match: 'any', sourceRole: 'device', targetRole: 'device' },
+        signal: { type: 'enter_range', rssiMin: DEFAULT_TRIGGER_RSSI, rssiMax: null, holdMs: DEFAULT_TRIGGER_HOLD_MS, missingMs: 3000, smoothSamples: 3 },
+        trigger: { mode: 'instant', targetMs: 0, targetCount: 1, periodMs: 0 },
+        score: { target: 'none', points: 0, type: 'none' },
+        repeat: { mode: 'allow_repeat', cooldownMs: 0 },
+        afterTrigger: { targetState: 'none', timerAction: 'none' },
+        feedback: { onEnter: 'builtin-silent', onSuccess: 'builtin-cycle', onFail: 'builtin-silent' },
         created_at: '1970-01-01T00:00:00',
         updated_at: '1970-01-01T00:00:00'
       }
     ];
+  }
+
+  function playPresetToFeaturePreset(preset) {
+    const signal = preset?.signal || {};
+    const feedback = preset?.feedback || {};
+    const score = preset?.score || {};
+    return {
+      id: String(preset?.id || uid('play')),
+      name: String(preset?.name || '未命名玩法'),
+      note: String(preset?.note || ''),
+      builtIn: preset?.builtIn === true,
+      baseTemplate: String(preset?.baseTemplate || 'instant_score'),
+      relation: clone(preset?.relation || {}),
+      signal: clone(signal),
+      trigger: clone(preset?.trigger || {}),
+      score: clone(score),
+      repeat: clone(preset?.repeat || {}),
+      afterTrigger: clone(preset?.afterTrigger || {}),
+      feedback: clone(feedback),
+      feature_ui: {
+        sense_mode: preset?.baseTemplate === 'competition_score' ? 'shared' : preset?.baseTemplate === 'sustain_score' ? 'response' : 'ring',
+        signal_ui: {
+          trigger_compare: signal.rssiMax !== null && signal.rssiMax !== undefined ? 'range' : 'gte',
+          trigger_rssi_threshold: normalizeNumber(signal.rssiMin, DEFAULT_TRIGGER_RSSI),
+          trigger_hold_ms: normalizeNumber(signal.holdMs, DEFAULT_TRIGGER_HOLD_MS)
+        },
+        scoring: {
+          mode: String(score.target || 'source_player'),
+          max_find: normalizeNumber(preset?.trigger?.targetCount, 0)
+        },
+        timer: {
+          mode: String(preset?.trigger?.mode || 'instant'),
+          duration_ms: normalizeNumber(preset?.trigger?.targetMs || preset?.trigger?.periodMs, 0)
+        },
+        idle_effect_id: String(feedback.onEnter || 'builtin-breath'),
+        trigger_effect_id: String(feedback.onSuccess || 'builtin-pulse')
+      },
+      created_at: String(preset?.created_at || nowIso()),
+      updated_at: String(preset?.updated_at || nowIso())
+    };
+  }
+
+  function playPresetToTemplate(preset) {
+    const feature = playPresetToFeaturePreset(preset);
+    const relation = preset?.relation || {};
+    return {
+      id: feature.id,
+      name: feature.name,
+      note: feature.note,
+      builtIn: preset?.builtIn === true,
+      play_preset_id: feature.id,
+      feature_preset_id: feature.id,
+      effect_preset_id: String(preset?.feedback?.onSuccess || ''),
+      source_group_mode: relation.mode === 'one_to_one' || relation.mode === 'one_to_many' ? 'single' : 'multi',
+      target_group_mode: relation.mode === 'one_to_one' || relation.mode === 'many_to_one' ? 'single' : 'multi',
+      default_source_group_ids: [],
+      default_target_group_ids: [],
+      sense_mode: feature.feature_ui.sense_mode,
+      idle_effect_id: feature.feature_ui.idle_effect_id,
+      trigger_effect_id: feature.feature_ui.trigger_effect_id,
+      scoring: clone(feature.score || {}),
+      created_at: String(preset?.created_at || nowIso()),
+      updated_at: String(preset?.updated_at || nowIso()),
+      config: null
+    };
   }
 
   function buildDefaultEffectPresets() {
@@ -1444,37 +1612,24 @@
   }
 
   function buildDefaultLocalState() {
+    const defaultPlayPresets = buildDefaultPlayPresets();
     return {
-      schema: 1,
+      schema: LOCAL_SCHEMA_VERSION,
+      gameplay_reset_version: LOCAL_SCHEMA_VERSION,
       updated_at: nowIso(),
       rssi_defaults_version: RSSI_DEFAULTS_VERSION,
       device_drafts: {},
       controller_groups: buildDefaultGroups(),
       hidden_devices: [],
-      templates: builtinTemplates.map((tpl) => ({
-        id: tpl.id,
-        name: tpl.name,
-        note: tpl.note,
-        builtIn: true,
-        feature_preset_id: String(tpl.feature_preset_id || ''),
-        effect_preset_id: String(tpl.effect_preset_id || ''),
-        source_group_mode: roleModeValue(tpl.source_group_mode || 'single'),
-        target_group_mode: roleModeValue(tpl.target_group_mode || 'single'),
-        default_source_group_ids: [],
-        default_target_group_ids: [],
-        sense_mode: String(tpl.sense_mode || ''),
-        idle_effect_id: String(tpl.idle_effect_id || ''),
-        trigger_effect_id: String(tpl.trigger_effect_id || ''),
-        scoring: tpl.scoring && typeof tpl.scoring === 'object' ? clone(tpl.scoring) : {},
-        created_at: nowIso(),
-        updated_at: nowIso(),
-        config: null
-      })),
+      system_play_presets: defaultPlayPresets.map((preset) => clone({ ...preset, builtIn: true })),
+      user_play_presets: [],
+      play_presets: defaultPlayPresets.map((preset) => clone(preset)),
+      templates: defaultPlayPresets.map(playPresetToTemplate),
       rooms: [],
       active_room_id: '',
       current_room: null,
       room_history: [],
-      feature_presets: buildDefaultFeaturePresets(),
+      feature_presets: defaultPlayPresets.map(playPresetToFeaturePreset),
       effect_templates: buildDefaultEffectTemplates(),
       effect_presets: buildDefaultCustomEffects(),
       ui: {
@@ -1488,9 +1643,15 @@
         preview_cell_shape: 'square',
         selected_group_id: 0,
         expanded_group_id: -1,
-        selected_template_id: builtinTemplates[0].id,
-        selected_feature_preset_id: 'fp-treasure',
+        selected_template_id: defaultPlayPresets[0].id,
+        selected_feature_preset_id: defaultPlayPresets[0].id,
+        selected_play_preset_id: defaultPlayPresets[0].id,
         selected_effect_preset_id: '',
+        play_preset_filter: 'all',
+        play_preset_query: '',
+        play_preset_advanced: false,
+        play_preset_list_collapsed: false,
+        system_play_presets_collapsed: true,
         wizard: {
           open: false,
           step: 0,
@@ -1542,6 +1703,146 @@
       });
     }
     return Array.from(byId.values());
+  }
+
+  function normalizePlayPreset(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const id = String(source.id || uid('play'));
+    const signal = source.signal && typeof source.signal === 'object' ? source.signal : {};
+    const trigger = source.trigger && typeof source.trigger === 'object' ? source.trigger : {};
+    const score = source.score && typeof source.score === 'object' ? source.score : {};
+    const repeat = source.repeat && typeof source.repeat === 'object' ? source.repeat : {};
+    const feedback = source.feedback && typeof source.feedback === 'object' ? source.feedback : {};
+    const meter = feedback.signalMeter && typeof feedback.signalMeter === 'object' ? feedback.signalMeter : {};
+    return {
+      id,
+      name: String(source.name || '未命名玩法'),
+      note: String(source.note || ''),
+      builtIn: source.builtIn === true,
+      baseTemplate: ['instant_score', 'sustain_score', 'competition_score'].includes(String(source.baseTemplate || ''))
+        ? String(source.baseTemplate)
+        : 'instant_score',
+      relation: {
+        mode: String(source.relation?.mode || 'many_to_many'),
+        match: String(source.relation?.match || 'source_to_target'),
+        sourceRole: String(source.relation?.sourceRole || 'player_device'),
+        targetRole: String(source.relation?.targetRole || 'target_device')
+      },
+      signal: {
+        type: String(signal.type || 'enter_range'),
+        rssiMin: normalizeNumber(signal.rssiMin ?? signal.trigger_rssi_threshold, DEFAULT_TRIGGER_RSSI),
+        rssiMax: signal.rssiMax === null || signal.rssiMax === undefined || signal.rssiMax === '' ? null : normalizeNumber(signal.rssiMax, -20),
+        holdMs: normalizeNumber(signal.holdMs ?? signal.trigger_hold_ms, DEFAULT_TRIGGER_HOLD_MS),
+        missingMs: normalizeNumber(signal.missingMs, 3000),
+        smoothSamples: clamp(normalizeNumber(signal.smoothSamples, 5), 1, 10)
+      },
+      trigger: {
+        mode: String(trigger.mode || 'instant'),
+        targetMs: normalizeNumber(trigger.targetMs, 0),
+        targetCount: normalizeNumber(trigger.targetCount, 1),
+        periodMs: normalizeNumber(trigger.periodMs, 0)
+      },
+      score: {
+        target: String(score.target || 'source_player'),
+        points: normalizeNumber(score.points, 1),
+        type: String(score.type || (normalizeNumber(score.points, 1) === 0 ? 'none' : 'add'))
+      },
+      repeat: {
+        mode: String(repeat.mode || 'once_per_pair'),
+        cooldownMs: normalizeNumber(repeat.cooldownMs, 5000)
+      },
+      afterTrigger: {
+        targetState: String(source.afterTrigger?.targetState || 'none'),
+        timerAction: String(source.afterTrigger?.timerAction || 'none')
+      },
+      feedback: {
+        onEnter: String(feedback.onEnter || 'builtin-breath'),
+        onSuccess: String(feedback.onSuccess || 'builtin-pulse'),
+        onFail: String(feedback.onFail || 'builtin-silent'),
+        signalMeter: {
+          enabled: meter.enabled === true,
+          port: clamp(normalizeNumber(meter.port, 1), 1, 3),
+          ledCount: clamp(normalizeNumber(meter.ledCount, 10), 1, 200),
+          weakRssi: normalizeNumber(meter.weakRssi, -90),
+          strongRssi: normalizeNumber(meter.strongRssi, normalizeNumber(signal.rssiMin ?? signal.trigger_rssi_threshold, DEFAULT_TRIGGER_RSSI)),
+          compressionX100: clamp(normalizeNumber(meter.compressionX100 ?? meter.compression_x100, 100), 20, 500)
+        }
+      },
+      created_at: String(source.created_at || nowIso()),
+      updated_at: String(source.updated_at || nowIso())
+    };
+  }
+
+  function normalizePlayPresets(raw) {
+    const source = Array.isArray(raw) ? raw : [];
+    const byId = new Map(buildDefaultPlayPresets().map((item) => [item.id, normalizePlayPreset(item)]));
+    for (const item of source) {
+      if (!item || typeof item !== 'object') continue;
+      const preset = normalizePlayPreset(item);
+      byId.set(preset.id, preset);
+    }
+    return Array.from(byId.values());
+  }
+
+  function builtInPlayPresetIds() {
+    return new Set(buildDefaultPlayPresets().map((item) => String(item.id || '')));
+  }
+
+  function normalizeUserPlayPresets(raw) {
+    const source = Array.isArray(raw) ? raw : [];
+    const builtInIds = builtInPlayPresetIds();
+    const byId = new Map();
+    for (const item of source) {
+      if (!item || typeof item !== 'object') continue;
+      const preset = normalizePlayPreset({ ...item, builtIn: false });
+      if (builtInIds.has(String(preset.id || ''))) continue;
+      preset.builtIn = false;
+      byId.set(preset.id, preset);
+    }
+    return Array.from(byId.values()).sort((a, b) => {
+      const aTime = new Date(a.updated_at || a.created_at || 0).getTime();
+      const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
+      return bTime - aTime || String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN');
+    });
+  }
+
+  function rebuildPresetDerivedState(localState) {
+    if (!localState || typeof localState !== 'object') return localState;
+    localState.system_play_presets = buildDefaultPlayPresets().map((item) => normalizePlayPreset(item));
+    localState.user_play_presets = normalizeUserPlayPresets(localState.user_play_presets || []);
+    localState.play_presets = [
+      ...localState.system_play_presets.map((item) => clone(item)),
+      ...localState.user_play_presets.map((item) => clone(item))
+    ];
+    localState.feature_presets = localState.play_presets.map(playPresetToFeaturePreset);
+    localState.templates = localState.play_presets.map(playPresetToTemplate);
+    return localState;
+  }
+
+  function allPlayPresets(localState = state.localState) {
+    const source = localState && typeof localState === 'object' ? localState : buildDefaultLocalState();
+    if (Array.isArray(source.play_presets) && source.play_presets.length) return source.play_presets;
+    rebuildPresetDerivedState(source);
+    return source.play_presets || [];
+  }
+
+  function systemPlayPresets(localState = state.localState) {
+    const source = localState && typeof localState === 'object' ? localState : buildDefaultLocalState();
+    if (Array.isArray(source.system_play_presets) && source.system_play_presets.length) return source.system_play_presets;
+    rebuildPresetDerivedState(source);
+    return source.system_play_presets || [];
+  }
+
+  function userPlayPresets(localState = state.localState) {
+    const source = localState && typeof localState === 'object' ? localState : buildDefaultLocalState();
+    if (Array.isArray(source.user_play_presets)) return source.user_play_presets;
+    rebuildPresetDerivedState(source);
+    return source.user_play_presets || [];
+  }
+
+  function playPresetById(id, localState = state.localState) {
+    const key = String(id || '');
+    return allPlayPresets(localState).find((item) => String(item.id) === key) || null;
   }
 
   function normalizeEffectTemplates(raw) {
@@ -1662,7 +1963,7 @@
 
   function effectChoiceOptions(selectedId) {
     const current = String(selectedId || '');
-    return effectChoiceList().map((preset) => `<option value="${escapeHtml(preset.id)}" ${current === String(preset.id) ? 'selected' : ''}>${escapeHtml(preset.name)}${preset.note ? ` · ${escapeHtml(preset.note)}` : ''}</option>`).join('');
+    return effectChoiceList().map((preset) => `<option value="${escapeHtml(preset.id)}" title="${escapeHtml(preset.note || '')}" ${current === String(preset.id) ? 'selected' : ''}>${escapeHtml(preset.name)}</option>`).join('');
   }
 
   function roomEffectRuleKey(sourceGroupId, targetGroupId) {
@@ -1739,6 +2040,7 @@
     if (!room || !template) return room;
     room.template_id = template.id || room.template_id || builtinTemplates[0].id;
     room.template_name = template.name || room.template_name || builtinTemplates[0].name;
+    room.play_preset_id = String(template.play_preset_id || template.id || room.play_preset_id || '');
     room.feature_preset_id = String(template.feature_preset_id || room.feature_preset_id || '');
     room.effect_preset_id = String(template.effect_preset_id || room.effect_preset_id || '');
     const featurePreset = featurePresetById(room.feature_preset_id);
@@ -1783,6 +2085,23 @@
     if (!raw || typeof raw !== 'object') return null;
     const templateId = String(raw.template_id || fallbackTemplate?.id || builtinTemplates[0].id || '');
     const templateName = String(raw.template_name || fallbackTemplate?.name || '');
+    const preset = playPresetById(raw.play_preset_id || raw.feature_preset_id || fallbackTemplate?.play_preset_id || fallbackTemplate?.feature_preset_id || fallbackTemplate?.id || '') || normalizePlayPreset(buildDefaultPlayPresets()[0]);
+    const signalDefaults = clone(preset?.signal || {});
+    const triggerDefaults = clone(preset?.trigger || {});
+    const scoreDefaults = clone(preset?.score || {});
+    const repeatDefaults = clone(preset?.repeat || {});
+    const afterDefaults = clone(preset?.afterTrigger || {});
+    const feedbackDefaults = clone(preset?.feedback || {});
+    const rawOverrides = raw.rule_overrides && typeof raw.rule_overrides === 'object' ? raw.rule_overrides : {};
+    const rawSignal = rawOverrides.signal && typeof rawOverrides.signal === 'object' ? rawOverrides.signal : {};
+    const rawTrigger = rawOverrides.trigger && typeof rawOverrides.trigger === 'object' ? rawOverrides.trigger : {};
+    const rawScore = rawOverrides.score && typeof rawOverrides.score === 'object' ? rawOverrides.score : {};
+    const rawRepeat = rawOverrides.repeat && typeof rawOverrides.repeat === 'object' ? rawOverrides.repeat : {};
+    const rawAfter = rawOverrides.afterTrigger && typeof rawOverrides.afterTrigger === 'object' ? rawOverrides.afterTrigger : {};
+    const rawFeedback = rawOverrides.feedback && typeof rawOverrides.feedback === 'object' ? rawOverrides.feedback : {};
+    const rawMeter = rawFeedback.signalMeter && typeof rawFeedback.signalMeter === 'object' ? rawFeedback.signalMeter : {};
+    const defaultMeter = feedbackDefaults.signalMeter && typeof feedbackDefaults.signalMeter === 'object' ? feedbackDefaults.signalMeter : {};
+    const hasRawMeterEnabled = Object.prototype.hasOwnProperty.call(rawMeter, 'enabled');
     const sourceGroupIds = Array.isArray(raw.source_group_ids)
       ? raw.source_group_ids
       : Array.isArray(raw.group_ids)
@@ -1805,13 +2124,67 @@
       created_at: String(raw.created_at || nowIso()),
       updated_at: String(raw.updated_at || nowIso()),
       feature_preset_id: String(raw.feature_preset_id || fallbackTemplate?.feature_preset_id || ''),
+      play_preset_id: String(raw.play_preset_id || fallbackTemplate?.play_preset_id || raw.feature_preset_id || fallbackTemplate?.feature_preset_id || ''),
       effect_preset_id: String(raw.effect_preset_id || fallbackTemplate?.effect_preset_id || ''),
       sense_mode: String(raw.sense_mode || fallbackTemplate?.sense_mode || ''),
       idle_effect_id: String(raw.idle_effect_id || fallbackTemplate?.idle_effect_id || ''),
       trigger_effect_id: String(raw.trigger_effect_id || fallbackTemplate?.trigger_effect_id || ''),
-      trigger_compare: triggerCompareValue(raw.trigger_compare || featurePresetById(fallbackTemplate?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_compare),
-      trigger_signal_rssi: normalizeNumber(raw.trigger_signal_rssi, normalizeNumber(featurePresetById(fallbackTemplate?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_rssi_threshold, DEFAULT_TRIGGER_RSSI)),
-      trigger_hold_ms: normalizeNumber(raw.trigger_hold_ms, normalizeNumber(featurePresetById(fallbackTemplate?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_hold_ms, DEFAULT_TRIGGER_HOLD_MS)),
+      trigger_compare: 'gte',
+      trigger_signal_rssi: DEFAULT_TRIGGER_RSSI,
+      trigger_hold_ms: DEFAULT_TRIGGER_HOLD_MS,
+      rule_signal_type: String(raw.rule_signal_type || ''),
+      rule_rssi_min: raw.rule_rssi_min === null || raw.rule_rssi_min === undefined || raw.rule_rssi_min === '' ? null : normalizeNumber(raw.rule_rssi_min, DEFAULT_TRIGGER_RSSI),
+      rule_rssi_max: raw.rule_rssi_max === null || raw.rule_rssi_max === undefined || raw.rule_rssi_max === '' ? null : normalizeNumber(raw.rule_rssi_max, -20),
+      rule_hold_ms: raw.rule_hold_ms === null || raw.rule_hold_ms === undefined || raw.rule_hold_ms === '' ? null : normalizeNumber(raw.rule_hold_ms, DEFAULT_TRIGGER_HOLD_MS),
+      rule_overrides: {
+        signal: {
+          type: String(rawSignal.type || raw.rule_signal_type || signalDefaults.type || 'enter_range'),
+          rssiMin: normalizeNumber(rawSignal.rssiMin ?? raw.rule_rssi_min ?? raw.trigger_signal_rssi, normalizeNumber(signalDefaults.rssiMin, DEFAULT_TRIGGER_RSSI)),
+          rssiMax: rawSignal.rssiMax === null || rawSignal.rssiMax === undefined
+            ? (raw.rule_rssi_max === null || raw.rule_rssi_max === undefined || raw.rule_rssi_max === '' ? (signalDefaults.rssiMax ?? null) : normalizeNumber(raw.rule_rssi_max, -20))
+            : (rawSignal.rssiMax === '' ? null : normalizeNumber(rawSignal.rssiMax, -20)),
+          holdMs: normalizeNumber(rawSignal.holdMs ?? raw.rule_hold_ms ?? raw.trigger_hold_ms, normalizeNumber(signalDefaults.holdMs, DEFAULT_TRIGGER_HOLD_MS)),
+          missingMs: normalizeNumber(rawSignal.missingMs, normalizeNumber(signalDefaults.missingMs, 3000)),
+          smoothSamples: clamp(normalizeNumber(rawSignal.smoothSamples, normalizeNumber(signalDefaults.smoothSamples, 5)), 1, 10)
+        },
+        trigger: {
+          mode: String(rawTrigger.mode || triggerDefaults.mode || 'instant'),
+          targetMs: normalizeNumber(rawTrigger.targetMs, normalizeNumber(triggerDefaults.targetMs, 0)),
+          targetCount: normalizeNumber(rawTrigger.targetCount, normalizeNumber(triggerDefaults.targetCount, 1)),
+          periodMs: normalizeNumber(rawTrigger.periodMs, normalizeNumber(triggerDefaults.periodMs, 0))
+        },
+        score: {
+          target: String(rawScore.target || scoreDefaults.target || 'source_player'),
+          points: normalizeNumber(rawScore.points, normalizeNumber(scoreDefaults.points, 1)),
+          type: String(rawScore.type || scoreDefaults.type || 'add')
+        },
+        repeat: {
+          mode: String(rawRepeat.mode || repeatDefaults.mode || 'once_per_pair'),
+          cooldownMs: normalizeNumber(rawRepeat.cooldownMs, normalizeNumber(repeatDefaults.cooldownMs, 5000))
+        },
+        afterTrigger: {
+          targetState: String(rawAfter.targetState || afterDefaults.targetState || 'none'),
+          timerAction: String(rawAfter.timerAction || afterDefaults.timerAction || 'none')
+        },
+        feedback: {
+          signalMeter: {
+            enabled: hasRawMeterEnabled ? rawMeter.enabled === true : defaultMeter.enabled === true,
+            port: clamp(normalizeNumber(rawMeter.port, normalizeNumber(defaultMeter.port, 1)), 1, 3),
+            ledCount: clamp(normalizeNumber(rawMeter.ledCount, normalizeNumber(defaultMeter.ledCount, 10)), 1, 200),
+            weakRssi: normalizeNumber(rawMeter.weakRssi, normalizeNumber(defaultMeter.weakRssi, -90)),
+            strongRssi: normalizeNumber(rawMeter.strongRssi, normalizeNumber(defaultMeter.strongRssi, normalizeNumber(signalDefaults.rssiMin, DEFAULT_TRIGGER_RSSI))),
+            compressionX100: clamp(normalizeNumber(rawMeter.compressionX100 ?? rawMeter.compression_x100, normalizeNumber(defaultMeter.compressionX100, 100)), 20, 500)
+          }
+        }
+      },
+      match_bindings: Array.isArray(raw.match_bindings)
+        ? raw.match_bindings.map((item) => ({
+            source_mac: String(item?.source_mac || '').trim().toUpperCase(),
+            target_mac: String(item?.target_mac || '').trim().toUpperCase(),
+            source_group_id: normalizeNumber(item?.source_group_id, -1),
+            target_group_id: normalizeNumber(item?.target_group_id, -1)
+          })).filter((item) => item.source_mac && item.target_mac)
+        : [],
       preview_effect_id: String(raw.preview_effect_id || fallbackTemplate?.effect_preset_id || ''),
       timer: raw.timer && typeof raw.timer === 'object'
         ? clone(raw.timer)
@@ -1834,6 +2207,14 @@
       notes: String(raw.notes || ''),
       summary: raw.summary && typeof raw.summary === 'object' ? clone(raw.summary) : {}
     };
+    const roomSignal = room.rule_overrides.signal || {};
+    room.rule_signal_type = String(roomSignal.type || 'enter_range');
+    room.rule_rssi_min = normalizeNumber(roomSignal.rssiMin, DEFAULT_TRIGGER_RSSI);
+    room.rule_rssi_max = roomSignal.rssiMax === null || roomSignal.rssiMax === undefined || roomSignal.rssiMax === '' ? null : normalizeNumber(roomSignal.rssiMax, -20);
+    room.rule_hold_ms = normalizeNumber(roomSignal.holdMs, DEFAULT_TRIGGER_HOLD_MS);
+    room.trigger_signal_rssi = room.rule_rssi_min;
+    room.trigger_hold_ms = room.rule_hold_ms;
+    room.trigger_compare = room.rule_signal_type === 'leave_range' || room.rule_signal_type === 'weaker' ? 'lte' : (room.rule_rssi_max !== null ? 'range' : 'gte');
     syncRoomEffectRules(room, raw.effect_rules);
     return room;
   }
@@ -1993,6 +2374,31 @@
           sense_mode: String(g.sense_mode || prev.sense_mode || 'ring'),
           rssi: normalizeNumber(g.rssi, -70),
           hold: normalizeNumber(g.hold, 2000),
+          peer_mask: normalizeNumber(g.peer_mask ?? prev.peer_mask, 0),
+          room_hash: normalizeNumber(g.room_hash ?? prev.room_hash, 0),
+          rule_id: normalizeNumber(g.rule_id ?? prev.rule_id, 1),
+          rule_base: normalizeNumber(g.rule_base ?? prev.rule_base, 1),
+          rule_judge: normalizeNumber(g.rule_judge ?? prev.rule_judge, 1),
+          rule_signal: normalizeNumber(g.rule_signal ?? prev.rule_signal, 1),
+          rule_rssi_min: normalizeNumber(g.rule_rssi_min ?? prev.rule_rssi_min, normalizeNumber(g.rssi, -70)),
+          rule_rssi_max: normalizeNumber(g.rule_rssi_max ?? prev.rule_rssi_max, -127),
+          rule_missing_ms: normalizeNumber(g.rule_missing_ms ?? prev.rule_missing_ms, 3000),
+          rule_smooth_samples: normalizeNumber(g.rule_smooth_samples ?? prev.rule_smooth_samples, 5),
+          rule_trigger: normalizeNumber(g.rule_trigger ?? prev.rule_trigger, 1),
+          rule_target_ms: normalizeNumber(g.rule_target_ms ?? prev.rule_target_ms, 0),
+          rule_target_count: normalizeNumber(g.rule_target_count ?? prev.rule_target_count, 1),
+          rule_period_ms: normalizeNumber(g.rule_period_ms ?? prev.rule_period_ms, 0),
+          rule_score_target: normalizeNumber(g.rule_score_target ?? prev.rule_score_target, 1),
+          rule_points: normalizeNumber(g.rule_points ?? prev.rule_points, 1),
+          rule_repeat: normalizeNumber(g.rule_repeat ?? prev.rule_repeat, 2),
+          rule_cooldown_ms: normalizeNumber(g.rule_cooldown_ms ?? prev.rule_cooldown_ms, 5000),
+          rule_after: normalizeNumber(g.rule_after ?? prev.rule_after, 0),
+          meter_enabled: normalizeNumber(g.meter_enabled ?? prev.meter_enabled, 0),
+          meter_port: clamp(normalizeNumber(g.meter_port ?? prev.meter_port, 1), 1, 3),
+          meter_led_count: clamp(normalizeNumber(g.meter_led_count ?? prev.meter_led_count, 10), 1, 200),
+          meter_weak_rssi: normalizeNumber(g.meter_weak_rssi ?? prev.meter_weak_rssi, -90),
+          meter_strong_rssi: normalizeNumber(g.meter_strong_rssi ?? prev.meter_strong_rssi, normalizeNumber(g.rule_rssi_min, -35)),
+          meter_compression_x100: clamp(normalizeNumber(g.meter_compression_x100 ?? prev.meter_compression_x100, 100), 20, 500),
           template: String(g.template || ''),
           effect_template_id: String(g.effect_template_id || prev.effect_template_id || ''),
           effect: String(g.effect || prev.effect || 'builtin-breath'),
@@ -2020,8 +2426,9 @@
 
   function normalizeControllerState(raw, existing = null) {
     const fallback = buildDefaultControllerState();
+    const schemaVersion = clamp(normalizeNumber(raw?.schema_version ?? raw?.schema ?? existing?.schema_version ?? fallback.schema_version, 3), 1, 3);
     const out = {
-      schema_version: normalizeNumber(raw?.schema_version ?? raw?.schema, 2) >= 2 ? 2 : 1,
+      schema_version: schemaVersion,
       devices: clone(fallback.devices),
       groups: clone(fallback.groups),
       records: [],
@@ -2043,7 +2450,7 @@
 
     if (raw && typeof raw === 'object') {
       if (Array.isArray(raw.devices)) {
-        out.devices = raw.devices.map((d, idx) => ({
+        const incomingDevices = raw.devices.map((d, idx) => ({
           idx: normalizeNumber(d?.idx, idx),
           mac: String(d?.mac || '').trim(),
           name: normalizeDeviceName(d?.name, idx, d?.mac),
@@ -2051,6 +2458,7 @@
           rssi: normalizeNumber(d?.rssi, 0),
           seen_ms: Math.max(0, normalizeNumber(d?.seen_ms, 0))
         }));
+        out.devices = mergeDeviceSnapshots(incomingDevices, out.devices);
       }
       if (Array.isArray(raw.groups)) {
         out.groups = normalizeGroups(raw.groups, out.groups);
@@ -2069,6 +2477,9 @@
             self_group_mask: normalizeNumber(event?.self_group_mask, 0) >>> 0,
             peer_group_mask: normalizeNumber(event?.peer_group_mask, 0) >>> 0,
             rssi: normalizeNumber(event?.rssi, 0),
+            kind: normalizeNumber(event?.kind, 1),
+            points: normalizeNumber(event?.points, 1),
+            seq: normalizeNumber(event?.seq, 0),
             event_ms: normalizeNumber(event?.event_ms, 0)
           })).filter((event) => event.self_mac || event.peer_mac) : [],
           receiver_stats: Array.isArray(raw.runtime.receiver_stats) ? raw.runtime.receiver_stats.map((stat) => ({
@@ -2076,6 +2487,9 @@
             self_mac: String(stat?.self_mac || '').trim(),
             seen_count: normalizeNumber(stat?.seen_count, 0),
             found_count: normalizeNumber(stat?.found_count, 0),
+            best_peer: String(stat?.best_peer || '').trim(),
+            best_rssi: normalizeNumber(stat?.best_rssi, -127),
+            active_ms: normalizeNumber(stat?.active_ms, 0),
             seq: normalizeNumber(stat?.seq, 0),
             seen_ms: normalizeNumber(stat?.seen_ms, 0)
           })).filter((stat) => stat.self_mac) : []
@@ -2094,32 +2508,49 @@
     const fallback = buildDefaultLocalState();
     if (!raw || typeof raw !== 'object') return clone(fallback);
     const out = clone(fallback);
-    out.schema = normalizeNumber(raw.schema, 1);
+    const rawSchema = normalizeNumber(raw.schema, 1);
+    const resetGameplay = rawSchema < LOCAL_SCHEMA_VERSION || normalizeNumber(raw.gameplay_reset_version, 0) < LOCAL_SCHEMA_VERSION;
+    out.schema = LOCAL_SCHEMA_VERSION;
+    out.gameplay_reset_version = LOCAL_SCHEMA_VERSION;
     out.updated_at = String(raw.updated_at || nowIso());
     out.rssi_defaults_version = normalizeNumber(raw.rssi_defaults_version, 1);
     out.device_drafts = raw.device_drafts && typeof raw.device_drafts === 'object' ? clone(raw.device_drafts) : {};
     out.controller_groups = normalizeGroups(raw.controller_groups || raw.groups || fallback.controller_groups, fallback.controller_groups);
     out.hidden_devices = Array.isArray(raw.hidden_devices) ? raw.hidden_devices.map((item) => String(item || '').trim()).filter(Boolean) : [];
-    out.templates = normalizeTemplates(raw.templates || fallback.templates);
-    out.feature_presets = normalizeFeaturePresets(raw.feature_presets || fallback.feature_presets);
+    if (resetGameplay) {
+      out.system_play_presets = buildDefaultPlayPresets().map((item) => normalizePlayPreset(item));
+      out.user_play_presets = [];
+    } else {
+      const legacyCombined = Array.isArray(raw.play_presets)
+        ? raw.play_presets
+        : (Array.isArray(raw.feature_presets) ? raw.feature_presets : []);
+      const builtInIds = builtInPlayPresetIds();
+      const legacyUser = legacyCombined.filter((item) => {
+        const id = String(item?.id || '');
+        return item && typeof item === 'object' && !builtInIds.has(id);
+      });
+      out.system_play_presets = buildDefaultPlayPresets().map((item) => normalizePlayPreset(item));
+      out.user_play_presets = normalizeUserPlayPresets(raw.user_play_presets || legacyUser);
+    }
+    rebuildPresetDerivedState(out);
     out.effect_templates = normalizeEffectTemplates(raw.effect_templates || fallback.effect_templates);
     out.effect_presets = normalizeEffectPresets(raw.effect_presets || fallback.effect_presets);
     const templateForRoom = (roomRaw) => out.templates.find((tpl) => tpl.id === roomRaw?.template_id) || out.templates.find((tpl) => tpl.id === raw?.ui?.selected_template_id) || out.templates[0] || null;
     const roomMap = new Map();
-    if (Array.isArray(raw.rooms)) {
+    if (!resetGameplay && Array.isArray(raw.rooms)) {
       for (const item of raw.rooms) {
         const room = normalizeRoomDraft(item, templateForRoom(item));
         if (room) roomMap.set(room.id, room);
       }
     }
-    if (raw.current_room) {
+    if (!resetGameplay && raw.current_room) {
       const current = normalizeRoomDraft(raw.current_room, templateForRoom(raw.current_room));
       if (current && !roomMap.has(current.id)) roomMap.set(current.id, current);
     }
     out.rooms = Array.from(roomMap.values());
     out.active_room_id = String(raw.active_room_id || raw?.ui?.active_room_id || raw?.current_room?.id || out.rooms[0]?.id || '');
     out.current_room = out.rooms.find((room) => room.id === out.active_room_id) ? clone(out.rooms.find((room) => room.id === out.active_room_id)) : (out.rooms[0] ? clone(out.rooms[0]) : null);
-    out.room_history = Array.isArray(raw.room_history) ? raw.room_history.map((item) => clone(item)) : [];
+    out.room_history = resetGameplay ? [] : (Array.isArray(raw.room_history) ? raw.room_history.map((item) => clone(item)) : []);
     out.ui = {
       active_tab: String(raw?.ui?.active_tab || fallback.ui.active_tab || 'overview'),
       show_unassigned: raw?.ui?.show_unassigned !== false,
@@ -2131,9 +2562,15 @@
       preview_cell_shape: String(raw?.ui?.preview_cell_shape || fallback.ui.preview_cell_shape || 'square') === 'circle' ? 'circle' : 'square',
       selected_group_id: normalizeNumber(raw?.ui?.selected_group_id, fallback.ui.selected_group_id ?? 0),
       expanded_group_id: normalizeNumber(raw?.ui?.expanded_group_id, fallback.ui.expanded_group_id ?? -1),
-      selected_template_id: String(raw?.ui?.selected_template_id || out.current_room?.template_id || fallback.ui.selected_template_id || builtinTemplates[0].id),
-      selected_feature_preset_id: String(raw?.ui?.selected_feature_preset_id || fallback.ui.selected_feature_preset_id || 'fp-treasure'),
+      selected_template_id: String(resetGameplay ? allPlayPresets(out)[0]?.id : (raw?.ui?.selected_template_id || out.current_room?.template_id || fallback.ui.selected_template_id || allPlayPresets(out)[0]?.id)),
+      selected_feature_preset_id: String(resetGameplay ? allPlayPresets(out)[0]?.id : (raw?.ui?.selected_feature_preset_id || raw?.ui?.selected_play_preset_id || fallback.ui.selected_feature_preset_id || allPlayPresets(out)[0]?.id)),
+      selected_play_preset_id: String(resetGameplay ? allPlayPresets(out)[0]?.id : (raw?.ui?.selected_play_preset_id || raw?.ui?.selected_feature_preset_id || fallback.ui.selected_play_preset_id || allPlayPresets(out)[0]?.id)),
       selected_effect_preset_id: String(raw?.ui?.selected_effect_preset_id || fallback.ui.selected_effect_preset_id || ''),
+      play_preset_filter: ['all', 'user', 'system'].includes(String(raw?.ui?.play_preset_filter || '')) ? String(raw.ui.play_preset_filter) : 'all',
+      play_preset_query: String(raw?.ui?.play_preset_query || ''),
+      play_preset_advanced: raw?.ui?.play_preset_advanced === true,
+      play_preset_list_collapsed: raw?.ui?.play_preset_list_collapsed === true,
+      system_play_presets_collapsed: raw?.ui?.system_play_presets_collapsed !== false,
       wizard: {
         open: raw?.ui?.wizard?.open === true,
         step: clamp(normalizeNumber(raw?.ui?.wizard?.step, 0), 0, WIZARD_STEP_MAX),
@@ -2143,6 +2580,11 @@
     if (!out.ui.selected_effect_preset_id || !out.effect_presets.some((item) => String(item.id) === String(out.ui.selected_effect_preset_id))) {
       out.ui.selected_effect_preset_id = out.effect_presets[0]?.id || '';
     }
+    if (!allPlayPresets(out).some((item) => String(item.id) === String(out.ui.selected_play_preset_id))) {
+      out.ui.selected_play_preset_id = allPlayPresets(out)[0]?.id || '';
+    }
+    out.ui.selected_feature_preset_id = out.ui.selected_play_preset_id;
+    out.ui.selected_template_id = out.current_room?.template_id || out.ui.selected_play_preset_id || out.templates[0]?.id || '';
     migrateRssiDefaults(out, raw);
     migrateLegacyEffectReferences(out);
     return out;
@@ -2308,18 +2750,21 @@
   }
 
   function deviceDraftName(device) {
+    if (!device) return '';
     const draft = state.localState?.device_drafts?.[device.mac];
     if (draft && typeof draft === 'object' && String(draft.name || '').trim()) return String(draft.name).trim();
-    return device.name;
+    return String(device.name || '');
   }
 
   function deviceDraftNote(device) {
+    if (!device) return '';
     const draft = state.localState?.device_drafts?.[device.mac];
     if (draft && typeof draft === 'object' && String(draft.note || '').trim()) return String(draft.note).trim();
     return String(device.note || '');
   }
 
   function deviceDraftGroupMask(device) {
+    if (!device) return 0;
     const draft = state.localState?.device_drafts?.[device.mac];
     if (draft && typeof draft === 'object' && draft.group_mask !== undefined) {
       return normalizeNumber(draft.group_mask, normalizeNumber(device?.group_mask, 0)) >>> 0;
@@ -2375,7 +2820,7 @@
     const gid = normalizeNumber(groupId, -1);
     if (gid < 0) return { devices: 0, rooms: 0, templates: 0 };
     let devices = 0;
-    for (const device of controllerDevices()) {
+    for (const device of visibleControllerDevices()) {
       if (normalizeNumber(device?.group_mask, 0) & (1 << gid)) devices++;
     }
     let rooms = 0;
@@ -2476,11 +2921,34 @@
         group_mask: groupMask
       };
     });
+    const existingMacs = new Set(out.devices.map((device) => String(device?.mac || '').trim().toUpperCase()).filter(Boolean));
+    Object.entries(drafts)
+      .sort(([a], [b]) => String(a).localeCompare(String(b)))
+      .forEach(([mac, draft]) => {
+        const normalizedMac = String(mac || '').trim().toUpperCase();
+        if (!normalizedMac || existingMacs.has(normalizedMac)) return;
+        const data = draft && typeof draft === 'object' ? draft : {};
+        out.devices.push({
+          idx: out.devices.length,
+          mac: normalizedMac,
+          name: String(data.name || normalizedMac),
+          note: String(data.note || ''),
+          group_mask: normalizeNumber(data.group_mask, 0) >>> 0,
+          rssi: -999,
+          seen_ms: 999999,
+          local_only: true
+        });
+        existingMacs.add(normalizedMac);
+      });
     return out;
   }
 
   function controllerDevices() {
     return Array.isArray(state.controllerState?.devices) ? state.controllerState.devices : [];
+  }
+
+  function visibleControllerDevices() {
+    return controllerDevices();
   }
 
   function deviceNameByMac(mac) {
@@ -2511,6 +2979,43 @@
 
   function controllerGroupSlots() {
     return Array.isArray(state.controllerState?.groups) ? state.controllerState.groups : [];
+  }
+
+  function mergeDeviceSnapshots(incomingDevices, previousDevices = []) {
+    const previousByMac = new Map();
+    for (const device of Array.isArray(previousDevices) ? previousDevices : []) {
+      const mac = String(device?.mac || '').trim().toUpperCase();
+      if (mac) previousByMac.set(mac, clone(device));
+    }
+    const merged = [];
+    const seen = new Set();
+    for (const device of Array.isArray(incomingDevices) ? incomingDevices : []) {
+      const mac = String(device?.mac || '').trim().toUpperCase();
+      if (!mac) continue;
+      const prev = previousByMac.get(mac) || {};
+      merged.push({
+        ...prev,
+        ...device,
+        mac,
+        idx: normalizeNumber(device?.idx, normalizeNumber(prev?.idx, merged.length)),
+        rssi: normalizeNumber(device?.rssi, normalizeNumber(prev?.rssi, 0)),
+        seen_ms: Math.max(0, normalizeNumber(device?.seen_ms, 0)),
+        stale_missing: false
+      });
+      seen.add(mac);
+    }
+    for (const [mac, prev] of previousByMac.entries()) {
+      if (seen.has(mac)) continue;
+      if (!String(prev?.mac || '').trim()) continue;
+      merged.push({
+        ...prev,
+        mac,
+        idx: normalizeNumber(prev?.idx, merged.length),
+        seen_ms: Math.max(normalizeNumber(prev?.seen_ms, DEVICE_ONLINE_MS + 1000), DEVICE_ONLINE_MS + 1000),
+        stale_missing: true
+      });
+    }
+    return merged.sort((a, b) => normalizeNumber(a?.idx, 0) - normalizeNumber(b?.idx, 0));
   }
 
   function controllerEffects() {
@@ -2584,13 +3089,15 @@
   }
 
   function isDeviceScanRetained(device) {
+    if (!state.controllerOnline) return false;
     const seen = normalizeNumber(device?.seen_ms, Number.POSITIVE_INFINITY);
     return !!String(device?.mac || '').trim() && (seen < DEVICE_SCAN_RETAIN_MS || normalizeNumber(device?.online, 0) === 1);
   }
 
   function deviceScanStatusLabel(device) {
     if (isDeviceOnline(device)) return '在线';
-    if (isDeviceScanRetained(device)) return '待刷新';
+    if (isDeviceScanRetained(device)) return '需扫描确认';
+    if (!state.controllerOnline) return '未连接控制端';
     return '离线';
   }
 
@@ -2635,6 +3142,7 @@
   function devicePrepareViewItem(item) {
     return {
       mac: String(item.device?.mac || ''),
+      idx: normalizeNumber(item.device?.idx, -1),
       name: String(item.device?.name || ''),
       groups: Array.isArray(item.groups) ? item.groups.slice() : [],
       rssi: normalizeNumber(item.device?.rssi, 0),
@@ -2665,6 +3173,7 @@
       groupIds: audit.groupIds.slice(),
       devices,
       offlineDevices: devices.filter((item) => !item.online),
+      scrollTop: 0,
       autoScanIssued: false
     };
     renderDialogs();
@@ -2728,6 +3237,9 @@
     const template = state.localState?.templates?.find((tpl) => tpl.id === templateId)
       || state.localState?.templates?.[0]
       || builtinTemplates[0];
+    const preset = playPresetById(template?.play_preset_id || template?.feature_preset_id || template?.id || '') || activePlayPresetForRoom(template);
+    const presetSignal = ruleSignalDefaultsForRoom(null, preset);
+    const presetCompare = ruleSignalCompareForUi(presetSignal);
     const base = sourceRoom ? clone(sourceRoom) : {
       id: uid('room'),
       name: '',
@@ -2741,13 +3253,27 @@
       created_at: nowIso(),
       updated_at: nowIso(),
       feature_preset_id: String(template?.feature_preset_id || ''),
+      play_preset_id: String(template?.play_preset_id || template?.id || ''),
       effect_preset_id: String(template?.effect_preset_id || ''),
       sense_mode: String(template?.sense_mode || ''),
       idle_effect_id: String(template?.idle_effect_id || ''),
       trigger_effect_id: String(template?.trigger_effect_id || ''),
-      trigger_compare: triggerCompareValue(featurePresetById(template?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_compare),
-      trigger_signal_rssi: normalizeNumber(featurePresetById(template?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_rssi_threshold, DEFAULT_TRIGGER_RSSI),
-      trigger_hold_ms: normalizeNumber(featurePresetById(template?.feature_preset_id || '')?.feature_ui?.signal_ui?.trigger_hold_ms, DEFAULT_TRIGGER_HOLD_MS),
+      trigger_compare: presetCompare,
+      trigger_signal_rssi: normalizeNumber(presetSignal.rssiMin, DEFAULT_TRIGGER_RSSI),
+      trigger_hold_ms: normalizeNumber(presetSignal.holdMs, DEFAULT_TRIGGER_HOLD_MS),
+      rule_signal_type: String(presetSignal.type || 'enter_range'),
+      rule_rssi_min: normalizeNumber(presetSignal.rssiMin, DEFAULT_TRIGGER_RSSI),
+      rule_rssi_max: presetSignal.rssiMax === null || presetSignal.rssiMax === undefined ? null : normalizeNumber(presetSignal.rssiMax, -20),
+      rule_hold_ms: normalizeNumber(presetSignal.holdMs, DEFAULT_TRIGGER_HOLD_MS),
+      rule_overrides: {
+        signal: clone(preset.signal || {}),
+        trigger: clone(preset.trigger || {}),
+        score: clone(preset.score || {}),
+        repeat: clone(preset.repeat || {}),
+        afterTrigger: clone(preset.afterTrigger || {}),
+        feedback: clone(preset.feedback || {})
+      },
+      match_bindings: [],
       preview_effect_id: String(template?.effect_preset_id || ''),
       timer: template?.feature_preset_id ? clone(featurePresetById(template.feature_preset_id)?.feature_ui?.timer || {}) : {},
       scoring: template?.scoring && typeof template.scoring === 'object' ? clone(template.scoring) : {},
@@ -2817,7 +3343,7 @@
   function groupDevices(groupId) {
     const bit = 1 << normalizeNumber(groupId, -1);
     if (bit <= 0) return [];
-    return controllerDevices().filter((device) => ((normalizeNumber(device.group_mask, 0) >>> 0) & bit) !== 0);
+    return visibleControllerDevices().filter((device) => ((normalizeNumber(device.group_mask, 0) >>> 0) & bit) !== 0);
   }
 
   function groupNameById(id) {
@@ -2875,9 +3401,28 @@
     return ids.map((gid) => groupNameById(gid)).join(' / ');
   }
 
+  function runtimeVerbForRoom(room = currentRoom()) {
+    const preset = activePlayPresetForRoom(room);
+    if (String(preset?.baseTemplate || '') === 'competition_score') return '占领';
+    const scoreTarget = String(roomEffectiveRuleConfig(room, preset)?.score?.target || preset?.score?.target || '');
+    const relationMatch = String(preset?.relation?.match || '');
+    const signalType = String(roomEffectiveRuleConfig(room, preset)?.signal?.type || preset?.signal?.type || '');
+    if (String(preset?.baseTemplate || '') === 'sustain_score' && (scoreTarget.startsWith('both_') || relationMatch === 'specified_pair')) return '共鸣成功';
+    if (signalType === 'stay_in_range') return '完成保持';
+    if (String(preset?.baseTemplate || '') === 'sustain_score') return '达标计分';
+    return '发现';
+  }
+
   function formatRuntimeDiscovery(event, room = currentRoom()) {
     if (!event) return '';
-    return `${formatClockTime(event.event_ms)} ${deviceLabelFromRuntime(event, 'self')}（${groupLabelFromMask(event.self_group_mask)}）发现 ${deviceLabelFromRuntime(event, 'peer')}（${groupLabelFromMask(event.peer_group_mask)}）`;
+    const verb = runtimeVerbForRoom(room);
+    const source = `${deviceLabelFromRuntime(event, 'self')}（${groupLabelFromMask(event.self_group_mask)}）`;
+    const target = `${deviceLabelFromRuntime(event, 'peer')}（${groupLabelFromMask(event.peer_group_mask)}）`;
+    if (verb === '共鸣成功') return `${formatClockTime(event.event_ms)} ${source} 与 ${target} 共鸣成功`;
+    if (verb === '占领') return `${formatClockTime(event.event_ms)} ${source} 占领 ${target}`;
+    if (verb === '完成保持') return `${formatClockTime(event.event_ms)} ${source} 完成一次保持计分`;
+    if (verb === '达标计分') return `${formatClockTime(event.event_ms)} ${source} 对 ${target} 达标计分`;
+    return `${formatClockTime(event.event_ms)} ${source} 发现 ${target}`;
   }
 
   function modeLabel(mode) {
@@ -3089,19 +3634,160 @@
       || null;
   }
 
+  function activePlayPresetForRoom(room) {
+    const id = String(room?.play_preset_id || room?.feature_preset_id || room?.template_id || '');
+    return playPresetById(id)
+      || allPlayPresets()[0]
+      || normalizePlayPreset(buildDefaultPlayPresets()[0]);
+  }
+
+  function ruleSignalDefaultsForRoom(room, preset = activePlayPresetForRoom(room)) {
+    const signal = preset?.signal && typeof preset.signal === 'object' ? clone(preset.signal) : {};
+    const overrideSignal = room?.rule_overrides?.signal && typeof room.rule_overrides.signal === 'object' ? room.rule_overrides.signal : {};
+    const type = String(overrideSignal.type || room?.rule_signal_type || signal.type || 'enter_range');
+    const hasRoomMin = overrideSignal.rssiMin !== null && overrideSignal.rssiMin !== undefined && overrideSignal.rssiMin !== ''
+      || (room && room.rule_rssi_min !== null && room.rule_rssi_min !== undefined && room.rule_rssi_min !== '');
+    const hasRoomHold = overrideSignal.holdMs !== null && overrideSignal.holdMs !== undefined && overrideSignal.holdMs !== ''
+      || (room && room.rule_hold_ms !== null && room.rule_hold_ms !== undefined && room.rule_hold_ms !== '');
+    const rssiMin = hasRoomMin ? normalizeNumber(overrideSignal.rssiMin ?? room?.rule_rssi_min, DEFAULT_TRIGGER_RSSI) : normalizeNumber(signal.rssiMin, DEFAULT_TRIGGER_RSSI);
+    const hasRoomMax = overrideSignal.rssiMax !== undefined
+      || (room && Object.prototype.hasOwnProperty.call(room, 'rule_rssi_max'));
+    const rawMax = hasRoomMax ? (overrideSignal.rssiMax ?? room?.rule_rssi_max) : signal.rssiMax;
+    return {
+      ...signal,
+      type,
+      rssiMin,
+      rssiMax: rawMax === null || rawMax === undefined || rawMax === '' ? null : normalizeNumber(rawMax, -20),
+      holdMs: hasRoomHold ? normalizeNumber(overrideSignal.holdMs ?? room?.rule_hold_ms, DEFAULT_TRIGGER_HOLD_MS) : normalizeNumber(signal.holdMs, DEFAULT_TRIGGER_HOLD_MS)
+    };
+  }
+
+  function roomEffectiveRuleConfig(room, preset = activePlayPresetForRoom(room)) {
+    const overrides = room?.rule_overrides && typeof room.rule_overrides === 'object' ? room.rule_overrides : {};
+    return {
+      signal: { ...(preset?.signal || {}), ...(overrides.signal || {}) },
+      trigger: { ...(preset?.trigger || {}), ...(overrides.trigger || {}) },
+      score: { ...(preset?.score || {}), ...(overrides.score || {}) },
+      repeat: { ...(preset?.repeat || {}), ...(overrides.repeat || {}) },
+      afterTrigger: { ...(preset?.afterTrigger || {}), ...(overrides.afterTrigger || {}) },
+      feedback: {
+        ...(preset?.feedback || {}),
+        ...(overrides.feedback || {}),
+        signalMeter: {
+          ...(preset?.feedback?.signalMeter || {}),
+          ...(overrides.feedback?.signalMeter || {})
+        }
+      }
+    };
+  }
+
+  function ruleSignalCompareForUi(signal) {
+    const type = String(signal?.type || 'enter_range');
+    return (type === 'weaker' || type === 'lost' || type === 'leave_range') ? 'lte' : 'gte';
+  }
+
+  function v3SignalTypeCode(value) {
+    const key = String(value || 'enter_range');
+    if (key === 'leave_range') return 2;
+    if (key === 'stay_in_range') return 3;
+    if (key === 'appeared') return 4;
+    if (key === 'lost') return 5;
+    if (key === 'stronger') return 6;
+    if (key === 'weaker') return 7;
+    return 1;
+  }
+
+  function v3TriggerModeCode(value) {
+    const key = String(value || 'instant');
+    if (key === 'continuous') return 2;
+    if (key === 'accumulate') return 3;
+    if (key === 'count') return 4;
+    if (key === 'periodic') return 5;
+    return 1;
+  }
+
+  function v3ScoreTargetCode(value) {
+    const key = String(value || 'source_player');
+    if (key === 'source_group') return 2;
+    if (key === 'target_player') return 3;
+    if (key === 'target_group') return 4;
+    if (key === 'both_players') return 5;
+    if (key === 'both_groups') return 6;
+    if (key === 'none') return 0;
+    return 1;
+  }
+
+  function v3RepeatModeCode(value) {
+    const key = String(value || 'once_per_pair');
+    if (key === 'allow_repeat') return 1;
+    if (key === 'once_per_target') return 3;
+    if (key === 'once_per_source') return 4;
+    if (key === 'cooldown') return 5;
+    return 2;
+  }
+
+  function v3AfterCode(targetState, timerAction = 'none') {
+    const targetKey = String(targetState || 'none');
+    const timerKey = String(timerAction || 'none');
+    let targetCode = 0;
+    let timerCode = 0;
+    if (targetKey === 'cooldown') targetCode = 1;
+    else if (targetKey === 'disabled') targetCode = 2;
+    else if (targetKey === 'locked') targetCode = 3;
+    if (timerKey === 'reset') timerCode = 1;
+    else if (timerKey === 'pause') timerCode = 2;
+    return ((timerCode & 0x0f) << 4) | (targetCode & 0x0f);
+  }
+
+  function v3BaseCode(value) {
+    const key = String(value || 'instant_score');
+    if (key === 'sustain_score') return 2;
+    if (key === 'competition_score') return 3;
+    return 1;
+  }
+
+  function v3JudgeCode(preset, asSource) {
+    if (String(preset?.baseTemplate || '') === 'competition_score') return 2; // target device judges ownership.
+    return asSource ? 1 : 0;
+  }
+
+  function signalMeterEnabledForRuntimeGroup(signalMeter, playPreset, asSource) {
+    if (signalMeter?.enabled !== true) return false;
+    const relation = playPreset?.relation || {};
+    const targetRole = String(relation.targetRole || '').trim();
+    const matchMode = String(relation.match || '').trim();
+    const scoreTarget = String(playPreset?.score?.target || '').trim();
+    const baseTemplate = String(playPreset?.baseTemplate || '').trim();
+    const targetIsHiddenObject = targetRole === 'target_device';
+    const sourceOnlyScore = scoreTarget === 'source_player' || scoreTarget === 'source_group';
+    if (!asSource && matchMode === 'source_to_target' && (targetIsHiddenObject || sourceOnlyScore || baseTemplate === 'competition_score')) {
+      return false;
+    }
+    return true;
+  }
+
   function buildMcuRuntimePayload(payload) {
     const room = currentRoom() ? clone(normalizeRoomDraft(currentRoom(), state.localState?.templates?.find((tpl) => tpl.id === currentRoom().template_id) || state.localState?.templates?.[0] || builtinTemplates[0])) : null;
     const runtime = {
-      schema: 1,
+      schema: 3,
       room_id: room?.id || '',
       room_name: room?.name || '',
       active: !!room,
       led_ports_supported: 3,
       warnings: [],
-      rules: []
+      rules: [],
+      pair_bindings: []
     };
     if (!room) return runtime;
     syncRoomEffectRules(room);
+    const playPreset = activePlayPresetForRoom(room);
+    const effectiveRule = roomEffectiveRuleConfig(room, playPreset);
+    const signal = ruleSignalDefaultsForRoom(room, playPreset);
+    const trigger = effectiveRule.trigger || {};
+    const score = effectiveRule.score || {};
+    const repeat = effectiveRule.repeat || {};
+    const afterTrigger = effectiveRule.afterTrigger || {};
+    const signalMeter = effectiveRule.feedback?.signalMeter || {};
     const sourceIds = new Set((room.source_group_ids || []).map((id) => normalizeNumber(id, -1)).filter((id) => id >= 0));
     const targetIds = new Set((room.target_group_ids || []).map((id) => normalizeNumber(id, -1)).filter((id) => id >= 0));
     const allRuntimeGroups = new Set([...sourceIds, ...targetIds]);
@@ -3124,25 +3810,88 @@
       usedEffectIds.add(triggerId);
       const idleSpec = effectSpecForMcu(idleId, 'silent');
       const triggerSpec = effectSpecForMcu(triggerId, 'silent');
+      const meterEnabledForGroup = signalMeterEnabledForRuntimeGroup(signalMeter, playPreset, asSource);
       Object.assign(group, {
         effect: idleSpec,
         trigger_effect: triggerSpec,
         peer_mask: peerMask,
         room_hash: Math.abs(hashCode(String(room.id || 'room'))) % 65535,
         trigger_compare: triggerCompareValue(room.trigger_compare || group.trigger_compare),
-        rssi: normalizeNumber(room.trigger_signal_rssi ?? group.rssi, normalizeNumber(group.rssi, -70)),
-        hold: normalizeNumber(room.trigger_hold_ms ?? group.hold, normalizeNumber(group.hold, 2000))
+        rssi: normalizeNumber(signal.rssiMin, normalizeNumber(room.trigger_signal_rssi ?? group.rssi, normalizeNumber(group.rssi, -70))),
+        hold: normalizeNumber(signal.holdMs, normalizeNumber(room.trigger_hold_ms ?? group.hold, normalizeNumber(group.hold, 2000))),
+        rule_id: 1,
+        rule_base: v3BaseCode(playPreset.baseTemplate),
+        rule_judge: v3JudgeCode(playPreset, asSource),
+        rule_signal: v3SignalTypeCode(signal.type),
+        rule_rssi_min: normalizeNumber(signal.rssiMin, normalizeNumber(room.trigger_signal_rssi, DEFAULT_TRIGGER_RSSI)),
+        rule_rssi_max: signal.rssiMax === null || signal.rssiMax === undefined ? -127 : normalizeNumber(signal.rssiMax, -20),
+        rule_missing_ms: normalizeNumber(signal.missingMs, 3000),
+        rule_smooth_samples: clamp(normalizeNumber(signal.smoothSamples, 5), 1, 10),
+        rule_trigger: v3TriggerModeCode(trigger.mode),
+        rule_target_ms: normalizeNumber(trigger.targetMs, normalizeNumber(signal.holdMs, 0)),
+        rule_target_count: normalizeNumber(trigger.targetCount, 1),
+        rule_period_ms: normalizeNumber(trigger.periodMs, 0),
+        rule_score_target: v3ScoreTargetCode(score.target),
+        rule_points: normalizeNumber(score.points, 1),
+        rule_repeat: v3RepeatModeCode(repeat.mode),
+        rule_cooldown_ms: normalizeNumber(repeat.cooldownMs, 5000),
+        rule_after: v3AfterCode(afterTrigger.targetState, afterTrigger.timerAction),
+        meter_enabled: meterEnabledForGroup ? 1 : 0,
+        meter_port: clamp(normalizeNumber(signalMeter.port, 1), 1, 3),
+        meter_led_count: clamp(normalizeNumber(signalMeter.ledCount, 10), 1, 200),
+        meter_weak_rssi: normalizeNumber(signalMeter.weakRssi, -90),
+        meter_strong_rssi: normalizeNumber(signalMeter.strongRssi, normalizeNumber(signal.rssiMin, DEFAULT_TRIGGER_RSSI)),
+        meter_compression_x100: clamp(normalizeNumber(signalMeter.compressionX100, 100), 20, 500)
       });
       runtime.rules.push({
+        rule_id: 1,
         group_id: gid,
         role: asSource ? 'source' : 'target',
+        base_template: String(playPreset.baseTemplate || 'instant_score'),
+        relation_match: String(playPreset?.relation?.match || 'source_to_target'),
+        judge: group.rule_judge === 2 ? 'target' : group.rule_judge === 1 ? 'source' : 'none',
         peer_mask: peerMask,
-        trigger_compare: group.trigger_compare,
-        rssi: group.rssi,
+        signal_type: String(signal.type || 'enter_range'),
+        rssi_min: group.rule_rssi_min,
+        rssi_max: group.rule_rssi_max,
         hold: group.hold,
+        missing_ms: group.rule_missing_ms,
+        smooth_samples: group.rule_smooth_samples,
+        trigger_mode: String(trigger.mode || 'instant'),
+        target_ms: group.rule_target_ms,
+        target_count: group.rule_target_count,
+        period_ms: group.rule_period_ms,
+        score_target: String(score.target || 'source_player'),
+        points: group.rule_points,
+        repeat: String(repeat.mode || 'once_per_pair'),
+        cooldown_ms: group.rule_cooldown_ms,
+        after: String(afterTrigger.targetState || 'none'),
+        timer_action: String(afterTrigger.timerAction || 'none'),
+        signal_meter: {
+          enabled: group.meter_enabled === 1,
+          port: group.meter_port,
+          led_count: group.meter_led_count,
+          weak_rssi: group.meter_weak_rssi,
+          strong_rssi: group.meter_strong_rssi,
+          compression_x100: group.meter_compression_x100
+        },
         idle_effect: idleSpec,
         trigger_effect: triggerSpec
       });
+    }
+    if (String(playPreset?.relation?.match || '') === 'specified_pair') {
+      syncRoomMatchBindings(room);
+      runtime.pair_bindings = (room.match_bindings || []).map((item, index) => ({
+        rule_id: 1,
+        binding_id: index + 1,
+        source_mac: String(item.source_mac || '').trim().toUpperCase(),
+        target_mac: String(item.target_mac || '').trim().toUpperCase(),
+        source_group_id: normalizeNumber(item.source_group_id, -1),
+        target_group_id: normalizeNumber(item.target_group_id, -1)
+      })).filter((item) => item.source_mac && item.target_mac);
+      if (!runtime.pair_bindings.length) {
+        runtime.warnings.push('当前玩法要求指定配对，但本局还没有可下发的设备配对。');
+      }
     }
     const usesLed4 = Array.from(usedEffectIds).some((effectId) => {
       const effect = effectDefinitionById(effectId);
@@ -3210,38 +3959,101 @@
   function roomRuntimeSummary(room) {
     const runtime = state.controllerState?.runtime || {};
     const roomHash = runtimeRoomHash(room);
+    const preset = activePlayPresetForRoom(room);
+    const effective = roomEffectiveRuleConfig(room, preset);
+    const scoreTarget = String(effective?.score?.target || 'source_player');
     const events = Array.isArray(runtime.events)
       ? runtime.events.filter((event) => normalizeNumber(event?.room, -1) === roomHash && runtimeEventMatchesRoomDirection(event, room))
       : [];
     const bySource = new Map();
+    const byTarget = new Map();
+    const byBothPlayers = new Map();
     const bySourceGroup = new Map();
-    for (const event of events) {
-      const selfIdx = normalizeNumber(event?.self_idx, -1);
-      const selfMac = String(event.self_mac || '').trim();
-      const sourceKey = selfIdx >= 0 ? `idx:${selfIdx}` : `mac:${selfMac}`;
-      const sourceLabel = selfIdx >= 0 ? deviceLabelByIndex(selfIdx) : deviceNameByMac(selfMac);
-      bySource.set(sourceKey, {
-        label: sourceLabel,
-        count: (bySource.get(sourceKey)?.count || 0) + 1,
-        idx: selfIdx
+    const byTargetGroup = new Map();
+    const byBothGroups = new Map();
+    const addPlayer = (map, key, label, idx, points) => {
+      if (!key || !label) return;
+      map.set(key, {
+        label,
+        count: (map.get(key)?.count || 0) + points,
+        idx
       });
+    };
+    const addGroup = (map, key, label, points) => {
+      if (!key || !label) return;
+      map.set(key, {
+        label,
+        count: (map.get(key)?.count || 0) + points
+      });
+    };
+    for (const event of events) {
+      const points = normalizeNumber(event?.points, 1);
+      const selfIdx = normalizeNumber(event?.self_idx, -1);
+      const peerIdx = normalizeNumber(event?.peer_idx, -1);
+      const selfMac = String(event.self_mac || '').trim();
+      const peerMac = String(event.peer_mac || '').trim();
+      const sourceKey = selfIdx >= 0 ? `idx:${selfIdx}` : `mac:${selfMac}`;
+      const targetKey = peerIdx >= 0 ? `idx:${peerIdx}` : `mac:${peerMac}`;
+      const sourceLabel = selfIdx >= 0 ? deviceLabelByIndex(selfIdx) : deviceNameByMac(selfMac);
+      const targetLabel = peerIdx >= 0 ? deviceLabelByIndex(peerIdx) : deviceNameByMac(peerMac);
       const sourceDevice = selfIdx >= 0
         ? controllerDevices().find((device) => normalizeNumber(device?.idx, -1) === selfIdx)
         : deviceByMac(selfMac);
+      const targetDevice = peerIdx >= 0
+        ? controllerDevices().find((device) => normalizeNumber(device?.idx, -1) === peerIdx)
+        : deviceByMac(peerMac);
       const groupLabel = roomSourceGroupLabel(room, sourceDevice);
-      bySourceGroup.set(groupLabel, (bySourceGroup.get(groupLabel) || 0) + 1);
+      const targetGroupLabel = groupLabelFromMask(event.peer_group_mask);
+      if (scoreTarget === 'source_player' || scoreTarget === 'source_group' || scoreTarget === 'none') {
+        addPlayer(bySource, sourceKey, sourceLabel, selfIdx, points);
+        addGroup(bySourceGroup, groupLabel, groupLabel, points);
+      }
+      if (scoreTarget === 'target_player' || scoreTarget === 'target_group') {
+        addPlayer(byTarget, targetKey, targetLabel, peerIdx, points);
+        addGroup(byTargetGroup, targetGroupLabel, targetGroupLabel, points);
+      }
+      if (scoreTarget === 'both_players') {
+        addPlayer(byBothPlayers, sourceKey, sourceLabel, selfIdx, points);
+        addPlayer(byBothPlayers, targetKey, targetLabel, peerIdx, points);
+      }
+      if (scoreTarget === 'both_groups') {
+        addGroup(byBothGroups, groupLabel, groupLabel, points);
+        addGroup(byBothGroups, targetGroupLabel, targetGroupLabel, points);
+      }
     }
     const discoveries = events.slice().reverse().map((event) => ({
       ...event,
       line: formatRuntimeDiscovery(event, room)
     }));
+    const scoreboard = {
+      source_players: Array.from(bySource.values()),
+      source_groups: Array.from(bySourceGroup.values()),
+      target_players: Array.from(byTarget.values()),
+      target_groups: Array.from(byTargetGroup.values()),
+      both_players: Array.from(byBothPlayers.values()),
+      both_groups: Array.from(byBothGroups.values())
+    };
+    const primaryPlayers = scoreTarget === 'target_player'
+      ? scoreboard.target_players
+      : scoreTarget === 'both_players'
+        ? scoreboard.both_players
+        : scoreboard.source_players;
+    const primaryGroups = scoreTarget === 'target_group'
+      ? scoreboard.target_groups
+      : scoreTarget === 'both_groups'
+        ? scoreboard.both_groups
+        : scoreboard.source_groups;
     return {
       roomHash,
       running: runtime.running === true && events.length > 0,
       events,
-      score_total: events.length,
-      by_source: Array.from(bySource.values()).map((item) => ({ label: item.label, count: item.count, idx: item.idx })),
-      by_source_group: Array.from(bySourceGroup.entries()).map(([label, count]) => ({ label, count })),
+      score_total: events.reduce((sum, event) => sum + normalizeNumber(event?.points, 1), 0),
+      by_source: scoreboard.source_players.map((item) => ({ label: item.label, count: item.count, idx: item.idx })),
+      by_source_group: scoreboard.source_groups.map((item) => ({ label: item.label, count: item.count })),
+      scoreboard,
+      score_target: scoreTarget,
+      primary_players: primaryPlayers,
+      primary_groups: primaryGroups,
       discoveries,
       latest: events.length ? events[events.length - 1] : null
     };
@@ -3258,9 +4070,14 @@
     for (const record of records) {
       const roomName = String(record?.room_name || '未命名房间');
       const endedAt = record?.ended_at || record?.updated_at || '';
-      const sourceRows = Array.isArray(record?.runtime_scoreboard?.source) ? record.runtime_scoreboard.source : [];
-      if (sourceRows.length) {
-        for (const row of sourceRows) {
+      const playerRows = [
+        ...(Array.isArray(record?.runtime_scoreboard?.source) ? record.runtime_scoreboard.source : []),
+        ...(Array.isArray(record?.runtime_scoreboard?.source_players) ? record.runtime_scoreboard.source_players : []),
+        ...(Array.isArray(record?.runtime_scoreboard?.target_players) ? record.runtime_scoreboard.target_players : []),
+        ...(Array.isArray(record?.runtime_scoreboard?.both_players) ? record.runtime_scoreboard.both_players : [])
+      ];
+      if (playerRows.length) {
+        for (const row of playerRows) {
           const label = String(row?.label || '').trim();
           if (!label) continue;
           const current = map.get(label) || { label, score: 0, sessions: 0, last_room: '', last_time: '' };
@@ -3293,7 +4110,11 @@
   function historyGroupSummary(records = historySessionRecords()) {
     const map = new Map();
     for (const record of records) {
-      const rows = Array.isArray(record?.runtime_scoreboard?.source_groups) ? record.runtime_scoreboard.source_groups : [];
+      const rows = [
+        ...(Array.isArray(record?.runtime_scoreboard?.source_groups) ? record.runtime_scoreboard.source_groups : []),
+        ...(Array.isArray(record?.runtime_scoreboard?.target_groups) ? record.runtime_scoreboard.target_groups : []),
+        ...(Array.isArray(record?.runtime_scoreboard?.both_groups) ? record.runtime_scoreboard.both_groups : [])
+      ];
       for (const row of rows) {
         const label = String(row?.label || '').trim();
         if (!label) continue;
@@ -3325,7 +4146,7 @@
   }
 
   function filteredDevices() {
-    const devices = controllerDevices();
+    const devices = visibleControllerDevices();
     const mode = state.deviceFilterMode;
     const gid = normalizeNumber(state.deviceFilterGroupId, -1);
     const hidden = new Set((state.localState?.hidden_devices || []).map((item) => String(item || '').trim()).filter(Boolean));
@@ -3356,15 +4177,15 @@
   }
 
   function onlineCount() {
-    return controllerDevices().filter((device) => isDeviceOnline(device)).length;
+    return visibleControllerDevices().filter((device) => isDeviceOnline(device)).length;
   }
 
   function retainedDeviceCount() {
-    return controllerDevices().filter((device) => isDeviceScanRetained(device)).length;
+    return visibleControllerDevices().filter((device) => isDeviceScanRetained(device)).length;
   }
 
   function ungroupedCount() {
-    return controllerDevices().filter((device) => (normalizeNumber(device.group_mask, 0) >>> 0) === 0).length;
+    return visibleControllerDevices().filter((device) => (normalizeNumber(device.group_mask, 0) >>> 0) === 0).length;
   }
 
   function activeGroupsCount() {
@@ -3446,10 +4267,24 @@
   function validateRoomReady(room = currentRoom()) {
     const issues = [];
     const template = state.localState?.templates?.find((item) => item.id === room?.template_id) || activeTemplate() || state.localState?.templates?.[0] || builtinTemplates[0];
+    const preset = activePlayPresetForRoom(room);
     if (!String(room?.name || '').trim()) issues.push('请先填写房间名称。');
-    if (!template?.id) issues.push('请先选择一个游戏模板。');
+    if (!template?.id) issues.push('请先选择一个玩法预设。');
     if (!(Array.isArray(room?.source_group_ids) && room.source_group_ids.length)) issues.push('请至少选择一个源组。');
     if (!(Array.isArray(room?.target_group_ids) && room.target_group_ids.length)) issues.push('请至少选择一个目标组。');
+    if (String(preset?.relation?.match || '') === 'specified_pair') {
+      const sourceDevices = roomBindingCandidates(room, 'source');
+      const targetDevices = roomBindingCandidates(room, 'target');
+      if (!sourceDevices.length || !targetDevices.length) {
+        issues.push('当前玩法要求指定配对，请先连接控制端、扫描设备，并确保源组和目标组都有在线设备。');
+      }
+      const bindings = syncRoomMatchBindings(room);
+      if (sourceDevices.length && bindings.length < sourceDevices.length) {
+        issues.push('当前玩法要求每台源设备都有明确目标，请补齐配对关系。');
+      }
+      const invalid = bindings.find((item) => !String(item?.target_mac || '').trim());
+      if (invalid) issues.push('当前玩法要求指定配对，请先为每台源设备选择目标设备。');
+    }
     return { issues, template };
   }
 
@@ -3578,6 +4413,23 @@
     const room = ensureRoomDraft(template.id);
     room.effect_rules = [];
     applyTemplateDefaultsToRoom(room, template, { overwrite: true });
+    const signal = ruleSignalDefaultsForRoom(null, activePlayPresetForRoom(room));
+    room.rule_signal_type = String(signal.type || 'enter_range');
+    room.rule_rssi_min = normalizeNumber(signal.rssiMin, DEFAULT_TRIGGER_RSSI);
+    room.rule_rssi_max = signal.rssiMax === null || signal.rssiMax === undefined ? null : normalizeNumber(signal.rssiMax, -20);
+    room.rule_hold_ms = normalizeNumber(signal.holdMs, DEFAULT_TRIGGER_HOLD_MS);
+    room.rule_overrides = {
+      signal: clone(playPresetById(room.play_preset_id)?.signal || {}),
+      trigger: clone(playPresetById(room.play_preset_id)?.trigger || {}),
+      score: clone(playPresetById(room.play_preset_id)?.score || {}),
+      repeat: clone(playPresetById(room.play_preset_id)?.repeat || {}),
+      afterTrigger: clone(playPresetById(room.play_preset_id)?.afterTrigger || {}),
+      feedback: clone(playPresetById(room.play_preset_id)?.feedback || {})
+    };
+    room.match_bindings = [];
+    room.trigger_compare = ruleSignalCompareForUi(signal);
+    room.trigger_signal_rssi = room.rule_rssi_min;
+    room.trigger_hold_ms = room.rule_hold_ms;
     updateRoomDraftSummary(room);
     persistLocalCache();
     render();
@@ -3590,6 +4442,74 @@
     if (checked) current.add(gid);
     else current.delete(gid);
     room[key] = Array.from(current).sort((a, b) => a - b);
+    updateRoomDraftSummary(room);
+    persistLocalCache();
+    render();
+  }
+
+  function roomBindingCandidates(room, kind = 'source') {
+    const ids = kind === 'target' ? (room?.target_group_ids || []) : (room?.source_group_ids || []);
+    const seen = new Set();
+    const rows = [];
+    for (const gid of ids) {
+      for (const device of groupDevices(gid)) {
+        const mac = String(device?.mac || '').trim().toUpperCase();
+        if (!mac || seen.has(mac)) continue;
+        seen.add(mac);
+        rows.push({
+          mac,
+          idx: normalizeNumber(device?.idx, -1),
+          name: deviceDraftName(device) || deviceNameByMac(mac) || mac,
+          group_id: normalizeNumber(gid, -1),
+          group_name: groupNameById(gid)
+        });
+      }
+    }
+    return rows;
+  }
+
+  function roomUsesSpecifiedPair(room = currentRoom()) {
+    const preset = activePlayPresetForRoom(room);
+    return String(preset?.relation?.match || '') === 'specified_pair';
+  }
+
+  function syncRoomMatchBindings(room = currentRoom()) {
+    if (!room) return [];
+    if (!Array.isArray(room.match_bindings)) room.match_bindings = [];
+    const sourceDevices = roomBindingCandidates(room, 'source');
+    const targetDevices = roomBindingCandidates(room, 'target');
+    const targetByMac = new Set(targetDevices.map((item) => item.mac));
+    const existing = new Map((room.match_bindings || []).map((item) => [String(item.source_mac || '').trim().toUpperCase(), item]));
+    room.match_bindings = sourceDevices.map((source, index) => {
+      const prev = existing.get(source.mac) || {};
+      const fallbackTarget = targetDevices[index] || targetDevices[0] || null;
+      const targetMac = targetByMac.has(String(prev.target_mac || '').trim().toUpperCase())
+        ? String(prev.target_mac || '').trim().toUpperCase()
+        : String(fallbackTarget?.mac || '');
+      return {
+        source_mac: source.mac,
+        source_group_id: source.group_id,
+        target_mac: targetMac,
+        target_group_id: normalizeNumber(targetDevices.find((item) => item.mac === targetMac)?.group_id, -1)
+      };
+    }).filter((item) => item.source_mac);
+    return room.match_bindings;
+  }
+
+  function updateWizardMatchBinding(sourceMac, targetMac) {
+    const room = ensureRoomDraft();
+    syncRoomMatchBindings(room);
+    room.match_bindings = room.match_bindings.map((item) => {
+      if (String(item.source_mac || '').trim().toUpperCase() !== String(sourceMac || '').trim().toUpperCase()) return item;
+      const target = roomBindingCandidates(room, 'target').find((candidate) => candidate.mac === String(targetMac || '').trim().toUpperCase()) || null;
+      return {
+        source_mac: item.source_mac,
+        source_group_id: item.source_group_id,
+        target_mac: String(target?.mac || ''),
+        target_group_id: normalizeNumber(target?.group_id, -1)
+      };
+    });
+    room.updated_at = nowIso();
     updateRoomDraftSummary(room);
     persistLocalCache();
     render();
@@ -3661,7 +4581,7 @@
 
   function buildControllerPayload() {
     const payload = mergeDraftsIntoController(state.controllerState || buildDefaultControllerState(), state.localState || buildDefaultLocalState());
-    payload.schema_version = 2;
+    payload.schema_version = 3;
     payload.active_preset = selectedTemplateName();
     payload.presets = normalizeTemplates(state.localState?.templates || []);
     payload.effect_templates = normalizeEffectTemplates(state.localState?.effect_templates || []);
@@ -3723,6 +4643,29 @@
         trigger_compare: triggerCompareValue(group.trigger_compare),
         rssi: normalizeNumber(group.rssi, -70),
         hold: normalizeNumber(group.hold, 2000),
+        rule_id: normalizeNumber(group.rule_id, 1),
+        rule_base: normalizeNumber(group.rule_base, 1),
+        rule_judge: normalizeNumber(group.rule_judge, 1),
+        rule_signal: normalizeNumber(group.rule_signal, 1),
+        rule_rssi_min: normalizeNumber(group.rule_rssi_min, normalizeNumber(group.rssi, -70)),
+        rule_rssi_max: normalizeNumber(group.rule_rssi_max, -127),
+        rule_missing_ms: normalizeNumber(group.rule_missing_ms, 3000),
+        rule_smooth_samples: normalizeNumber(group.rule_smooth_samples, 5),
+        rule_trigger: normalizeNumber(group.rule_trigger, 1),
+        rule_target_ms: normalizeNumber(group.rule_target_ms, 0),
+        rule_target_count: normalizeNumber(group.rule_target_count, 1),
+        rule_period_ms: normalizeNumber(group.rule_period_ms, 0),
+        rule_score_target: normalizeNumber(group.rule_score_target, 1),
+        rule_points: normalizeNumber(group.rule_points, 1),
+        rule_repeat: normalizeNumber(group.rule_repeat, 2),
+        rule_cooldown_ms: normalizeNumber(group.rule_cooldown_ms, 5000),
+        rule_after: normalizeNumber(group.rule_after, 0),
+        meter_enabled: normalizeNumber(group.meter_enabled, 0),
+        meter_port: clamp(normalizeNumber(group.meter_port, 1), 1, 3),
+        meter_led_count: clamp(normalizeNumber(group.meter_led_count, 10), 1, 200),
+        meter_weak_rssi: normalizeNumber(group.meter_weak_rssi, -90),
+        meter_strong_rssi: normalizeNumber(group.meter_strong_rssi, normalizeNumber(group.rule_rssi_min, DEFAULT_TRIGGER_RSSI)),
+        meter_compression_x100: clamp(normalizeNumber(group.meter_compression_x100, 100), 20, 500),
         effect: String(group.effect || 'silent').slice(0, MCU_EFFECT_TEXT_LIMIT),
         trigger_effect: String(group.trigger_effect || group.effect || 'silent').slice(0, MCU_EFFECT_TEXT_LIMIT),
         silence: String(group.silence || '').slice(0, 63),
@@ -3731,8 +4674,11 @@
       };
     });
     return {
-      schema_version: 2,
+      schema_version: 3,
       rssi_defaults_version: RSSI_DEFAULTS_VERSION,
+      runtime_schema: 3,
+      play_preset_id: String(currentRoom()?.play_preset_id || currentRoom()?.feature_preset_id || ''),
+      pair_bindings: Array.isArray(payload.mcu_runtime?.pair_bindings) ? payload.mcu_runtime.pair_bindings.map((item) => clone(item)) : [],
       devices: (Array.isArray(payload.devices) ? payload.devices : []).map((device, idx) => ({
         idx: normalizeNumber(device.idx, idx),
         mac: String(device.mac || '').trim(),
@@ -3748,7 +4694,8 @@
 
   function buildLocalStatePayload() {
     const payload = clone(state.localState || buildDefaultLocalState());
-    payload.schema = 1;
+    payload.schema = LOCAL_SCHEMA_VERSION;
+    payload.gameplay_reset_version = LOCAL_SCHEMA_VERSION;
     payload.updated_at = nowIso();
     payload.rssi_defaults_version = RSSI_DEFAULTS_VERSION;
     payload.ui = {
@@ -3763,8 +4710,14 @@
       selected_group_id: normalizeNumber(state.localState?.ui?.selected_group_id, 0),
       expanded_group_id: normalizeNumber(state.localState?.ui?.expanded_group_id, -1),
       selected_template_id: state.selectedTemplateId,
-      selected_feature_preset_id: String(state.localState?.ui?.selected_feature_preset_id || 'fp-treasure'),
+      selected_feature_preset_id: String(state.localState?.ui?.selected_feature_preset_id || allPlayPresets(state.localState)?.[0]?.id || ''),
+      selected_play_preset_id: String(state.localState?.ui?.selected_play_preset_id || state.localState?.ui?.selected_feature_preset_id || allPlayPresets(state.localState)?.[0]?.id || ''),
       selected_effect_preset_id: String(state.localState?.ui?.selected_effect_preset_id || ''),
+      play_preset_filter: ['all', 'user', 'system'].includes(String(state.localState?.ui?.play_preset_filter || '')) ? String(state.localState.ui.play_preset_filter) : 'all',
+      play_preset_query: String(state.localState?.ui?.play_preset_query || ''),
+      play_preset_advanced: state.localState?.ui?.play_preset_advanced === true,
+      play_preset_list_collapsed: state.localState?.ui?.play_preset_list_collapsed === true,
+      system_play_presets_collapsed: state.localState?.ui?.system_play_presets_collapsed !== false,
       wizard: {
         open: !!state.localState?.ui?.wizard?.open,
         step: clamp(normalizeNumber(state.localState?.ui?.wizard?.step, 0), 0, WIZARD_STEP_MAX),
@@ -3775,8 +4728,9 @@
     payload.active_room_id = activeRoomId();
     payload.current_room = currentRoom() ? clone(currentRoom()) : null;
     payload.room_history = Array.isArray(payload.room_history) ? payload.room_history : [];
-    payload.templates = Array.isArray(payload.templates) ? payload.templates : [];
-    payload.feature_presets = Array.isArray(payload.feature_presets) ? payload.feature_presets : [];
+    payload.system_play_presets = buildDefaultPlayPresets().map((item) => normalizePlayPreset(item));
+    payload.user_play_presets = normalizeUserPlayPresets(payload.user_play_presets || payload.play_presets || payload.feature_presets || []);
+    rebuildPresetDerivedState(payload);
     payload.effect_templates = Array.isArray(payload.effect_templates) ? payload.effect_templates : [];
     payload.effect_presets = Array.isArray(payload.effect_presets) ? payload.effect_presets : [];
     payload.hidden_devices = Array.isArray(payload.hidden_devices) ? payload.hidden_devices : [];
@@ -4401,6 +5355,54 @@
     }
   }
 
+  async function identifyDevicesByIdx(devices, label = '设备') {
+    const list = (Array.isArray(devices) ? devices : [])
+      .map((device) => {
+        const source = device?.device || device;
+        return {
+          idx: normalizeNumber(source?.idx, -1),
+          name: deviceDraftName(source) || String(source?.name || source?.mac || '')
+        };
+      })
+      .filter((item, index, arr) => item.idx >= 0 && arr.findIndex((other) => other.idx === item.idx) === index);
+    if (!list.length) {
+      logDebug(`${label}点名失败 | 没有可点名设备`);
+      return;
+    }
+    if (!state.controllerOnline) {
+      logDebug(`${label}点名失败 | 控制端未连接`);
+      return;
+    }
+    try {
+      setBusy('identify', true);
+      for (const item of list) {
+        await requestJson(`/api/controller/identify?idx=${encodeURIComponent(item.idx)}&t=${Date.now()}`, {
+          method: 'GET',
+          timeoutMs: 6000
+        });
+        await sleep(120);
+      }
+      logDebug(`${label}点名 | ${list.length} 台 | ${list.map((item) => item.name || `idx${item.idx}`).join(' / ')}`);
+    } catch (err) {
+      logDebug(`${label}点名失败 | ${err.message}`);
+    } finally {
+      setBusy('identify', false);
+    }
+  }
+
+  async function identifyGroupDevices(groupId) {
+    const gid = normalizeNumber(groupId, -1);
+    const group = groupSlotById(gid);
+    const devices = groupDevices(gid);
+    await identifyDevicesByIdx(devices, `分组「${group?.name || `分组${gid + 1}`}」`);
+  }
+
+  async function identifyRoomDevices(roomId = activeRoomId()) {
+    const room = roomById(roomId) || currentRoom();
+    const devices = roomSelectedDevices(room).map((item) => item.device);
+    await identifyDevicesByIdx(devices, `房间「${room?.name || '当前房间'}」参与设备`);
+  }
+
   async function loadFromController() {
     try {
       setBusy('controller', true);
@@ -4424,8 +5426,11 @@
 
   async function scanDevices() {
     if (!state.controllerOnline) {
-      logDebug('扫描设备失败 | 控制端未连接');
-      return;
+      await loadFromController();
+      if (!state.controllerOnline) {
+        logDebug('扫描设备失败 | 控制端未连接');
+        return;
+      }
     }
     try {
       setBusy('scan', true);
@@ -4434,7 +5439,9 @@
         timeoutMs: 8000
       });
       logDebug('扫描设备 | 已发送 DISCOVER');
-      await sleep(1200);
+      await sleep(900);
+      await loadFromController();
+      await sleep(1800);
       await loadFromController();
     } catch (err) {
       logDebug(`扫描设备失败 | ${err.message}`);
@@ -4532,7 +5539,289 @@
   }
 
   function selectedFeaturePreset() {
-    return featurePresetById(state.localState?.ui?.selected_feature_preset_id);
+    const id = state.localState?.ui?.selected_play_preset_id || state.localState?.ui?.selected_feature_preset_id;
+    return playPresetById(id) || featurePresetById(id);
+  }
+
+  function clonePlayPreset(presetId) {
+    const source = playPresetById(presetId);
+    if (!source) return;
+    const next = normalizePlayPreset({
+      ...clone(source),
+      id: uid('play'),
+      name: `${source.name || '玩法'} 副本`,
+      builtIn: false,
+      created_at: nowIso(),
+      updated_at: nowIso()
+    });
+    state.localState.user_play_presets = normalizeUserPlayPresets([...(state.localState.user_play_presets || []), next]);
+    rebuildPresetDerivedState(state.localState);
+    state.localState.ui.selected_play_preset_id = next.id;
+    state.localState.ui.selected_feature_preset_id = next.id;
+    state.localState.ui.selected_template_id = next.id;
+    state.selectedTemplateId = next.id;
+    persistStateToServer();
+    render();
+  }
+
+  function deletePlayPreset(presetId) {
+    const preset = playPresetById(presetId);
+    if (!preset || preset.builtIn === true) {
+      alert('系统默认玩法预设不能删除。');
+      return;
+    }
+    const blockingRooms = roomList().filter((room) => String(room?.play_preset_id || room?.feature_preset_id || room?.template_id || '') === String(preset.id)
+      && ['draft', 'published', 'running'].includes(String(room?.status || 'draft')));
+    if (blockingRooms.length) {
+      alert(`玩法预设「${preset.name}」正在被 ${blockingRooms[0].name || '某个房间'} 使用，请先改房间玩法或删除房间。`);
+      return;
+    }
+    if (!confirm(`确认删除玩法预设「${preset.name}」？已结束房间和历史记录会保留冻结快照。`)) return;
+    state.localState.user_play_presets = normalizeUserPlayPresets((state.localState.user_play_presets || []).filter((item) => String(item.id) !== String(preset.id)));
+    rebuildPresetDerivedState(state.localState);
+    if (String(state.localState.ui.selected_play_preset_id || '') === String(preset.id)) {
+      const nextId = allPlayPresets()[0]?.id || '';
+      state.localState.ui.selected_play_preset_id = nextId;
+      state.localState.ui.selected_feature_preset_id = nextId;
+      state.localState.ui.selected_template_id = nextId;
+      state.selectedTemplateId = nextId;
+    }
+    persistStateToServer();
+    render();
+  }
+
+  function openPlayPresetDeleteModal(presetId) {
+    const preset = playPresetById(presetId);
+    if (!preset || preset.builtIn === true) {
+      alert('系统默认玩法预设不能删除。');
+      return;
+    }
+    const blockingRooms = roomList().filter((room) => String(room?.play_preset_id || room?.feature_preset_id || room?.template_id || '') === String(preset.id)
+      && ['draft', 'published', 'running'].includes(String(room?.status || 'draft')));
+    if (blockingRooms.length) {
+      alert(`玩法预设「${preset.name}」正在被 ${blockingRooms[0].name || '某个房间'} 使用，请先改房间玩法或删除房间。`);
+      return;
+    }
+    state.playPresetDeleteModal = {
+      open: true,
+      presetId: String(preset.id),
+      name: String(preset.name || '未命名玩法'),
+      note: String(preset.note || ''),
+      historyOnly: true
+    };
+    render();
+  }
+
+  function closePlayPresetDeleteModal() {
+    state.playPresetDeleteModal = null;
+    render();
+  }
+
+  function confirmDeletePlayPresetModal() {
+    const modal = state.playPresetDeleteModal;
+    if (!modal?.presetId) return;
+    const presetId = String(modal.presetId);
+    state.localState.user_play_presets = normalizeUserPlayPresets((state.localState.user_play_presets || []).filter((item) => String(item.id) !== presetId));
+    rebuildPresetDerivedState(state.localState);
+    if (String(state.localState.ui.selected_play_preset_id || '') === presetId) {
+      const nextId = allPlayPresets()[0]?.id || '';
+      state.localState.ui.selected_play_preset_id = nextId;
+      state.localState.ui.selected_feature_preset_id = nextId;
+      state.localState.ui.selected_template_id = nextId;
+      state.selectedTemplateId = nextId;
+    }
+    state.playPresetDeleteModal = null;
+    persistStateToServer();
+    render();
+  }
+
+  function playPresetFormSource(presetOrId = null) {
+    if (!presetOrId) return null;
+    if (typeof presetOrId === 'string') return playPresetById(presetOrId);
+    if (presetOrId && typeof presetOrId === 'object') return normalizePlayPreset(presetOrId);
+    return null;
+  }
+
+  function openPlayPresetFormModal(presetOrId = null, options = {}) {
+    const source = playPresetFormSource(presetOrId) || normalizePlayPreset(buildDefaultPlayPresets()[0]);
+    const editing = String(options.mode || '') === 'edit' && source.builtIn !== true;
+    const signal = source.signal || {};
+    const trigger = source.trigger || {};
+    const score = source.score || {};
+    const repeat = source.repeat || {};
+    const after = source.afterTrigger || {};
+    const feedback = source.feedback || {};
+    const meter = feedback.signalMeter || {};
+    state.playPresetFormModal = {
+      open: true,
+      mode: editing ? 'edit' : 'create',
+      sourceId: String(source.id || ''),
+      presetId: editing ? String(source.id || '') : '',
+      name: editing ? String(source.name || '') : String(options.name || (source.builtIn ? `${source.name || '玩法'} 自定义版` : '新玩法预设')),
+      note: editing ? String(source.note || '') : String(options.note || (source.builtIn ? `基于系统玩法「${source.name || '玩法'}」新建。` : '')),
+      baseTemplate: String(source.baseTemplate || 'instant_score'),
+      relation_mode: String(source.relation?.mode || 'many_to_many'),
+      relation_match: String(source.relation?.match || 'source_to_target'),
+      signal_type: String(signal.type || 'enter_range'),
+      signal_rssi_min: normalizeNumber(signal.rssiMin, DEFAULT_TRIGGER_RSSI),
+      signal_rssi_max: signal.rssiMax === null || signal.rssiMax === undefined ? '' : normalizeNumber(signal.rssiMax, -20),
+      signal_hold_ms: normalizeNumber(signal.holdMs, DEFAULT_TRIGGER_HOLD_MS),
+      signal_missing_ms: normalizeNumber(signal.missingMs, 3000),
+      signal_smooth_samples: clamp(normalizeNumber(signal.smoothSamples, 5), 1, 10),
+      trigger_mode: String(trigger.mode || 'instant'),
+      trigger_target_ms: normalizeNumber(trigger.targetMs, 0),
+      trigger_target_count: normalizeNumber(trigger.targetCount, 1),
+      trigger_period_ms: normalizeNumber(trigger.periodMs, 0),
+      score_target: String(score.target || 'source_player'),
+      score_points: normalizeNumber(score.points, 1),
+      repeat_mode: String(repeat.mode || 'once_per_pair'),
+      repeat_cooldown_ms: normalizeNumber(repeat.cooldownMs, 5000),
+      after_target_state: String(after.targetState || 'none'),
+      after_timer_action: String(after.timerAction || 'none'),
+      feedback_enter: String(feedback.onEnter || 'builtin-breath'),
+      feedback_success: String(feedback.onSuccess || 'builtin-pulse'),
+      feedback_fail: String(feedback.onFail || 'builtin-silent'),
+      meter_enabled: meter.enabled === true,
+      meter_port: clamp(normalizeNumber(meter.port, 1), 1, 3),
+      meter_led_count: clamp(normalizeNumber(meter.ledCount, 10), 1, 200),
+      meter_weak_rssi: normalizeNumber(meter.weakRssi, -90),
+      meter_strong_rssi: normalizeNumber(meter.strongRssi, normalizeNumber(signal.rssiMin, DEFAULT_TRIGGER_RSSI)),
+      meter_compression: clamp(normalizeNumber(meter.compressionX100, 100), 20, 500)
+    };
+    render();
+    requestAnimationFrame(() => {
+      const input = document.querySelector('[data-role="play-preset-form-input"][data-play-preset-form-field="name"]');
+      if (input) {
+        input.focus();
+        input.select?.();
+      }
+    });
+  }
+
+  function closePlayPresetFormModal() {
+    state.playPresetFormModal = null;
+    render();
+  }
+
+  function updatePlayPresetFormModalField(field, value, target = null) {
+    const form = state.playPresetFormModal;
+    if (!form) return;
+    if (field === 'meter_enabled') {
+      form[field] = target ? !!target.checked : value === true || String(value) === 'true' || String(value) === 'on';
+      return;
+    }
+    const numericFields = new Set([
+      'signal_rssi_min',
+      'signal_hold_ms',
+      'signal_missing_ms',
+      'signal_smooth_samples',
+      'trigger_target_ms',
+      'trigger_target_count',
+      'trigger_period_ms',
+      'score_points',
+      'repeat_cooldown_ms',
+      'meter_port',
+      'meter_led_count',
+      'meter_weak_rssi',
+      'meter_strong_rssi',
+      'meter_compression'
+    ]);
+    if (field === 'signal_rssi_max') {
+      form[field] = String(value ?? '').trim() === '' ? '' : normalizeNumber(value, -20);
+    } else if (numericFields.has(field)) {
+      form[field] = normalizeNumber(value, form[field]);
+    } else {
+      form[field] = String(value ?? '');
+    }
+  }
+
+  function savePlayPresetFormModal() {
+    const form = state.playPresetFormModal;
+    if (!form) return;
+    const name = String(form.name || '').trim();
+    if (!name) {
+      alert('请填写玩法名称。');
+      return;
+    }
+    const now = nowIso();
+    const source = playPresetById(form.sourceId) || normalizePlayPreset(buildDefaultPlayPresets()[0]);
+    const editing = String(form.mode || '') === 'edit' && String(form.presetId || '').trim();
+    const id = editing ? String(form.presetId) : uid('play');
+    const points = normalizeNumber(form.score_points, 1);
+    const next = normalizePlayPreset({
+      ...clone(source),
+      id,
+      name,
+      note: String(form.note || '').trim(),
+      builtIn: false,
+      baseTemplate: ['instant_score', 'sustain_score', 'competition_score'].includes(String(form.baseTemplate)) ? String(form.baseTemplate) : 'instant_score',
+      relation: {
+        ...(source.relation || {}),
+        mode: String(form.relation_mode || 'many_to_many'),
+        match: String(form.relation_match || 'source_to_target')
+      },
+      signal: {
+        ...(source.signal || {}),
+        type: String(form.signal_type || 'enter_range'),
+        rssiMin: normalizeNumber(form.signal_rssi_min, DEFAULT_TRIGGER_RSSI),
+        rssiMax: String(form.signal_rssi_max ?? '').trim() === '' ? null : normalizeNumber(form.signal_rssi_max, -20),
+        holdMs: normalizeNumber(form.signal_hold_ms, DEFAULT_TRIGGER_HOLD_MS),
+        missingMs: normalizeNumber(form.signal_missing_ms, 3000),
+        smoothSamples: clamp(normalizeNumber(form.signal_smooth_samples, 5), 1, 10)
+      },
+      trigger: {
+        ...(source.trigger || {}),
+        mode: String(form.trigger_mode || 'instant'),
+        targetMs: normalizeNumber(form.trigger_target_ms, 0),
+        targetCount: normalizeNumber(form.trigger_target_count, 1),
+        periodMs: normalizeNumber(form.trigger_period_ms, 0)
+      },
+      score: {
+        ...(source.score || {}),
+        target: String(form.score_target || 'source_player'),
+        points,
+        type: points === 0 ? 'none' : points < 0 ? 'subtract' : 'add'
+      },
+      repeat: {
+        ...(source.repeat || {}),
+        mode: String(form.repeat_mode || 'once_per_pair'),
+        cooldownMs: normalizeNumber(form.repeat_cooldown_ms, 5000)
+      },
+      afterTrigger: {
+        ...(source.afterTrigger || {}),
+        targetState: String(form.after_target_state || 'none'),
+        timerAction: String(form.after_timer_action || 'none')
+      },
+      feedback: {
+        ...(source.feedback || {}),
+        onEnter: String(form.feedback_enter || 'builtin-breath'),
+        onSuccess: String(form.feedback_success || 'builtin-pulse'),
+        onFail: String(form.feedback_fail || 'builtin-silent'),
+        signalMeter: {
+          enabled: form.meter_enabled === true,
+          port: clamp(normalizeNumber(form.meter_port, 1), 1, 3),
+          ledCount: clamp(normalizeNumber(form.meter_led_count, 10), 1, 200),
+          weakRssi: normalizeNumber(form.meter_weak_rssi, -90),
+          strongRssi: normalizeNumber(form.meter_strong_rssi, normalizeNumber(form.signal_rssi_min, DEFAULT_TRIGGER_RSSI)),
+          compressionX100: clamp(normalizeNumber(form.meter_compression, 100), 20, 500)
+        }
+      },
+      created_at: editing ? String(source.created_at || now) : now,
+      updated_at: now
+    });
+    const existing = Array.isArray(state.localState.user_play_presets) ? state.localState.user_play_presets : [];
+    const nextList = editing
+      ? existing.map((item) => String(item.id) === id ? next : item)
+      : [next, ...existing];
+    state.localState.user_play_presets = normalizeUserPlayPresets(nextList);
+    rebuildPresetDerivedState(state.localState);
+    state.localState.ui.selected_play_preset_id = next.id;
+    state.localState.ui.selected_feature_preset_id = next.id;
+    state.localState.ui.selected_template_id = next.id;
+    state.selectedTemplateId = next.id;
+    state.playPresetFormModal = null;
+    persistStateToServer();
+    render();
   }
 
   function selectedEffectPreset() {
@@ -4568,13 +5857,110 @@
     render();
   }
 
-  function updateSelectedFeaturePresetField(field, value) {
-    const preset = selectedFeaturePreset();
+  function updateSelectedFeaturePresetField(field, value, options = {}) {
+    let preset = selectedFeaturePreset();
     if (!preset) return;
+    if (preset.builtIn === true) {
+      clonePlayPreset(preset.id);
+      preset = selectedFeaturePreset();
+      if (!preset) return;
+    }
+    preset.relation = preset.relation && typeof preset.relation === 'object' ? preset.relation : {};
+    preset.signal = preset.signal && typeof preset.signal === 'object' ? preset.signal : {};
+    preset.trigger = preset.trigger && typeof preset.trigger === 'object' ? preset.trigger : {};
+    preset.score = preset.score && typeof preset.score === 'object' ? preset.score : {};
+    preset.repeat = preset.repeat && typeof preset.repeat === 'object' ? preset.repeat : {};
+    preset.afterTrigger = preset.afterTrigger && typeof preset.afterTrigger === 'object' ? preset.afterTrigger : {};
+    preset.feedback = preset.feedback && typeof preset.feedback === 'object' ? preset.feedback : {};
+    preset.feedback.signalMeter = preset.feedback.signalMeter && typeof preset.feedback.signalMeter === 'object'
+      ? preset.feedback.signalMeter
+      : { enabled: false, port: 1, ledCount: 10, weakRssi: -90, strongRssi: normalizeNumber(preset.signal?.rssiMin, DEFAULT_TRIGGER_RSSI) };
     switch (field) {
       case 'name':
       case 'note':
         preset[field] = String(value || '');
+        break;
+      case 'baseTemplate':
+        preset.baseTemplate = ['instant_score', 'sustain_score', 'competition_score'].includes(String(value)) ? String(value) : 'instant_score';
+        break;
+      case 'relation_mode':
+        preset.relation.mode = String(value || 'many_to_many');
+        break;
+      case 'relation_match':
+        preset.relation.match = String(value || 'source_to_target');
+        break;
+      case 'signal_type':
+        preset.signal.type = String(value || 'enter_range');
+        break;
+      case 'signal_rssi_min':
+        preset.signal.rssiMin = normalizeNumber(value, DEFAULT_TRIGGER_RSSI);
+        break;
+      case 'signal_rssi_max':
+        preset.signal.rssiMax = String(value ?? '').trim() === '' ? null : normalizeNumber(value, -20);
+        break;
+      case 'signal_hold_ms':
+        preset.signal.holdMs = normalizeNumber(value, DEFAULT_TRIGGER_HOLD_MS);
+        break;
+      case 'signal_missing_ms':
+        preset.signal.missingMs = normalizeNumber(value, 3000);
+        break;
+      case 'signal_smooth_samples':
+        preset.signal.smoothSamples = clamp(normalizeNumber(value, 5), 1, 10);
+        break;
+      case 'trigger_mode':
+        preset.trigger.mode = String(value || 'instant');
+        break;
+      case 'trigger_target_ms':
+        preset.trigger.targetMs = normalizeNumber(value, 0);
+        break;
+      case 'trigger_target_count':
+        preset.trigger.targetCount = normalizeNumber(value, 1);
+        break;
+      case 'trigger_period_ms':
+        preset.trigger.periodMs = normalizeNumber(value, 0);
+        break;
+      case 'score_target':
+        preset.score.target = String(value || 'source_player');
+        break;
+      case 'score_points':
+        preset.score.points = normalizeNumber(value, 1);
+        preset.score.type = preset.score.points === 0 ? 'none' : preset.score.points < 0 ? 'subtract' : 'add';
+        break;
+      case 'repeat_mode':
+        preset.repeat.mode = String(value || 'once_per_pair');
+        break;
+      case 'repeat_cooldown_ms':
+        preset.repeat.cooldownMs = normalizeNumber(value, 5000);
+        break;
+      case 'after_target_state':
+        preset.afterTrigger.targetState = String(value || 'none');
+        break;
+      case 'after_timer_action':
+        preset.afterTrigger.timerAction = String(value || 'none');
+        break;
+      case 'feedback_success':
+        preset.feedback.onSuccess = String(value || 'builtin-pulse');
+        break;
+      case 'feedback_enter':
+        preset.feedback.onEnter = String(value || 'builtin-breath');
+        break;
+      case 'meter_enabled':
+        preset.feedback.signalMeter.enabled = value === true || String(value) === 'true' || String(value) === 'on';
+        break;
+      case 'meter_port':
+        preset.feedback.signalMeter.port = clamp(normalizeNumber(value, 1), 1, 3);
+        break;
+      case 'meter_led_count':
+        preset.feedback.signalMeter.ledCount = clamp(normalizeNumber(value, 10), 1, 200);
+        break;
+      case 'meter_weak_rssi':
+        preset.feedback.signalMeter.weakRssi = normalizeNumber(value, -90);
+        break;
+      case 'meter_strong_rssi':
+        preset.feedback.signalMeter.strongRssi = normalizeNumber(value, normalizeNumber(preset.signal?.rssiMin, DEFAULT_TRIGGER_RSSI));
+        break;
+      case 'meter_compression':
+        preset.feedback.signalMeter.compressionX100 = clamp(normalizeNumber(value, 100), 20, 500);
         break;
       case 'sense_mode':
       case 'idle_effect_id':
@@ -4621,8 +6007,10 @@
         break;
     }
     preset.updated_at = nowIso();
+    state.localState.user_play_presets = normalizeUserPlayPresets((state.localState.user_play_presets || []).map((item) => String(item.id) === String(preset.id) ? normalizePlayPreset({ ...preset, builtIn: false }) : item));
+    rebuildPresetDerivedState(state.localState);
     persistStateToServer();
-    render();
+    if (options.render !== false) render();
   }
 
   function updateSelectedEffectPresetField(field, value) {
@@ -4762,6 +6150,7 @@
     try {
       state.preparingRoomId = room.id;
       setBusy('publish', true);
+      await stopEffectsBeforeRuntimeTransition(room, '设备预备');
       const saved = await persistDraftToServer();
       if (!saved) return false;
       showRuntimeWarnings(buildControllerPayload());
@@ -4807,6 +6196,24 @@
 
   async function publishRoom(room = currentRoom()) {
     return prepareRoom(room, { force: true });
+  }
+
+  async function stopEffectsBeforeRuntimeTransition(room = currentRoom(), label = '运行切换') {
+    try {
+      await requestJson(`/api/controller/cmd?name=STOP&t=${Date.now()}`, {
+        method: 'GET',
+        timeoutMs: 12000
+      });
+      logDebug(`${label}前已自动停止测试灯效/熄灭设备 | ${room?.name || '当前房间'}`);
+      return true;
+    } catch (err) {
+      if (isSoftStopDisconnectError(err)) {
+        logDebug(`${label}前停止测试灯效收到代理断连响应，按成功处理 | ${room?.name || '当前房间'}`);
+        return true;
+      }
+      logDebug(`${label}前停止测试灯效失败 | ${err.message}`);
+      throw err;
+    }
   }
 
   async function testRoomTriggerEffects(room = currentRoom()) {
@@ -4903,13 +6310,22 @@
     }
   }
 
-  function beginRoomStartCountdown(room = currentRoom()) {
+  async function beginRoomStartCountdown(room = currentRoom()) {
     if (!room) return false;
     if (room.status !== 'published') {
       alert('请先完成设备预备，再开始游戏。');
       return false;
     }
     if (roomCountdownActive(room.id)) return true;
+    try {
+      setBusy('controller', true);
+      await stopEffectsBeforeRuntimeTransition(room, '开始倒计时');
+    } catch (err) {
+      alert(`开始前停止测试灯效失败：${err.message}`);
+      return false;
+    } finally {
+      setBusy('controller', false);
+    }
     clearRoomCountdown({ silent: true });
     state.roomStartCountdown = {
       roomId: room.id,
@@ -4954,6 +6370,7 @@
     }
     try {
       setBusy('controller', true);
+      await stopEffectsBeforeRuntimeTransition(room, '开始游戏');
       await requestJson(`/api/controller/cmd?name=START_GAME&t=${Date.now()}`, {
         method: 'GET',
         timeoutMs: 8000
@@ -4982,7 +6399,7 @@
       createRoomFromTemplate();
       return;
     }
-    beginRoomStartCountdown(room);
+    await beginRoomStartCountdown(room);
   }
 
   async function endRoom() {
@@ -5035,6 +6452,8 @@
         trigger_effect_id: String(room.trigger_effect_id || ''),
         effect_rules: Array.isArray(room.effect_rules) ? clone(room.effect_rules) : [],
         scoring: room.scoring && typeof room.scoring === 'object' ? clone(room.scoring) : {},
+        rule_overrides: room.rule_overrides && typeof room.rule_overrides === 'object' ? clone(room.rule_overrides) : {},
+        match_bindings: Array.isArray(room.match_bindings) ? clone(room.match_bindings) : [],
         score_total: runtimeSummary.score_total,
         runtime_room_hash: runtimeSummary.roomHash,
         runtime_discoveries: runtimeSummary.discoveries.map((event) => ({
@@ -5062,7 +6481,13 @@
         })),
         runtime_scoreboard: {
           source: runtimeSummary.by_source.map((item) => ({ idx: item.idx, label: item.label, count: item.count })),
-          source_groups: runtimeSummary.by_source_group.map((item) => ({ label: item.label, count: item.count }))
+          source_groups: runtimeSummary.by_source_group.map((item) => ({ label: item.label, count: item.count })),
+          source_players: (runtimeSummary.scoreboard?.source_players || []).map((item) => ({ idx: item.idx, label: item.label, count: item.count })),
+          target_players: (runtimeSummary.scoreboard?.target_players || []).map((item) => ({ idx: item.idx, label: item.label, count: item.count })),
+          both_players: (runtimeSummary.scoreboard?.both_players || []).map((item) => ({ idx: item.idx, label: item.label, count: item.count })),
+          target_groups: (runtimeSummary.scoreboard?.target_groups || []).map((item) => ({ label: item.label, count: item.count })),
+          both_groups: (runtimeSummary.scoreboard?.both_groups || []).map((item) => ({ label: item.label, count: item.count })),
+          score_target: runtimeSummary.score_target || 'source_player'
         },
         notes: room.notes || '',
         updated_at: nowIso()
@@ -5235,7 +6660,7 @@
       green: 'border-[rgba(77,209,134,0.34)] bg-[linear-gradient(180deg,rgba(66,190,118,0.96),rgba(45,143,92,0.96))] text-[#f8fffb]',
       yellow: 'border-[rgba(232,190,79,0.36)] bg-[linear-gradient(180deg,rgba(232,190,79,0.96),rgba(181,139,45,0.96))] text-[#16120a]',
       slate: 'border-[rgba(113,139,174,0.3)] bg-[rgba(19,29,44,0.94)] text-[#dbe7f8]',
-      violet: 'border-[rgba(137,156,220,0.36)] bg-[linear-gradient(180deg,rgba(92,116,189,0.96),rgba(70,91,158,0.96))] text-[#f8fbff]'
+      violet: 'border-[rgba(82,155,236,0.36)] bg-[linear-gradient(180deg,rgba(59,133,221,0.96),rgba(42,91,162,0.96))] text-[#f7fbff]'
     };
     const actionButton = (label, action, icon, color = 'slate') => (
       `<button class="${buttonBase} ${tone[color] || tone.slate}" type="button" data-action="${action}">${svgIcon(icon)}${escapeHtml(label)}</button>`
@@ -5265,7 +6690,7 @@
           ${actionButton('恢复', 'restore-draft', 'refresh', 'slate')}
           ${actionButton('保存', 'save-local', 'save', 'green')}
           ${actionButton('模板', 'open-templates', 'list', 'slate')}
-          ${actionButton('向导', 'open-wizard', 'room', 'violet')}
+          ${actionButton('向导', 'open-wizard', 'room', 'blue')}
         </div>
       </div>
     `;
@@ -5359,6 +6784,255 @@
     `;
   }
 
+  function signalTestConfig() {
+    const cfg = state.signalTest || {};
+    return {
+      running: cfg.running === true,
+      sourceMac: String(cfg.sourceMac || ''),
+      targetMac: String(cfg.targetMac || ''),
+      port: clamp(normalizeNumber(cfg.port, 1), 1, 3),
+      ledCount: clamp(normalizeNumber(cfg.ledCount, 10), 1, 200),
+      weakRssi: normalizeNumber(cfg.weakRssi, -90),
+      strongRssi: normalizeNumber(cfg.strongRssi, -35),
+      compressionX100: clamp(normalizeNumber(cfg.compressionX100, 160), 20, 500),
+      smoothSamples: clamp(normalizeNumber(cfg.smoothSamples, 5), 1, 10),
+      roomHash: normalizeNumber(cfg.roomHash, 65001)
+    };
+  }
+
+  function signalLevelFromRssi(rssi, cfg = signalTestConfig()) {
+    const value = normalizeNumber(rssi, -127);
+    if (value <= -126) return { raw: 0, ratio: 0, level: 0 };
+    let low = normalizeNumber(cfg.weakRssi, -90);
+    let high = normalizeNumber(cfg.strongRssi, -35);
+    if (high < low) {
+      const tmp = low;
+      low = high;
+      high = tmp;
+    }
+    const raw = high === low ? 1 : clamp((value - low) / (high - low), 0, 1);
+    const curve = clamp(normalizeNumber(cfg.compressionX100, 100), 20, 500) / 100;
+    const ratio = Math.pow(raw, curve);
+    const ledCount = clamp(normalizeNumber(cfg.ledCount, 10), 1, 200);
+    return {
+      raw,
+      ratio,
+      level: clamp(Math.ceil(ratio * ledCount), 0, ledCount)
+    };
+  }
+
+  function renderSignalLevelBars(rssi, cfg = signalTestConfig()) {
+    const mapped = signalLevelFromRssi(rssi, cfg);
+    const total = Math.min(clamp(normalizeNumber(cfg.ledCount, 10), 1, 200), 40);
+    const lit = Math.min(mapped.level, total);
+    return `
+      <div class="mt-2 flex flex-wrap gap-1">
+        ${Array.from({ length: total }, (_, idx) => `<span class="h-5 w-3 rounded-[4px] ${idx < lit ? 'bg-[linear-gradient(180deg,#76f0a1,#2dcb76)] shadow-[0_0_14px_rgba(75,220,130,0.34)]' : 'bg-[rgba(68,88,118,0.32)]'}"></span>`).join('')}
+      </div>
+      <div class="mt-1 text-[11px] text-[#9fb2c8]">映射 ${mapped.level}/${clamp(normalizeNumber(cfg.ledCount, 10), 1, 200)} · 原始比例 ${(mapped.raw * 100).toFixed(0)}% · 压缩后 ${(mapped.ratio * 100).toFixed(0)}%</div>
+    `;
+  }
+
+  function signalStatForMac(mac, cfg = signalTestConfig()) {
+    const targetMac = String(mac || '').trim().toUpperCase();
+    const stats = Array.isArray(state.controllerState?.runtime?.receiver_stats) ? state.controllerState.runtime.receiver_stats : [];
+    return stats.find((stat) => String(stat?.self_mac || '').trim().toUpperCase() === targetMac && normalizeNumber(stat?.room, -1) === normalizeNumber(cfg.roomHash, 65001)) || null;
+  }
+
+  function signalTestDevices() {
+    return visibleControllerDevices()
+      .filter((device) => String(device?.mac || '').trim())
+      .map((device) => ({
+        ...device,
+        mac: String(device.mac || '').trim().toUpperCase(),
+        signal_online: isDeviceOnline(device),
+        signal_retained: isDeviceScanRetained(device)
+      }))
+      .sort((a, b) => {
+        const aRank = a.signal_online ? 0 : a.signal_retained ? 1 : 2;
+        const bRank = b.signal_online ? 0 : b.signal_retained ? 1 : 2;
+        if (aRank !== bRank) return aRank - bRank;
+        return normalizeNumber(a?.seen_ms, 999999) - normalizeNumber(b?.seen_ms, 999999);
+      });
+  }
+
+  function signalTestDeviceStatus(device) {
+    if (!state.controllerOnline) return '控制端未连接';
+    if (!device) return '未选择';
+    if (device.signal_online || isDeviceOnline(device)) return `在线 · ${formatAgo(device.seen_ms)}`;
+    if (device.signal_retained || isDeviceScanRetained(device)) return `上次扫描 · ${formatAgo(device.seen_ms)}`;
+    return '太久未扫描';
+  }
+
+  function ensureSignalTestSelection(devices = signalTestDevices()) {
+    if (!state.signalTest || typeof state.signalTest !== 'object') state.signalTest = signalTestConfig();
+    const macs = devices.map((device) => String(device.mac || '').trim().toUpperCase()).filter(Boolean);
+    const source = String(state.signalTest.sourceMac || '').trim().toUpperCase();
+    const target = String(state.signalTest.targetMac || '').trim().toUpperCase();
+    if (!source || !macs.includes(source)) state.signalTest.sourceMac = macs[0] || '';
+    const nextSource = String(state.signalTest.sourceMac || '').trim().toUpperCase();
+    if (!target || !macs.includes(target) || target === nextSource) {
+      state.signalTest.targetMac = macs.find((mac) => mac !== nextSource) || '';
+    }
+    return signalTestConfig();
+  }
+
+  function signalTestReading(mac, peerMac, cfg = signalTestConfig()) {
+    const stat = signalStatForMac(mac, cfg);
+    const bestPeer = String(stat?.best_peer || '').trim().toUpperCase();
+    const peer = String(peerMac || '').trim().toUpperCase();
+    const peerMatches = !!stat && (!bestPeer || bestPeer === peer);
+    return {
+      stat,
+      bestPeer,
+      peerMatches,
+      rssi: stat && peerMatches ? normalizeNumber(stat.best_rssi, -127) : -127
+    };
+  }
+
+  function signalTestBestReading(cfg = signalTestConfig()) {
+    const a = signalTestReading(cfg.sourceMac, cfg.targetMac, cfg).rssi;
+    const b = signalTestReading(cfg.targetMac, cfg.sourceMac, cfg).rssi;
+    return Math.max(a, b);
+  }
+
+  function renderSignalDeviceCard(title, mac, peerMac, cfg = signalTestConfig()) {
+    const device = deviceByMac(mac);
+    const peer = deviceByMac(peerMac);
+    const idx = normalizeNumber(device?.idx, -1);
+    const reading = signalTestReading(mac, peerMac, cfg);
+    const stat = reading.stat;
+    const rssi = reading.rssi;
+    const scanRssi = normalizeNumber(device?.rssi, -999);
+    const statusText = stat
+      ? (reading.peerMatches ? `收到摘要 · ${formatAgo(stat.seen_ms)}` : `看到 ${deviceNameByMac(reading.bestPeer)}`)
+      : (cfg.running ? '等待设备间摘要' : '测试未开始');
+    return `
+      <div class="rounded-[18px] border border-[rgba(88,116,154,0.24)] bg-[rgba(13,20,31,0.86)] p-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div class="text-[11px] font-bold text-[#8fa3bf]">${escapeHtml(title)}</div>
+            <div class="mt-1 text-[18px] font-extrabold leading-none text-white">${escapeHtml(deviceDraftName(device) || device?.name || mac || '未选择')}</div>
+            <div class="mt-1 text-[11px] text-[#9fb2c8]">目标：${escapeHtml(deviceDraftName(peer) || peer?.name || peerMac || '未选择')}</div>
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <div class="inline-flex rounded-full border border-[rgba(100,155,220,0.24)] bg-[rgba(29,58,92,0.28)] px-2.5 py-1 text-[10.5px] font-bold text-[#b8d7ff]">${escapeHtml(statusText)}</div>
+              ${idx >= 0 ? `<button class="table-btn" type="button" data-action="identify-device" data-idx="${escapeHtml(idx)}">${svgIcon('device')}点名</button>` : ''}
+            </div>
+          </div>
+          <div class="rounded-[14px] border border-[rgba(75,169,255,0.24)] bg-[rgba(11,18,29,0.8)] px-3 py-2 text-right">
+            <div class="text-[10px] font-bold text-[#8fa3bf]">设备间 RSSI</div>
+            <div class="mt-1 text-[26px] font-black leading-none ${rssi > -126 ? 'text-[#76f0a1]' : 'text-[#6f819c]'}">${rssi > -126 ? `${escapeHtml(rssi)} dBm` : '无信号'}</div>
+          </div>
+        </div>
+        ${renderSignalLevelBars(rssi, cfg)}
+        <div class="mt-3 grid gap-2 text-[11px] text-[#aabbd1] sm:grid-cols-3">
+          <div class="rounded-[12px] bg-[rgba(255,255,255,0.035)] px-3 py-2">控制端扫描 RSSI：<b class="text-white">${scanRssi > -998 ? `${escapeHtml(scanRssi)} dBm` : '暂无'}</b></div>
+          <div class="rounded-[12px] bg-[rgba(255,255,255,0.035)] px-3 py-2">摘要：<b class="text-white">${stat ? `${escapeHtml(stat.seen_count)} 次可见` : '暂无'}</b></div>
+          <div class="rounded-[12px] bg-[rgba(255,255,255,0.035)] px-3 py-2">刷新：<b class="text-white">${stat ? escapeHtml(formatAgo(stat.seen_ms)) : '未收到'}</b></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderSignalCalibrationPage() {
+    const devices = signalTestDevices();
+    const activeCfg = ensureSignalTestSelection(devices);
+    const selectedSource = devices.find((device) => String(device.mac || '').toUpperCase() === String(activeCfg.sourceMac || '').toUpperCase()) || null;
+    const selectedTarget = devices.find((device) => String(device.mac || '').toUpperCase() === String(activeCfg.targetMac || '').toUpperCase()) || null;
+    const optionFor = (device, selectedMac) => {
+      const selected = String(selectedMac || '').toUpperCase() === String(device.mac || '').toUpperCase();
+      return `<option value="${escapeHtml(device.mac)}" ${selected ? 'selected' : ''}>${escapeHtml(deviceDraftName(device) || device.name || device.mac)} · ${escapeHtml(signalTestDeviceStatus(device))}</option>`;
+    };
+    const sourceOptions = devices.map((device) => optionFor(device, activeCfg.sourceMac)).join('');
+    const targetOptions = devices.map((device) => optionFor(device, activeCfg.targetMac)).join('');
+    const sameDevice = activeCfg.sourceMac && activeCfg.targetMac && String(activeCfg.sourceMac).toUpperCase() === String(activeCfg.targetMac).toUpperCase();
+    const canStart = state.controllerOnline && devices.length >= 2 && activeCfg.sourceMac && activeCfg.targetMac && !sameDevice;
+    const applyRoom = currentRoom();
+    const canApplyToRoom = !!applyRoom && applyRoom.status !== 'running';
+    const bestReading = signalTestBestReading(activeCfg);
+    const bestLevel = signalLevelFromRssi(bestReading, activeCfg);
+    const noSignalText = activeCfg.running
+      ? '已下发测试，等待两台设备互相收到 BEACON。若 5 秒后仍无信号，请再次扫描并确认两台接收端都已烧录新版固件。'
+      : '选择两台设备后点击“开始信号测试”。设备会进入临时测试房间，用所选 LED 路显示彼此 RSSI。';
+    const readiness = !state.controllerOnline
+      ? { tone: 'danger', text: '控制端未连接。请先连接控制端热点，再扫描设备。' }
+      : devices.length < 2
+        ? { tone: 'warn', text: '至少需要两台接收端。请先扫描设备；如果列表仍为空，说明页面没有拿到控制端设备状态。' }
+        : sameDevice
+          ? { tone: 'warn', text: '源设备和目标设备不能是同一台。' }
+          : { tone: 'ok', text: '可以开始测试。开始后两台设备会互相测 RSSI，控制端只负责转发和汇总。' };
+    const readinessClass = readiness.tone === 'ok'
+      ? 'border-[rgba(74,222,128,0.24)] bg-[rgba(24,74,52,0.24)] text-[#bbf7d0]'
+      : readiness.tone === 'danger'
+        ? 'border-[rgba(248,113,113,0.28)] bg-[rgba(95,28,36,0.28)] text-[#fecaca]'
+        : 'border-[rgba(245,158,11,0.28)] bg-[rgba(92,62,18,0.28)] text-[#fde68a]';
+    return `
+      <div class="page-section-head">
+        <div>
+          <h3>信号校准</h3>
+          <p>测试两台接收端之间的 ESP-NOW RSSI，并把 RSSI 压缩映射到 LED 灯珠数量。这里显示的是设备彼此看到的信号，不是控制端扫描信号。</p>
+        </div>
+        <div class="pill-actions">
+          <button class="ghost-btn ${state.busy.scan ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="scan-devices" ${state.busy.scan ? 'disabled' : ''}>${svgIcon('search')}${state.busy.scan ? '扫描中...' : '扫描设备'}</button>
+          <button class="ghost-btn ${state.busy.signalTest || !canStart ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="start-signal-test" ${state.busy.signalTest || !canStart ? 'disabled' : ''}>${svgIcon('play')}${state.busy.signalTest ? '下发中...' : activeCfg.running ? '重新开始测试' : '开始测试'}</button>
+          <button class="ghost-btn ${state.busy.signalTest ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="stop-signal-test" ${state.busy.signalTest ? 'disabled' : ''}>${svgIcon('pause')}停止/熄灭</button>
+          <button class="ghost-btn ${!canApplyToRoom ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="apply-signal-calibration" ${!canApplyToRoom ? 'disabled' : ''}>${svgIcon('save')}应用到当前房间</button>
+          ${makePill(activeCfg.running ? '校准运行中' : '未运行', activeCfg.running)}
+          ${makePill(`房间 ${activeCfg.roomHash}`)}
+        </div>
+      </div>
+      <div class="page-section-body stack-col">
+        <div class="rounded-[16px] border px-4 py-3 text-[12px] font-bold leading-[1.6] ${readinessClass}">
+          ${escapeHtml(readiness.text)}
+        </div>
+        <section class="mini-panel">
+          <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.72fr)]">
+            <div class="grid gap-3 md:grid-cols-2">
+              <div class="field"><label>源设备</label><select class="fake-select" data-role="signal-test-field" data-field="sourceMac">${sourceOptions || '<option value="">暂无设备，请先扫描</option>'}</select></div>
+              <div class="field"><label>目标设备</label><select class="fake-select" data-role="signal-test-field" data-field="targetMac">${targetOptions || '<option value="">暂无设备，请先扫描</option>'}</select></div>
+              <div class="field"><label>LED 路</label><select class="fake-select" data-role="signal-test-field" data-field="port"><option value="1" ${activeCfg.port === 1 ? 'selected' : ''}>LED1</option><option value="2" ${activeCfg.port === 2 ? 'selected' : ''}>LED2</option><option value="3" ${activeCfg.port === 3 ? 'selected' : ''}>LED3</option></select></div>
+              <div class="field"><label>灯珠级别数</label><input class="fake-input" type="number" min="1" max="200" step="1" data-role="signal-test-field" data-field="ledCount" value="${escapeHtml(activeCfg.ledCount)}"></div>
+              <div class="field"><label>弱信号 dBm（0 格）</label><input class="fake-input" type="number" step="1" data-role="signal-test-field" data-field="weakRssi" value="${escapeHtml(activeCfg.weakRssi)}"></div>
+              <div class="field"><label>满格信号 dBm（满格）</label><input class="fake-input" type="number" step="1" data-role="signal-test-field" data-field="strongRssi" value="${escapeHtml(activeCfg.strongRssi)}"></div>
+              <div class="field"><label>压缩比例</label><input class="fake-input" type="number" min="20" max="500" step="10" data-role="signal-test-field" data-field="compressionX100" value="${escapeHtml(activeCfg.compressionX100)}"><div class="mt-1 text-[10.5px] leading-[1.35] text-[#8fa3c1]">100=线性；160/200 适合强信号容易满格时使用。</div></div>
+              <div class="field"><label>平滑样本</label><input class="fake-input" type="number" min="1" max="10" step="1" data-role="signal-test-field" data-field="smoothSamples" value="${escapeHtml(activeCfg.smoothSamples)}"></div>
+            </div>
+            <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(9,14,22,0.68)] p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-[12px] font-extrabold text-white">当前映射</div>
+                  <div class="mt-1 text-[11px] text-[#91a7c4]">LED${escapeHtml(activeCfg.port)} · ${escapeHtml(activeCfg.ledCount)} 格 · 弱 ${escapeHtml(activeCfg.weakRssi)} / 满格 ${escapeHtml(activeCfg.strongRssi)} dBm</div>
+                </div>
+                <div class="rounded-[14px] border border-[rgba(118,240,161,0.22)] bg-[rgba(20,70,48,0.22)] px-3 py-2 text-right">
+                  <div class="text-[10px] font-bold text-[#9bcbb0]">当前最高</div>
+                  <div class="mt-1 text-[22px] font-black leading-none text-[#bbf7d0]">${bestReading > -126 ? `${escapeHtml(bestReading)} dBm` : '无'}</div>
+                </div>
+              </div>
+              <div class="mt-3 text-[12px] leading-[1.6] text-[#aabbd1]">
+                ${bestReading > -126 ? `当前会点亮 <b class="text-white">${escapeHtml(bestLevel.level)}</b> / ${escapeHtml(activeCfg.ledCount)} 格。` : escapeHtml(noSignalText)}
+                <br>原始比例 = (RSSI - 弱信号) / (满格信号 - 弱信号)，压缩 = 原始比例<sup>${(activeCfg.compressionX100 / 100).toFixed(2)}</sup>。
+              </div>
+              <div class="mt-3 grid gap-2 text-[11px] text-[#dbe7f8]">
+                ${[-90, -70, -55, -45, -35, -25, -15].map((value) => {
+                  const level = signalLevelFromRssi(value, activeCfg).level;
+                  return `<div class="flex items-center justify-between rounded-[12px] bg-[rgba(255,255,255,0.035)] px-3 py-2"><span>${value} dBm</span><b>${level}/${activeCfg.ledCount}</b></div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 grid gap-2 text-[11px] text-[#9fb2c8] md:grid-cols-2">
+            <div class="rounded-[14px] border border-[rgba(88,116,154,0.2)] bg-[rgba(255,255,255,0.03)] px-3 py-2">源设备：<b class="text-white">${escapeHtml(deviceDraftName(selectedSource) || selectedSource?.name || activeCfg.sourceMac || '未选择')}</b> · ${escapeHtml(signalTestDeviceStatus(selectedSource))}</div>
+            <div class="rounded-[14px] border border-[rgba(88,116,154,0.2)] bg-[rgba(255,255,255,0.03)] px-3 py-2">目标设备：<b class="text-white">${escapeHtml(deviceDraftName(selectedTarget) || selectedTarget?.name || activeCfg.targetMac || '未选择')}</b> · ${escapeHtml(signalTestDeviceStatus(selectedTarget))}</div>
+          </div>
+        </section>
+        <section class="grid gap-3 xl:grid-cols-2">
+          ${renderSignalDeviceCard('源设备看到目标', activeCfg.sourceMac, activeCfg.targetMac, activeCfg)}
+          ${renderSignalDeviceCard('目标设备看到源', activeCfg.targetMac, activeCfg.sourceMac, activeCfg)}
+        </section>
+      </div>
+    `;
+  }
+
   function renderLogPanel() {
     const serverLines = (state.serverLogText || '')
       .split(/\r?\n/)
@@ -5394,9 +7068,10 @@
       ['history', '历史数据库'],
       ['devices', '设备'],
       ['groups', '分组'],
+      ['signal', '信号校准'],
       ['effects', '灯效库'],
       ['preview', '预览台'],
-      ['templates', '游戏设置'],
+      ['game', '玩法预设'],
       ['room', '游戏房间'],
       ['debug', '调试']
     ];
@@ -5417,6 +7092,9 @@
           </section>
           <section class="p-3.5" data-page="groups" style="display:${state.activeTab === 'groups' ? 'block' : 'none'}">
             ${renderGroupsPage()}
+          </section>
+          <section class="p-3.5" data-page="signal" style="display:${state.activeTab === 'signal' ? 'block' : 'none'}">
+            ${renderSignalCalibrationPage()}
           </section>
           <section class="p-3.5" data-page="game" style="display:${state.activeTab === 'game' ? 'block' : 'none'}">
             ${renderGamePage()}
@@ -5443,6 +7121,7 @@
 
   function renderDevicesToolbar() {
     const visible = filteredDevices();
+    const fieldCount = visibleControllerDevices().length;
     const checked = visible.length > 0 && visible.every((device) => state.selectedDeviceIds.has(device.mac));
     const groupOptions = controllerGroups()
       .map((group) => `<option value="${group.id}" ${normalizeNumber(state.deviceFilterGroupId, -1) === group.id ? 'selected' : ''}>${escapeHtml(group.name)}</option>`)
@@ -5451,7 +7130,7 @@
       <div class="sticky top-0 z-30 -mx-0 rounded-[16px] border border-[rgba(88,116,154,0.26)] bg-[rgba(13,19,29,0.94)] px-3 py-2 shadow-[0_16px_32px_rgba(0,0,0,0.28)] backdrop-blur-md">
         <div class="sub-row">
           <div class="pill-actions">
-            ${makePillButton(`全部 ${controllerDevices().length}`, 'device-filter-mode-all', state.deviceFilterMode === 'all')}
+            ${makePillButton(`全部 ${fieldCount}`, 'device-filter-mode-all', state.deviceFilterMode === 'all')}
             ${makePillButton(`未分组 ${ungroupedCount()}`, 'device-filter-mode-ungrouped', state.deviceFilterMode === 'ungrouped')}
             ${makePillButton('按分组筛选', 'device-filter-mode-group', state.deviceFilterMode === 'group')}
             <select class="page-select" data-action="device-filter-group" ${state.deviceFilterMode === 'group' ? '' : 'disabled'}>
@@ -5460,7 +7139,7 @@
             </select>
           </div>
           <div class="pill-actions">
-            ${makePill(`总数 ${controllerDevices().length}`)}
+            ${makePill(`现场 ${fieldCount}`)}
             ${makePill(`可见 ${visible.length}`)}
             ${makePill(`已选 ${state.selectedDeviceIds.size}`)}
           </div>
@@ -5473,7 +7152,7 @@
           <div class="pill-actions">
             <label class="checkbox-line">
               <input type="checkbox" data-action="toggle-show-offline" ${state.localState?.ui?.show_offline_devices ? 'checked' : ''}>
-              显示未扫描/离线设备
+              显示需扫描确认设备
             </label>
             <button class="ghost-btn" type="button" data-action="clear-selected-groups">${svgIcon('trash')}取消所选设备分组</button>
             <button class="ghost-btn" type="button" data-action="clear-selection">${svgIcon('refresh')}清空选择</button>
@@ -5541,7 +7220,7 @@
         <td>${escapeHtml(formatAgo(device.seen_ms))}</td>
         <td>
           <div class="device-name-actions">
-            ${retained ? `<button class="table-btn" type="button" data-action="identify-device" data-idx="${idx}">点名</button>` : ''}
+            ${idx >= 0 ? `<button class="table-btn" type="button" data-action="identify-device" data-idx="${idx}">点名</button>` : ''}
             ${retained ? `<button class="table-btn save" type="button" data-action="save-device-row" data-mac="${escapeHtml(mac)}">保存设备</button>` : ''}
           </div>
         </td>
@@ -5663,15 +7342,22 @@
 
   function renderDevicesPage() {
     const devices = filteredDevices();
+    const fieldCount = visibleControllerDevices().length;
     const collapsed = state.localState?.ui?.device_preview_collapsed === true;
+    const offlineNotice = state.controllerOnline ? '' : `
+      <div class="notice" style="margin-bottom:12px">未连接控制端。这里不会显示现场设备；连接控制端热点并点击“从控制端读取”或“扫描”后，才会显示本次现场设备。</div>
+    `;
+    const emptyDeviceText = state.controllerOnline
+      ? '当前筛选下没有设备。请扫描控制端，或切换筛选条件。'
+      : '未连接控制端，暂无现场设备。';
     return `
       <div class="page-section-head">
         <div>
           <h3>设备</h3>
-          <p>这里负责命名、备注、筛选、批量分组和点名。扫描过的设备会保留显示，状态旧了请再次扫描刷新。</p>
+          <p>这里显示本次控制端能看到的现场设备，用来命名、备注、分组和点名。离线时不展示旧扫描残影。</p>
         </div>
         <div class="pill-actions">
-          ${makePill(`总数 ${controllerDevices().length}`)}
+          ${makePill(`现场 ${fieldCount}`)}
           ${makePill(`可见 ${devices.length}`)}
           ${makePill(`已选 ${state.selectedDeviceIds.size}`)}
         </div>
@@ -5679,7 +7365,8 @@
       <div class="page-section-body" style="display:grid;grid-template-columns:minmax(0,1.7fr) ${collapsed ? '58px' : '360px'};gap:14px;align-items:start">
         <div class="table-panel" style="padding:14px 14px 16px">
           <h4 style="margin:0 0 8px;font-size:17px;">设备列表</h4>
-          <div style="color:#9db0c8;font-size:14px;margin-bottom:10px">默认隐藏从未扫描或长期离线的设备；最近扫描过的设备会保留，备注和名称会跟随本地草稿保存。</div>
+          <div style="color:#9db0c8;font-size:14px;margin-bottom:10px">设备以控制端最新扫描为准；名称、备注和分组会保存为本地草稿，下次连接同一 MAC 时自动套用。</div>
+          ${offlineNotice}
           ${renderDevicesToolbar()}
           <div style="overflow:auto">
             <table>
@@ -5695,12 +7382,12 @@
                 </tr>
               </thead>
               <tbody>
-                ${devices.length ? devices.map((device) => renderDeviceRow(device)).join('') : `<tr><td colspan="7" style="color:#91a5c3;text-align:center;padding:28px">当前筛选下没有设备。</td></tr>`}
+                ${devices.length ? devices.map((device) => renderDeviceRow(device)).join('') : `<tr><td colspan="7" style="color:#91a5c3;text-align:center;padding:28px">${escapeHtml(emptyDeviceText)}</td></tr>`}
               </tbody>
             </table>
           </div>
           <div class="pager">
-            <div>共 ${controllerDevices().length} 条 · 当前显示 ${devices.length} 条</div>
+            <div>现场 ${fieldCount} 条 · 当前显示 ${devices.length} 条</div>
             <div class="pager-center">
               <button class="page-btn active" type="button">1</button>
               <button class="page-btn" type="button">2</button>
@@ -5737,11 +7424,14 @@
     const expanded = expandedGroupId() === group.id;
     const allMembers = groupDevices(group.id);
     const members = allMembers.slice(0, 8);
+    const canIdentifyGroup = state.controllerOnline && allMembers.some((device) => normalizeNumber(device?.idx, -1) >= 0);
+    const memberHint = state.controllerOnline ? `${memberCount} 台设备` : '未连接时不显示现场成员';
     return `
       <div class="group-card ${colorClass} ${expanded ? 'ring-1 ring-[#63adff]/50' : ''}">
         <div class="group-top">
           <div class="group-name"><span class="bullet"></span>${escapeHtml(group.name)} <span class="group-id">ID: ${group.id + 1001}</span></div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+            ${canIdentifyGroup ? makeGroupActionButton('点名全组', 'identify-group', group.id, false, compactActions) : ''}
             ${makeGroupActionButton('编辑', 'edit-group', group.id, selectedGroupId() === group.id, compactActions)}
             ${makeGroupActionButton(expanded ? '收起' : '展开', 'select-group', group.id, expanded, compactActions)}
             ${showDelete ? makeGroupActionButton('删除', 'delete-group', group.id, false, compactActions, 'text-[#ffd5d5] border-[rgba(255,122,122,0.24)] bg-[rgba(52,18,24,0.72)]') : ''}
@@ -5749,7 +7439,7 @@
         </div>
         <div class="group-desc">${escapeHtml(group.note || '未填写备注')}</div>
         <div class="group-meta">
-          <div class="meta-left"><span>👥</span><span>${memberCount} 台设备</span></div>
+          <div class="meta-left"><span>👥</span><span>${escapeHtml(memberHint)}</span></div>
           <div class="target">成员容器</div>
         </div>
         ${expanded ? `
@@ -5759,14 +7449,17 @@
               ${members.length
                 ? members.map((device) => `
                   <div class="flex items-center justify-between gap-2 rounded-[12px] border border-[rgba(88,116,154,0.16)] bg-[rgba(14,20,31,0.72)] px-2.5 py-1.5">
-                    <div class="min-w-0">
-                      <div class="truncate font-bold text-white">${escapeHtml(deviceDraftName(device))}</div>
-                      <div class="truncate text-[10px] text-[#9fb2c8]">${escapeHtml(device.mac || '')}</div>
+                      <div class="min-w-0">
+                        <div class="truncate font-bold text-white">${escapeHtml(deviceDraftName(device))}</div>
+                        <div class="truncate text-[10px] text-[#9fb2c8]">${escapeHtml(device.mac || '')}</div>
+                      </div>
+                    <div class="flex shrink-0 items-center gap-1.5">
+                      <span class="text-[10px] text-[#9fb2c8]">${normalizeNumber(device.seen_ms, 999999) < 10000 ? '在线' : '离线'}</span>
+                      ${normalizeNumber(device.idx, -1) >= 0 ? `<button class="table-btn" type="button" data-action="identify-device" data-idx="${escapeHtml(device.idx)}">点名</button>` : ''}
                     </div>
-                    <span class="shrink-0 text-[10px] text-[#9fb2c8]">${normalizeNumber(device.seen_ms, 999999) < 10000 ? '在线' : '离线'}</span>
                   </div>
                 `).join('')
-                : '<div class="text-[11px] text-[#9fb2c8]">这个分组还没有成员。</div>'}
+                : `<div class="text-[11px] text-[#9fb2c8]">${state.controllerOnline ? '这个分组还没有成员。' : '未连接控制端，暂不显示现场成员。'}</div>`}
               ${allMembers.length > members.length ? `<div class="text-[10px] text-[#8ea3bf]">还有 ${allMembers.length - members.length} 台设备未展开显示。</div>` : ''}
             </div>
           </div>
@@ -5777,6 +7470,8 @@
 
   function renderGroupsPage() {
     const groups = controllerGroups();
+    const fieldCount = visibleControllerDevices().length;
+    const offlineNotice = state.controllerOnline ? '' : '<div class="notice">未连接控制端。分组会作为本地容器保留，但现场成员需要连接控制端并扫描后确认。</div>';
     return `
       <div class="page-section-head">
         <div>
@@ -5785,10 +7480,11 @@
         </div>
         <div class="pill-actions">
           ${makePill(`有效分组 ${controllerGroups().length}`, true)}
-          ${makePill(`设备 ${controllerDevices().length}`)}
+          ${makePill(`现场设备 ${fieldCount}`)}
         </div>
       </div>
       <div class="page-section-body stack-col">
+        ${offlineNotice}
         <section class="mini-panel">
           <div class="flex items-start justify-between gap-3">
             <div>
@@ -5860,77 +7556,736 @@
     `;
   }
 
-  function renderGamePage() {
-    const presets = state.localState.feature_presets || [];
-    const selected = selectedFeaturePreset() || presets[0] || null;
-    return `
-      <div class="page-section-head">
-        <div>
-          <h3>游戏设置</h3>
-          <p>感应、计时和计分已经并入游戏模板。这里不再单独维护一页重复功能，模板本身就是游戏玩法的入口。</p>
-        </div>
-        <div class="pill-actions">
-          ${makePill('功能预设', true)}
-          ${makePill('可编辑')}
-          ${makePill('可复制')}
-        </div>
-      </div>
-      <div class="page-section-body stack-col">
-        <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.92fr)]">
-          <div class="mini-panel">
-            <h4>功能预设列表</h4>
-            <div class="group-mini-list">
-              ${presets.map((preset) => `
-                <button class="group-mini-item ${selected?.id === preset.id ? 'selected' : ''}" type="button" data-action="select-feature-preset" data-preset-id="${escapeHtml(preset.id)}">
-                  <div>
-                    <div class="title">${escapeHtml(preset.name)}</div>
-                    <div class="desc">${escapeHtml(preset.note || '')}</div>
-                  </div>
-                  <span class="pill">${escapeHtml(senseLabel(preset.feature_ui?.sense_mode || 'ring'))}</span>
-                </button>
-              `).join('')}
+  function renderPlayPresetDialogs() {
+    const form = state.playPresetFormModal;
+    const del = state.playPresetDeleteModal;
+    if (!form && !del) return '';
+    if (del && !form) {
+      return `
+        <div class="fixed inset-0 z-[130] flex items-center justify-center bg-[rgba(3,6,12,0.88)] px-4 py-8 backdrop-blur-[3px]">
+          <div class="w-full overflow-auto rounded-[20px] border border-[rgba(255,138,138,0.28)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.72)]" style="width:min(560px,calc(100vw - 48px));max-height:calc(100vh - 64px);background:#0d1520;">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="m-0 text-[18px] font-extrabold leading-none text-white">删除我的玩法预设</h3>
+                <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">系统默认玩法不能删除；我的玩法删除后，已结束历史记录会保留冻结快照。</p>
+              </div>
+              <button class="ghost-btn" type="button" data-action="cancel-delete-play-preset">关闭</button>
+            </div>
+            <div class="mt-4 rounded-[16px] border border-[rgba(255,138,138,0.22)] bg-[rgba(46,18,24,0.68)] p-3.5">
+              <div class="text-[13px] font-bold text-[#ffd5d5]">${escapeHtml(del.name || '未命名玩法')}</div>
+              <div class="mt-2 text-[12px] leading-[1.55] text-[#ffdede]">${escapeHtml(del.note || '无备注')}</div>
+              <div class="mt-3 text-[12px] leading-[1.55] text-[#ffdede]">确认删除后，它会从“我的玩法预设”移除；不会删除设备、分组、灯效库和历史场次。</div>
+            </div>
+            <div class="mt-4 flex flex-wrap justify-end gap-2">
+              <button class="ghost-btn" type="button" data-action="cancel-delete-play-preset">取消</button>
+              <button class="ghost-btn" type="button" data-action="confirm-delete-play-preset">${svgIcon('trash')}确认删除</button>
             </div>
           </div>
-          <div class="mini-panel">
-            <h4>功能预设编辑</h4>
-            ${selected ? `
-              <div class="stack-col">
-                <div class="field"><label>名称</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="name" value="${escapeHtml(selected.name || '')}"></div>
-                <div class="field"><label>备注</label><textarea class="fake-input" data-role="feature-preset-field" data-preset-field="note" style="min-height:78px;resize:vertical">${escapeHtml(selected.note || '')}</textarea></div>
-                <div class="field"><label>感应方式</label><select class="fake-select" data-role="feature-preset-field" data-preset-field="sense_mode"><option value="ring" ${String(selected.feature_ui?.sense_mode || 'ring') === 'ring' ? 'selected' : ''}>轮巡</option><option value="shared" ${String(selected.feature_ui?.sense_mode || '') === 'shared' ? 'selected' : ''}>组共享</option><option value="response" ${String(selected.feature_ui?.sense_mode || '') === 'response' ? 'selected' : ''}>纯响应</option></select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">轮巡：每个组里的人都可以依次找到，找到后先停留约 2 秒再触发灯效；触发后本人不能再次触发。组共享：每个组里只要有一个人找到，先停留约 2 秒再触发灯效；触发后本组所有人都不能再次触发。纯响应：任何人都可以找到，先停留约 2 秒再触发灯效；触发后仍然可以重复触发。</div></div>
-                <div class="field xl:col-span-2">
-                  <label>触发条件</label>
-                  <div class="grid gap-2 md:grid-cols-3">
-                    <div class="field">
-                      <label>比较方向</label>
-                      <select class="fake-select" data-role="feature-preset-field" data-preset-field="signal_compare">
-                        <option value="gte" ${triggerCompareValue(selected.feature_ui?.signal_ui?.trigger_compare) === 'gte' ? 'selected' : ''}>大于等于</option>
-                        <option value="lte" ${triggerCompareValue(selected.feature_ui?.signal_ui?.trigger_compare) === 'lte' ? 'selected' : ''}>小于等于</option>
-                      </select>
-                    </div>
-                    <div class="field">
-                      <label>触发信号强度（dBm）</label>
-                      <input class="fake-input" data-role="feature-preset-field" data-preset-field="signal_rssi_threshold" type="number" step="1" value="${escapeHtml(selected.feature_ui?.signal_ui?.trigger_rssi_threshold ?? DEFAULT_TRIGGER_RSSI)}">
-                    </div>
-                    <div class="field">
-                      <label>触发停留时间（ms）</label>
-                      <input class="fake-input" data-role="feature-preset-field" data-preset-field="signal_hold_ms" type="number" step="50" value="${escapeHtml(selected.feature_ui?.signal_ui?.trigger_hold_ms ?? 2000)}">
-                    </div>
-                  </div>
-                  <div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">大于等于 -25 表示越近越容易触发；小于等于用于弱信号/远离类玩法。默认阈值 -25 dBm，默认停留 2000 ms。</div>
-                </div>
-                <div class="field"><label>空闲灯效</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="idle_effect_id" value="${escapeHtml(selected.feature_ui?.idle_effect_id || '')}"></div>
-                <div class="field"><label>触发灯效</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="trigger_effect_id" value="${escapeHtml(selected.feature_ui?.trigger_effect_id || '')}"></div>
-                <div class="field"><label>计时模式</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="timer_mode" value="${escapeHtml(selected.feature_ui?.timer?.mode || 'manual')}"></div>
-                <div class="field"><label>计时长度(ms)</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="timer_duration_ms" value="${escapeHtml(selected.feature_ui?.timer?.duration_ms ?? 0)}"></div>
-                <div class="field"><label>计分模式</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="scoring_mode" value="${escapeHtml(selected.feature_ui?.scoring?.mode || '')}"></div>
-                <div class="field"><label>最大计数</label><input class="fake-input" data-role="feature-preset-field" data-preset-field="scoring_max_find" value="${escapeHtml(selected.feature_ui?.scoring?.max_find ?? 0)}"></div>
-                <div class="chip-row">
-                  ${makeChip(selected.builtIn ? '内置预设' : '用户预设', true)}
-                  ${makeChip(`感应 ${escapeHtml(senseLabel(selected.feature_ui?.sense_mode || 'ring'))}`)}
+        </div>
+      `;
+    }
+    const option = (value, label, current) => `<option value="${escapeHtml(value)}" ${String(current ?? '') === String(value) ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    const field = (label, control, hint = '') => `
+      <div class="field">
+        <label>${escapeHtml(label)}</label>
+        ${control}
+        ${hint ? `<div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">${escapeHtml(hint)}</div>` : ''}
+      </div>
+    `;
+    const input = (name, attrs = '') => `<input class="fake-input" data-role="play-preset-form-input" data-play-preset-form-field="${escapeHtml(name)}" value="${escapeHtml(form[name] ?? '')}" ${attrs}>`;
+    const textarea = (name, attrs = '') => `<textarea class="fake-input" data-role="play-preset-form-input" data-play-preset-form-field="${escapeHtml(name)}" style="min-height:96px;resize:vertical" ${attrs}>${escapeHtml(form[name] ?? '')}</textarea>`;
+    const select = (name, optionsHtml, attrs = '') => `<select class="fake-select" data-role="play-preset-form-input" data-play-preset-form-field="${escapeHtml(name)}" ${attrs}>${optionsHtml}</select>`;
+    const title = form.mode === 'edit' ? '编辑我的玩法预设' : '新建玩法预设';
+    const source = playPresetById(form.sourceId);
+    return `
+      <div class="fixed inset-0 z-[130] flex items-center justify-center bg-[rgba(3,6,12,0.88)] px-4 py-8 backdrop-blur-[3px]">
+        <div class="w-full overflow-auto rounded-[20px] border border-[rgba(103,130,169,0.42)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.72)]" style="width:min(1040px,calc(100vw - 48px));max-height:calc(100vh - 64px);background:#0d1520;">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="m-0 text-[18px] font-extrabold leading-none text-white">${escapeHtml(title)}</h3>
+              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">${form.mode === 'edit' ? '修改会保存到“我的玩法预设”。房间里已经保存的本局覆盖参数不会被自动改写。' : `基于${source?.builtIn ? '系统默认玩法' : '现有玩法'}新建一个我的预设，后续可以编辑、删除和复用。`}</p>
+            </div>
+            <button class="ghost-btn" type="button" data-action="cancel-play-preset-form">关闭</button>
+          </div>
+
+          <div class="mt-4 grid gap-3">
+            <section class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+              <div class="mb-3 text-[13px] font-extrabold text-white">基础规则</div>
+              <div class="grid gap-3 md:grid-cols-2">
+                ${field('玩法名称', input('name', 'placeholder="例如：我的多人寻宝"'))}
+                ${field('底层类型', select('baseTemplate', [
+                  option('instant_score', '一次触发计分', form.baseTemplate),
+                  option('sustain_score', '持续达标计分', form.baseTemplate),
+                  option('competition_score', '竞争归属计分', form.baseTemplate)
+                ].join('')))}
+                <div class="md:col-span-2">${field('备注', textarea('note', 'placeholder="写给 NPC 或玩家看的用途说明"'))}</div>
+                ${field('对象关系', select('relation_mode', [
+                  option('one_to_one', '1对1', form.relation_mode),
+                  option('one_to_many', '1对多', form.relation_mode),
+                  option('many_to_one', '多对1', form.relation_mode),
+                  option('many_to_many', '多对多', form.relation_mode)
+                ].join('')))}
+                ${field('匹配方式', select('relation_match', [
+                  option('any', '任意匹配', form.relation_match),
+                  option('specified_pair', '指定配对', form.relation_match),
+                  option('same_group', '同组匹配', form.relation_match),
+                  option('enemy_group', '敌对组匹配', form.relation_match),
+                  option('source_to_target', '源组 → 目标组', form.relation_match)
+                ].join('')))}
+              </div>
+            </section>
+
+            <section class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+              <div class="mb-3 text-[13px] font-extrabold text-white">发现条件 / RSSI</div>
+              <div class="grid gap-3 md:grid-cols-3">
+                ${field('RSSI 条件', select('signal_type', [
+                  option('enter_range', '进入范围', form.signal_type),
+                  option('leave_range', '离开范围', form.signal_type),
+                  option('stay_in_range', '保持在范围内', form.signal_type),
+                  option('appeared', '从无到有', form.signal_type),
+                  option('lost', '从有到无', form.signal_type),
+                  option('stronger', '信号变强', form.signal_type),
+                  option('weaker', '信号变弱', form.signal_type)
+                ].join('')), 'RSSI 是负数，-20 dBm 比 -40 dBm 信号更强。')}
+                ${field('RSSI 下限 dBm', input('signal_rssi_min', 'type="number" step="1"'))}
+                ${field('RSSI 上限 dBm', input('signal_rssi_max', 'type="number" step="1" placeholder="可空"'))}
+                ${field('持续时间 ms', input('signal_hold_ms', 'type="number" step="50"'))}
+                ${field('丢失宽限 ms', input('signal_missing_ms', 'type="number" step="50"'))}
+                ${field('平滑样本', input('signal_smooth_samples', 'type="number" min="1" max="10" step="1"'))}
+              </div>
+            </section>
+
+            <section class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+              <div class="mb-3 text-[13px] font-extrabold text-white">计分与重复</div>
+              <div class="grid gap-3 md:grid-cols-3">
+                ${field('触发模式', select('trigger_mode', [
+                  option('instant', '立即触发', form.trigger_mode),
+                  option('continuous', '连续达标', form.trigger_mode),
+                  option('accumulate', '累计达标', form.trigger_mode),
+                  option('count', '次数达标', form.trigger_mode),
+                  option('periodic', '周期计分', form.trigger_mode)
+                ].join('')))}
+                ${field('目标时间 ms', input('trigger_target_ms', 'type="number" step="50"'))}
+                ${field('周期 ms', input('trigger_period_ms', 'type="number" step="50"'))}
+                ${field('目标次数', input('trigger_target_count', 'type="number" min="1" step="1"'))}
+                ${field('计分对象', select('score_target', [
+                  option('source_player', '源玩家', form.score_target),
+                  option('source_group', '源小组', form.score_target),
+                  option('target_player', '目标玩家', form.score_target),
+                  option('target_group', '目标小组', form.score_target),
+                  option('both_players', '双方玩家', form.score_target),
+                  option('both_groups', '双方小组', form.score_target),
+                  option('none', '不计分，只触发灯效', form.score_target)
+                ].join('')))}
+                ${field('分数', input('score_points', 'type="number" step="1"'))}
+                ${field('重复规则', select('repeat_mode', [
+                  option('allow_repeat', '允许重复', form.repeat_mode),
+                  option('once_per_pair', '每对设备只算一次', form.repeat_mode),
+                  option('once_per_target', '每个目标只算一次（实验）', form.repeat_mode),
+                  option('once_per_source', '每个源设备只算一次', form.repeat_mode),
+                  option('cooldown', '冷却后可重复', form.repeat_mode)
+                ].join('')))}
+                ${field('冷却 ms', input('repeat_cooldown_ms', 'type="number" step="50"'))}
+                ${field('触发后目标', select('after_target_state', [
+                  option('none', '无处理', form.after_target_state),
+                  option('cooldown', '冷却', form.after_target_state),
+                  option('disabled', '目标失效（实验）', form.after_target_state),
+                  option('locked', '目标锁定', form.after_target_state)
+                ].join('')))}
+                ${field('计时处理', select('after_timer_action', [
+                  option('none', '无处理', form.after_timer_action),
+                  option('reset', '计时清零', form.after_timer_action),
+                  option('pause', '计时暂停', form.after_timer_action)
+                ].join('')))}
+              </div>
+            </section>
+
+            <section class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+              <div class="mb-3 text-[13px] font-extrabold text-white">灯效反馈</div>
+              <div class="grid gap-3 md:grid-cols-3">
+                ${field('空闲 / 靠近灯效', select('feedback_enter', effectChoiceOptions(form.feedback_enter)))}
+                ${field('成功灯效', select('feedback_success', effectChoiceOptions(form.feedback_success)))}
+                ${field('失败灯效', select('feedback_fail', effectChoiceOptions(form.feedback_fail)))}
+              </div>
+              <div class="mt-3 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+                <label class="inline-flex h-8 items-center gap-2 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold text-[#dbe5f4]">
+                  <input type="checkbox" class="h-4 w-4 accent-blue-500" data-role="play-preset-form-input" data-play-preset-form-field="meter_enabled" ${form.meter_enabled ? 'checked' : ''}>
+                  启用信号强度指示灯
+                </label>
+                <div class="mt-3 grid gap-3 md:grid-cols-5">
+                  ${field('LED 路', select('meter_port', [
+                    option('1', 'LED1', form.meter_port),
+                    option('2', 'LED2', form.meter_port),
+                    option('3', 'LED3', form.meter_port)
+                  ].join('')))}
+                  ${field('灯珠级别数', input('meter_led_count', 'type="number" min="1" max="200" step="1"'))}
+                  ${field('弱信号 dBm', input('meter_weak_rssi', 'type="number" step="1"'))}
+                  ${field('满格信号 dBm', input('meter_strong_rssi', 'type="number" step="1"'))}
+                  ${field('压缩比例', input('meter_compression', 'type="number" min="20" max="500" step="10"'))}
                 </div>
               </div>
-            ` : '<div class="notice">暂无功能预设。</div>'}
+            </section>
+          </div>
+
+          <div class="mt-4 flex flex-wrap justify-end gap-2">
+            <button class="ghost-btn" type="button" data-action="cancel-play-preset-form">取消</button>
+            <button class="ghost-btn" type="button" data-action="save-play-preset-form">${svgIcon('save')}保存玩法</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function ruleTypeLabel(value) {
+    const key = String(value || 'instant_score');
+    if (key === 'sustain_score') return '持续达标计分';
+    if (key === 'competition_score') return '竞争归属计分';
+    return '一次触发计分';
+  }
+
+  function relationModeLabel(value) {
+    const key = String(value || 'many_to_many');
+    if (key === 'one_to_one') return '1对1';
+    if (key === 'one_to_many') return '1对多';
+    if (key === 'many_to_one') return '多对1';
+    return '多对多';
+  }
+
+  function matchModeLabel(value) {
+    const key = String(value || 'source_to_target');
+    if (key === 'any') return '任意匹配';
+    if (key === 'specified_pair') return '指定配对';
+    if (key === 'same_group') return '同组匹配';
+    if (key === 'enemy_group') return '敌对组匹配';
+    return '源组 → 目标组';
+  }
+
+  function signalTypeLabel(value) {
+    const key = String(value || 'enter_range');
+    if (key === 'leave_range') return '离开范围';
+    if (key === 'lost') return '从有到无';
+    if (key === 'appeared') return '从无到有';
+    if (key === 'stronger') return '信号变强';
+    if (key === 'weaker') return '信号变弱';
+    if (key === 'stay_in_range') return '保持在范围内';
+    return '进入范围';
+  }
+
+  function triggerModeLabel(value) {
+    const key = String(value || 'instant');
+    if (key === 'continuous') return '连续达标';
+    if (key === 'accumulate') return '累计达标';
+    if (key === 'count') return '次数达标';
+    if (key === 'periodic') return '周期计分';
+    return '立即触发';
+  }
+
+  function scoreTargetLabel(value) {
+    const key = String(value || 'source_player');
+    if (key === 'source_group') return '源小组';
+    if (key === 'target_player') return '目标玩家';
+    if (key === 'target_group') return '目标小组';
+    if (key === 'both_players') return '双方玩家';
+    if (key === 'both_groups') return '双方小组';
+    if (key === 'none') return '不计分，只触发灯效';
+    return '源玩家';
+  }
+
+  function repeatModeLabel(value) {
+    const key = String(value || 'once_per_pair');
+    if (key === 'allow_repeat') return '允许重复';
+    if (key === 'once_per_target') return '每个目标只算一次（实验）';
+    if (key === 'once_per_source') return '每个源设备只算一次';
+    if (key === 'cooldown') return '冷却后可重复';
+    return '每对设备只算一次';
+  }
+
+  function scoreSummaryText(score = {}) {
+    const target = String(score?.target || 'source_player');
+    const points = normalizeNumber(score?.points, target === 'none' ? 0 : 1);
+    if (target === 'none' || points === 0) return '不计分，只触发灯效';
+    return `${scoreTargetLabel(target)} ${points > 0 ? '+' : ''}${points} 分`;
+  }
+
+  function roomEffectFieldSummary(room, field, fallbackEffectId = 'builtin-silent') {
+    const ids = Array.from(new Set((Array.isArray(room?.effect_rules) ? room.effect_rules : [])
+      .map((rule) => String(rule?.[field] || '').trim())
+      .filter(Boolean)));
+    if (ids.length === 1) return effectNameById(ids[0]);
+    if (ids.length > 1) return `${ids.length} 种灯效`;
+    return effectNameById(fallbackEffectId);
+  }
+
+  function signalSummaryText(preset) {
+    const signal = preset?.signal || {};
+    const type = signalTypeLabel(signal.type);
+    const min = normalizeNumber(signal.rssiMin, DEFAULT_TRIGGER_RSSI);
+    const max = signal.rssiMax === null || signal.rssiMax === undefined ? null : normalizeNumber(signal.rssiMax, -20);
+    const hold = normalizeNumber(signal.holdMs, DEFAULT_TRIGGER_HOLD_MS);
+    const range = max === null ? `RSSI >= ${min} dBm` : `${min} <= RSSI <= ${max} dBm`;
+    const holdText = hold > 0 ? `，持续 ${(hold / 1000).toFixed(hold % 1000 ? 1 : 0)} 秒` : '';
+    return `${type}：${range}${holdText}`;
+  }
+
+  function triggerSummaryText(preset) {
+    const trigger = preset?.trigger || {};
+    const mode = triggerModeLabel(trigger.mode);
+    const targetMs = normalizeNumber(trigger.targetMs, 0);
+    const periodMs = normalizeNumber(trigger.periodMs, 0);
+    const count = normalizeNumber(trigger.targetCount, 1);
+    if (String(trigger.mode || '') === 'continuous' && targetMs > 0) return `${mode} ${(targetMs / 1000).toFixed(targetMs % 1000 ? 1 : 0)} 秒`;
+    if (String(trigger.mode || '') === 'accumulate' && targetMs > 0) return `${mode} ${(targetMs / 1000).toFixed(targetMs % 1000 ? 1 : 0)} 秒`;
+    if (String(trigger.mode || '') === 'periodic' && periodMs > 0) return `${mode}：每 ${(periodMs / 1000).toFixed(periodMs % 1000 ? 1 : 0)} 秒`;
+    if (String(trigger.mode || '') === 'count') return `${mode} ${count} 次`;
+    return mode;
+  }
+
+  function renderGamePage() {
+    const presets = allPlayPresets();
+    const selected = selectedFeaturePreset() || presets[0] || null;
+    const query = String(state.localState?.ui?.play_preset_query || '').trim().toLowerCase();
+    const filter = String(state.localState?.ui?.play_preset_filter || 'all');
+    const showAdvanced = state.localState?.ui?.play_preset_advanced === true;
+    const systemCollapsed = state.localState?.ui?.system_play_presets_collapsed !== false;
+    const listCollapsed = state.localState?.ui?.play_preset_list_collapsed === true;
+    const editable = selected && selected.builtIn !== true;
+    const ui = {
+      shell: 'rounded-[20px] border border-[#2b3f68] bg-[#081120] p-4 text-slate-100 sm:p-6',
+      panel: 'rounded-[20px] border border-[#2b3f68] bg-[#111827]/80 shadow-lg shadow-black/20',
+      card: 'rounded-2xl border border-[#2b3f68] bg-[#13203a]/70 p-4',
+      input: 'h-10 w-full rounded-xl border border-[#2b3f68] bg-[#081120]/70 px-3 text-[12px] font-semibold text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[rgba(103,174,254,0.5)] focus:ring-2 focus:ring-blue-500/20',
+      textarea: 'min-h-[86px] w-full rounded-xl border border-[#2b3f68] bg-[#081120]/70 px-3 py-2 text-[12px] font-semibold leading-[1.55] text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[rgba(103,174,254,0.5)] focus:ring-2 focus:ring-blue-500/20',
+      label: 'text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400',
+      hint: 'mt-1 text-[10.5px] leading-[1.45] text-slate-400',
+      button: 'inline-flex h-9 items-center justify-center gap-2 rounded-lg border px-3 text-[12px] font-bold leading-none whitespace-nowrap transition hover:brightness-110 active:translate-y-px',
+      badge: 'inline-flex h-6 items-center justify-center rounded-full border px-2.5 text-[10.5px] font-bold leading-none whitespace-nowrap'
+    };
+    const option = (value, label, current) => `<option value="${escapeHtml(value)}" ${String(current ?? '') === String(value) ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    const button = (label, action, { icon = '', variant = 'secondary', attrs = '' } = {}) => {
+      const variants = {
+        primary: 'border-blue-500/60 bg-blue-500/90 text-white shadow-lg shadow-blue-950/25',
+        secondary: 'border-[#2b3f68] bg-[#13203a]/80 text-slate-100',
+        success: 'border-emerald-500/50 bg-emerald-500/20 text-emerald-100',
+        warning: 'border-amber-500/50 bg-amber-500/20 text-amber-100',
+        danger: 'border-red-500/50 bg-red-500/18 text-red-100',
+        ghost: 'border-[#2b3f68] bg-[#081120]/45 text-slate-300'
+      };
+      return `<button class="${ui.button} ${variants[variant] || variants.secondary}" type="button" data-action="${escapeHtml(action)}" ${attrs}>${icon ? svgIcon(icon) : ''}${escapeHtml(label)}</button>`;
+    };
+    const badge = (label, tone = 'slate') => {
+      const tones = {
+        violet: 'border-blue-500/45 bg-blue-500/15 text-blue-200',
+        blue: 'border-blue-500/45 bg-blue-500/15 text-blue-200',
+        emerald: 'border-emerald-500/45 bg-emerald-500/15 text-emerald-200',
+        amber: 'border-amber-500/45 bg-amber-500/15 text-amber-200',
+        red: 'border-red-500/45 bg-red-500/15 text-red-200',
+        slate: 'border-[#2b3f68] bg-[#081120]/55 text-slate-300'
+      };
+      return `<span class="${ui.badge} ${tones[tone] || tones.slate}">${escapeHtml(label)}</span>`;
+    };
+    const filterButton = (label, action, active) => button(label, action, {
+      variant: active ? 'primary' : 'ghost',
+      attrs: `aria-pressed="${active ? 'true' : 'false'}"`
+    });
+    const field = (label, control, hint = '') => `
+      <div class="space-y-1.5">
+        <div class="${ui.label}">${escapeHtml(label)}</div>
+        ${control}
+        ${hint ? `<div class="${ui.hint}">${escapeHtml(hint)}</div>` : ''}
+      </div>
+    `;
+    const input = (presetField, value, attrs = '') => `<input class="${ui.input}" data-role="feature-preset-field" data-preset-field="${escapeHtml(presetField)}" value="${escapeHtml(value ?? '')}" ${attrs}>`;
+    const textarea = (presetField, value, attrs = '') => `<textarea class="${ui.textarea}" data-role="feature-preset-field" data-preset-field="${escapeHtml(presetField)}" ${attrs}>${escapeHtml(value ?? '')}</textarea>`;
+    const select = (presetField, value, optionsHtml, attrs = '') => `<select class="${ui.input}" data-role="feature-preset-field" data-preset-field="${escapeHtml(presetField)}" ${attrs}>${optionsHtml}</select>`;
+    const section = (icon, title, desc, content) => `
+      <section class="${ui.card}">
+        <div class="mb-4 flex items-start gap-3">
+          <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-500/45 bg-blue-500/15 text-blue-200">${svgIcon(icon)}</div>
+          <div class="min-w-0">
+            <h4 class="text-[14px] font-black text-slate-100">${escapeHtml(title)}</h4>
+            <p class="mt-1 text-[11.5px] leading-[1.5] text-slate-400">${escapeHtml(desc)}</p>
+          </div>
+        </div>
+        ${content}
+      </section>
+    `;
+    const summaryRow = (label, value, icon = 'check') => `
+      <div class="flex items-start gap-3 rounded-xl border border-[#2b3f68]/70 bg-[#081120]/45 px-3 py-2.5">
+        <div class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-200">${svgIcon(icon)}</div>
+        <div class="min-w-0">
+          <div class="text-[10.5px] font-bold uppercase tracking-[0.08em] text-slate-500">${escapeHtml(label)}</div>
+          <div class="mt-0.5 break-words text-[12px] font-bold leading-[1.45] text-slate-100">${escapeHtml(value || '未设置')}</div>
+        </div>
+      </div>
+    `;
+    const ruleTone = (preset) => {
+      const key = String(preset?.baseTemplate || 'instant_score');
+      if (key === 'sustain_score') return { icon: 'clock', badge: 'blue', bar: 'bg-blue-500', border: 'border-blue-500/55', bg: 'bg-blue-500/10' };
+      if (key === 'competition_score') return { icon: 'trophy', badge: 'amber', bar: 'bg-amber-500', border: 'border-amber-500/55', bg: 'bg-amber-500/10' };
+      return { icon: 'target', badge: 'blue', bar: 'bg-blue-500', border: 'border-blue-500/55', bg: 'bg-blue-500/10' };
+    };
+    const matchesPreset = (preset) => {
+      if (!preset) return false;
+      if (filter === 'system' && preset.builtIn !== true) return false;
+      if (filter === 'user' && preset.builtIn === true) return false;
+      if (!query) return true;
+      return [preset.name, preset.note, ruleTypeLabel(preset.baseTemplate), relationModeLabel(preset.relation?.mode)]
+        .some((part) => String(part || '').toLowerCase().includes(query));
+    };
+    const systemPresets = systemPlayPresets().filter(matchesPreset);
+    const customPresets = userPlayPresets().filter(matchesPreset);
+    const renderPresetCard = (preset, mode = 'system') => {
+      const tone = ruleTone(preset);
+      const isSelected = selected?.id === preset.id;
+      return `
+        <article class="relative cursor-pointer overflow-hidden rounded-2xl border ${isSelected ? `${tone.border} ${tone.bg}` : 'border-[#2b3f68] bg-[#13203a]/70'} p-4 transition hover:border-blue-500/55 hover:bg-[#182644]/80" role="button" tabindex="0" data-action="select-feature-preset" data-preset-id="${escapeHtml(preset.id)}">
+          <div class="absolute inset-y-4 left-0 w-1 rounded-r-full ${isSelected ? tone.bar : 'bg-[#2b3f68]'}"></div>
+          <div class="flex items-start gap-3">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${tone.border} ${tone.bg} text-slate-100">${svgIcon(tone.icon)}</div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-start justify-between gap-2">
+                <h4 class="truncate text-[14px] font-black text-slate-100">${escapeHtml(preset.name)}</h4>
+                ${badge(preset.builtIn ? '系统' : '我的', preset.builtIn ? 'slate' : 'emerald')}
+              </div>
+              <p class="mt-1 line-clamp-2 min-h-[34px] text-[11.5px] leading-[1.45] text-slate-400">${escapeHtml(preset.note || '暂无备注')}</p>
+            </div>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-1.5">
+            ${badge(ruleTypeLabel(preset.baseTemplate), tone.badge)}
+            ${badge(relationModeLabel(preset.relation?.mode), 'blue')}
+            ${badge(triggerModeLabel(preset.trigger?.mode), 'slate')}
+          </div>
+          <div class="mt-3 grid gap-2 text-[11px] leading-[1.45] text-slate-300">
+            <div class="flex gap-2"><span class="w-10 shrink-0 text-slate-500">RSSI</span><span class="min-w-0">${escapeHtml(signalSummaryText(preset))}</span></div>
+            <div class="flex gap-2"><span class="w-10 shrink-0 text-slate-500">计分</span><span>${escapeHtml(scoreTargetLabel(preset.score?.target))} ${normalizeNumber(preset.score?.points, 1) >= 0 ? '+' : ''}${escapeHtml(normalizeNumber(preset.score?.points, 1))}</span></div>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            ${button('创建房间', 'create-room-from-template', { icon: 'arrow', variant: 'primary', attrs: `data-template-id="${escapeHtml(preset.id)}"` })}
+            ${mode === 'system'
+              ? button('基于此新建', 'create-play-preset-from', { icon: 'plus', variant: 'secondary', attrs: `data-preset-id="${escapeHtml(preset.id)}"` })
+              : `${button('编辑', 'edit-play-preset', { icon: 'sliders', variant: 'secondary', attrs: `data-preset-id="${escapeHtml(preset.id)}"` })}
+                 ${button('新建副本', 'clone-play-preset', { icon: 'plus', variant: 'ghost', attrs: `data-preset-id="${escapeHtml(preset.id)}"` })}
+                 ${button('删除', 'delete-play-preset', { icon: 'trash', variant: 'danger', attrs: `data-preset-id="${escapeHtml(preset.id)}"` })}`}
+          </div>
+        </article>
+      `;
+    };
+    const renderPresetList = (items, mode) => items.length
+      ? items.map((preset) => renderPresetCard(preset, mode)).join('')
+      : `<div class="rounded-2xl border border-dashed border-[#2b3f68] bg-[#081120]/40 p-4 text-[12px] leading-[1.6] text-slate-400">${mode === 'user' ? '还没有我的玩法预设。点“新建玩法”，或从系统默认玩法里点“基于此新建”。' : '没有符合筛选条件的系统默认玩法预设。'}</div>`;
+    const meter = selected?.feedback?.signalMeter || {};
+    const scoreText = selected ? `${scoreTargetLabel(selected.score?.target)} ${normalizeNumber(selected.score?.points, 1) >= 0 ? '+' : ''}${normalizeNumber(selected.score?.points, 1)} 分` : '';
+    const repeatText = selected ? `${repeatModeLabel(selected.repeat?.mode)}${normalizeNumber(selected.repeat?.cooldownMs, 0) > 0 ? ` / 冷却 ${normalizeNumber(selected.repeat?.cooldownMs, 0)} ms` : ''}` : '';
+    const meterText = selected ? (meter.enabled === true
+      ? `LED${normalizeNumber(meter.port, 1)} · ${normalizeNumber(meter.ledCount, 10)} 格 · ${normalizeNumber(meter.weakRssi, -90)} 到 ${normalizeNumber(meter.strongRssi, DEFAULT_TRIGGER_RSSI)} dBm · 压缩 ${normalizeNumber(meter.compressionX100, 100)}`
+      : '关闭') : '';
+    const renderReadOnlyPanel = () => `
+      <div class="${ui.card}">
+        <div class="flex items-start gap-3">
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-amber-500/40 bg-amber-500/15 text-amber-200">${svgIcon('eye')}</div>
+          <div class="min-w-0">
+            <h4 class="text-[14px] font-black text-slate-100">系统默认预设不可直接编辑</h4>
+            <p class="mt-1 text-[12px] leading-[1.55] text-slate-400">它作为可靠起点保留。需要改参数时，基于它新建一个“我的玩法预设”。</p>
+          </div>
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2">
+          ${button('基于此新建', 'create-play-preset-from', { icon: 'plus', variant: 'primary', attrs: `data-preset-id="${escapeHtml(selected?.id || '')}"` })}
+          ${button('创建房间', 'create-room-from-template', { icon: 'arrow', variant: 'secondary', attrs: `data-template-id="${escapeHtml(selected?.id || '')}"` })}
+        </div>
+      </div>
+      ${section('sliders', '当前默认参数', '只读预览，不会保存为用户修改。', `
+        <div class="grid gap-3 md:grid-cols-2">
+          ${summaryRow('底层类型', ruleTypeLabel(selected?.baseTemplate), 'target')}
+          ${summaryRow('对象关系', `${relationModeLabel(selected?.relation?.mode)} / ${matchModeLabel(selected?.relation?.match)}`, 'users')}
+          ${summaryRow('RSSI 条件', signalSummaryText(selected), 'wifi')}
+          ${summaryRow('触发模式', triggerSummaryText(selected), 'zap')}
+          ${summaryRow('计分', scoreText, 'trophy')}
+          ${summaryRow('重复', repeatText, 'refresh')}
+        </div>
+      `)}
+    `;
+    const renderEditablePreviewPanel = () => `
+      <div class="${ui.card}">
+        <div class="flex items-start gap-3">
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-500/40 bg-emerald-500/15 text-emerald-200">${svgIcon('sliders')}</div>
+          <div class="min-w-0 flex-1">
+            <h4 class="text-[14px] font-black text-slate-100">我的玩法预设</h4>
+            <p class="mt-1 text-[12px] leading-[1.55] text-slate-400">当前区域只负责查看摘要；需要修改参数时打开编辑卡片，保存后再回到这里。</p>
+          </div>
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2">
+          ${button('编辑参数', 'edit-play-preset', { icon: 'sliders', variant: 'primary', attrs: `data-preset-id="${escapeHtml(selected?.id || '')}"` })}
+          ${button('创建房间', 'create-room-from-template', { icon: 'arrow', variant: 'secondary', attrs: `data-template-id="${escapeHtml(selected?.id || '')}"` })}
+          ${button('新建副本', 'clone-play-preset', { icon: 'plus', variant: 'ghost', attrs: `data-preset-id="${escapeHtml(selected?.id || '')}"` })}
+          ${button('删除', 'delete-play-preset', { icon: 'trash', variant: 'danger', attrs: `data-preset-id="${escapeHtml(selected?.id || '')}"` })}
+        </div>
+      </div>
+      ${section('sliders', '当前参数摘要', '这是保存后的规则摘要，不是编辑表单。', `
+        <div class="grid gap-3 md:grid-cols-2">
+          ${summaryRow('底层类型', ruleTypeLabel(selected?.baseTemplate), 'target')}
+          ${summaryRow('对象关系', `${relationModeLabel(selected?.relation?.mode)} / ${matchModeLabel(selected?.relation?.match)}`, 'users')}
+          ${summaryRow('RSSI 条件', signalSummaryText(selected), 'wifi')}
+          ${summaryRow('触发模式', triggerSummaryText(selected), 'zap')}
+          ${summaryRow('计分', scoreText, 'trophy')}
+          ${summaryRow('重复', repeatText, 'refresh')}
+          ${summaryRow('灯效反馈', `空闲 ${effectNameById(selected?.feedback?.onEnter || '')} / 成功 ${effectNameById(selected?.feedback?.onSuccess || '')}`, 'effect')}
+          ${summaryRow('信号指示灯', meterText, 'eye')}
+        </div>
+      `)}
+    `;
+    const renderEditorForm = () => {
+      if (!selected) return '<div class="rounded-2xl border border-dashed border-[#2b3f68] bg-[#081120]/40 p-6 text-[12px] text-slate-400">暂无玩法预设。</div>';
+      if (!editable) return renderReadOnlyPanel();
+      return renderEditablePreviewPanel();
+      return `
+        ${section('sliders', '基础规则', '定义玩法名称、底层类型、设备关系和匹配方式。', `
+          <div class="grid gap-4 md:grid-cols-2">
+            ${field('名称', input('name', selected.name || ''))}
+            ${field('底层类型', select('baseTemplate', selected.baseTemplate, [
+              option('instant_score', '一次触发计分', selected.baseTemplate),
+              option('sustain_score', '持续达标计分', selected.baseTemplate),
+              option('competition_score', '竞争归属计分', selected.baseTemplate)
+            ].join('')))}
+            <div class="md:col-span-2">${field('备注', textarea('note', selected.note || ''))}</div>
+            ${field('对象关系', select('relation_mode', selected.relation?.mode, [
+              option('one_to_one', '1对1', selected.relation?.mode),
+              option('one_to_many', '1对多', selected.relation?.mode),
+              option('many_to_one', '多对1', selected.relation?.mode),
+              option('many_to_many', '多对多', selected.relation?.mode || 'many_to_many')
+            ].join('')))}
+            ${field('匹配方式', select('relation_match', selected.relation?.match, [
+              option('any', '任意匹配', selected.relation?.match),
+              option('specified_pair', '指定配对', selected.relation?.match),
+              option('same_group', '同组匹配', selected.relation?.match),
+              option('enemy_group', '敌对组匹配', selected.relation?.match),
+              option('source_to_target', '源组 → 目标组', selected.relation?.match || 'source_to_target')
+            ].join('')))}
+          </div>
+        `)}
+        ${section('wifi', '发现条件 / RSSI', 'RSSI 是负数，-20 dBm 比 -40 dBm 信号更强。', `
+          <div class="grid gap-4 md:grid-cols-3">
+            ${field('RSSI 条件', select('signal_type', selected.signal?.type, [
+              option('enter_range', '进入范围', selected.signal?.type || 'enter_range'),
+              option('leave_range', '离开范围', selected.signal?.type),
+              option('stay_in_range', '保持在范围内', selected.signal?.type),
+              option('appeared', '从无到有', selected.signal?.type),
+              option('lost', '从有到无', selected.signal?.type),
+              option('stronger', '信号变强', selected.signal?.type),
+              option('weaker', '信号变弱', selected.signal?.type)
+            ].join('')))}
+            ${field('RSSI 下限 dBm', input('signal_rssi_min', selected.signal?.rssiMin ?? DEFAULT_TRIGGER_RSSI, 'type="number" step="1"'))}
+            ${field('RSSI 上限 dBm', input('signal_rssi_max', selected.signal?.rssiMax ?? '', 'type="number" step="1" placeholder="可空"'))}
+            ${field('持续时间 ms', input('signal_hold_ms', selected.signal?.holdMs ?? DEFAULT_TRIGGER_HOLD_MS, 'type="number" step="50"'))}
+            ${showAdvanced ? field('丢失宽限 ms', input('signal_missing_ms', selected.signal?.missingMs ?? 3000, 'type="number" step="50"')) : ''}
+            ${showAdvanced ? field('平滑样本', input('signal_smooth_samples', selected.signal?.smoothSamples ?? 5, 'type="number" min="1" max="10" step="1"')) : ''}
+          </div>
+        `)}
+        ${section('trophy', '计分与重复规则', '设置触发模式、得分对象和同一关系是否可以重复计分。', `
+          <div class="grid gap-4 md:grid-cols-3">
+            ${field('触发模式', select('trigger_mode', selected.trigger?.mode, [
+              option('instant', '立即触发', selected.trigger?.mode || 'instant'),
+              option('continuous', '连续达标', selected.trigger?.mode),
+              option('accumulate', '累计达标', selected.trigger?.mode),
+              option('count', '次数达标', selected.trigger?.mode),
+              option('periodic', '周期计分', selected.trigger?.mode)
+            ].join('')))}
+            ${field('目标时间 ms', input('trigger_target_ms', selected.trigger?.targetMs ?? 0, 'type="number" step="50"'))}
+            ${field('计分对象', select('score_target', selected.score?.target, [
+              option('source_player', '源玩家', selected.score?.target || 'source_player'),
+              option('source_group', '源小组', selected.score?.target),
+              option('target_player', '目标玩家', selected.score?.target),
+              option('target_group', '目标小组', selected.score?.target),
+              option('both_players', '双方玩家', selected.score?.target),
+              option('both_groups', '双方小组', selected.score?.target),
+              option('none', '不计分，只触发灯效', selected.score?.target)
+            ].join('')))}
+            ${field('分数', input('score_points', selected.score?.points ?? 1, 'type="number" step="1"'))}
+            ${field('重复规则', select('repeat_mode', selected.repeat?.mode, [
+              option('allow_repeat', '允许重复', selected.repeat?.mode),
+              option('once_per_pair', '每对设备只算一次', selected.repeat?.mode || 'once_per_pair'),
+              option('once_per_target', '每个目标只算一次（实验）', selected.repeat?.mode),
+              option('once_per_source', '每个源设备只算一次', selected.repeat?.mode),
+              option('cooldown', '冷却后可重复', selected.repeat?.mode)
+            ].join('')))}
+            ${showAdvanced ? field('冷却 ms', input('repeat_cooldown_ms', selected.repeat?.cooldownMs ?? 5000, 'type="number" step="50"')) : ''}
+            ${showAdvanced ? field('周期 ms', input('trigger_period_ms', selected.trigger?.periodMs ?? 0, 'type="number" step="50"')) : ''}
+            ${showAdvanced ? field('次数', input('trigger_target_count', selected.trigger?.targetCount ?? 1, 'type="number" step="1"')) : ''}
+            ${showAdvanced ? field('触发后处理', select('after_target_state', selected.afterTrigger?.targetState, [
+              option('none', '无处理', selected.afterTrigger?.targetState || 'none'),
+              option('cooldown', '冷却', selected.afterTrigger?.targetState),
+              option('disabled', '目标失效（实验）', selected.afterTrigger?.targetState),
+              option('locked', '目标锁定', selected.afterTrigger?.targetState)
+            ].join(''))) : ''}
+            ${showAdvanced ? field('计时处理', select('after_timer_action', selected.afterTrigger?.timerAction, [
+              option('none', '无处理', selected.afterTrigger?.timerAction || 'none'),
+              option('reset', '计时清零', selected.afterTrigger?.timerAction),
+              option('pause', '计时暂停', selected.afterTrigger?.timerAction)
+            ].join(''))) : ''}
+          </div>
+        `)}
+        ${section('zap', '灯效反馈', '选择成功、靠近/空闲灯效，并配置可选的信号强度指示灯。', `
+          <div class="grid gap-4 md:grid-cols-2">
+            ${field('成功灯效', select('feedback_success', selected.feedback?.onSuccess || 'builtin-pulse', effectChoiceOptions(selected.feedback?.onSuccess || 'builtin-pulse')))}
+            ${field('靠近 / 空闲灯效', select('feedback_enter', selected.feedback?.onEnter || 'builtin-breath', effectChoiceOptions(selected.feedback?.onEnter || 'builtin-breath')))}
+          </div>
+          <div class="mt-4 rounded-2xl border border-[#2b3f68] bg-[#081120]/45 p-4">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div class="text-[13px] font-black text-slate-100">信号强度指示灯</div>
+                <div class="mt-1 max-w-[720px] text-[11.5px] leading-[1.5] text-slate-400">打开后，指定 LED 路会按最近目标信号强弱显示亮起灯珠数量；没有收到目标信号时不亮。</div>
+              </div>
+              <label class="inline-flex h-9 items-center gap-2 rounded-lg border border-[#2b3f68] bg-[#13203a]/80 px-3 text-[12px] font-bold text-slate-100">
+                <input type="checkbox" class="h-4 w-4 accent-blue-500" data-role="feature-preset-field" data-preset-field="meter_enabled" ${selected.feedback?.signalMeter?.enabled === true ? 'checked' : ''}>
+                启用
+              </label>
+            </div>
+            <div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              ${field('LED 路径', select('meter_port', normalizeNumber(selected.feedback?.signalMeter?.port, 1), [
+                option('1', 'LED1', normalizeNumber(selected.feedback?.signalMeter?.port, 1)),
+                option('2', 'LED2', normalizeNumber(selected.feedback?.signalMeter?.port, 1)),
+                option('3', 'LED3', normalizeNumber(selected.feedback?.signalMeter?.port, 1))
+              ].join('')))}
+              ${field('灯珠级别数', input('meter_led_count', normalizeNumber(selected.feedback?.signalMeter?.ledCount, 10), 'type="number" min="1" max="200" step="1"'))}
+              ${field('弱信号 dBm', input('meter_weak_rssi', normalizeNumber(selected.feedback?.signalMeter?.weakRssi, -90), 'type="number" step="1"'))}
+              ${field('满格信号 dBm', input('meter_strong_rssi', normalizeNumber(selected.feedback?.signalMeter?.strongRssi, normalizeNumber(selected.signal?.rssiMin, DEFAULT_TRIGGER_RSSI)), 'type="number" step="1"'))}
+              ${field('压缩比例', input('meter_compression', normalizeNumber(selected.feedback?.signalMeter?.compressionX100, 100), 'type="number" min="20" max="500" step="10"'), '100=线性，160/200 适合强信号容易满格时使用。')}
+            </div>
+          </div>
+        `)}
+      `;
+    };
+    const renderSummary = () => selected ? `
+      <aside class="${ui.panel} p-4">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="text-[11px] font-black uppercase tracking-[0.14em] text-blue-200">Preset Summary</div>
+            <h3 class="mt-2 break-words text-[20px] font-black leading-tight text-slate-100">${escapeHtml(selected.name)}</h3>
+            <p class="mt-2 text-[12px] leading-[1.55] text-slate-400">${escapeHtml(selected.note || '暂无备注')}</p>
+          </div>
+          ${badge(selected.builtIn ? '系统默认' : '我的预设', selected.builtIn ? 'slate' : 'emerald')}
+        </div>
+        <div class="mt-4 grid grid-cols-2 gap-3">
+          <div class="rounded-2xl border border-[#2b3f68] bg-[#13203a]/70 p-3">
+            <div class="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">类型</div>
+            <div class="mt-1 text-[13px] font-black text-slate-100">${escapeHtml(ruleTypeLabel(selected.baseTemplate))}</div>
+          </div>
+          <div class="rounded-2xl border border-[#2b3f68] bg-[#13203a]/70 p-3">
+            <div class="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">更新</div>
+            <div class="mt-1 text-[13px] font-black text-slate-100">${escapeHtml(formatTime(selected.updated_at))}</div>
+          </div>
+        </div>
+        <div class="mt-4 space-y-2">
+          ${summaryRow('关系', `${relationModeLabel(selected.relation?.mode)} / ${matchModeLabel(selected.relation?.match)}`, 'users')}
+          ${summaryRow('RSSI', signalSummaryText(selected), 'wifi')}
+          ${summaryRow('触发', triggerSummaryText(selected), 'zap')}
+          ${summaryRow('计分', scoreText, 'trophy')}
+          ${summaryRow('重复', repeatText, 'refresh')}
+          ${summaryRow('指示灯', meterText, 'eye')}
+        </div>
+        <div class="mt-4 rounded-2xl border border-[#2b3f68] bg-[#081120]/45 p-3">
+          <div class="text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">操作</div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            ${button('创建房间', 'create-room-from-template', { icon: 'arrow', variant: 'primary', attrs: `data-template-id="${escapeHtml(selected.id)}"` })}
+            ${selected.builtIn
+              ? button('基于此新建', 'create-play-preset-from', { icon: 'plus', variant: 'secondary', attrs: `data-preset-id="${escapeHtml(selected.id)}"` })
+              : `${button('编辑参数', 'edit-play-preset', { icon: 'sliders', variant: 'secondary', attrs: `data-preset-id="${escapeHtml(selected.id)}"` })}
+                 ${button('新建副本', 'clone-play-preset', { icon: 'plus', variant: 'ghost', attrs: `data-preset-id="${escapeHtml(selected.id)}"` })}`}
+            ${editable ? button('删除', 'delete-play-preset', { icon: 'trash', variant: 'danger', attrs: `data-preset-id="${escapeHtml(selected.id)}"` }) : ''}
+          </div>
+        </div>
+      </aside>
+    ` : `<aside class="${ui.panel} p-4 text-[12px] text-slate-400">暂无选中的玩法预设。</aside>`;
+    const showUserSection = filter !== 'system';
+    const showSystemSection = filter !== 'user';
+    return `
+      <div class="${ui.shell}">
+        <div class="mb-4 flex flex-wrap items-start justify-between gap-4">
+          <div class="min-w-0">
+            <div class="text-[11px] font-black uppercase tracking-[0.16em] text-blue-200">Magic Wand Rules</div>
+            <h3 class="mt-2 text-[24px] font-black leading-none text-slate-100">玩法预设</h3>
+            <p class="mt-2 max-w-[920px] text-[12.5px] leading-[1.55] text-slate-400">系统默认玩法作为可靠起点；我的玩法预设用于新建、编辑、删除和复用。房间只负责本局设备和覆盖参数。</p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            ${badge('3 类底层规则', 'blue')}
+            ${badge('房间开局分离', 'blue')}
+            ${badge('只改 UI', 'emerald')}
+          </div>
+        </div>
+        <div class="grid gap-4" style="grid-template-columns:${listCollapsed ? '72px minmax(0,1fr)' : 'minmax(360px,min(38vw,680px)) minmax(0,1fr)'};align-items:start;">
+          ${listCollapsed ? `
+            <aside class="${ui.panel} sticky top-4 flex min-h-[520px] flex-col items-center gap-3 p-2">
+              <button class="${ui.button} h-10 w-10 border-blue-500/60 bg-blue-500/90 p-0 text-white" type="button" title="展开玩法预设列表" data-action="toggle-play-preset-list">${svgIcon('list')}</button>
+              <div class="mt-1 text-center text-[10px] font-black leading-[1.35] text-slate-400">玩法<br>预设</div>
+              <div class="rounded-full border border-[#2b3f68] bg-[#081120]/55 px-2 py-1 text-[10px] font-bold text-slate-300">${customPresets.length + systemPresets.length}</div>
+            </aside>
+          ` : `
+            <aside class="${ui.panel} sticky top-4 max-h-[calc(100vh-144px)] overflow-hidden p-4">
+              <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <h4 class="text-[15px] font-black text-slate-100">玩法预设列表</h4>
+                  <div class="mt-1 text-[11px] text-slate-400">先选玩法，再编辑参数或创建房间。</div>
+                </div>
+                <div class="flex shrink-0 items-center gap-2">
+                  ${badge(`${customPresets.length + systemPresets.length} 项`, 'slate')}
+                  ${button('新建玩法', 'create-play-preset', { icon: 'plus', variant: 'primary' })}
+                  ${button('收起', 'toggle-play-preset-list', { icon: 'pause', variant: 'ghost' })}
+                </div>
+              </div>
+              <div class="mt-4 grid gap-3">
+                <div class="flex flex-wrap gap-2">
+                  ${filterButton('全部', 'play-preset-filter-all', filter === 'all')}
+                  ${filterButton('我的', 'play-preset-filter-user', filter === 'user')}
+                  ${filterButton('系统', 'play-preset-filter-system', filter === 'system')}
+                  ${filterButton(showAdvanced ? '收起高级' : '高级参数', 'toggle-play-preset-advanced', showAdvanced)}
+                </div>
+                <div class="relative">
+                  <div class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500">${svgIcon('search')}</div>
+                  <input class="${ui.input} pl-9" data-role="play-preset-query" value="${escapeHtml(state.localState?.ui?.play_preset_query || '')}" placeholder="搜索名称、类型、关系">
+                </div>
+              </div>
+              <div class="mt-4 space-y-4 overflow-auto pr-1" data-play-preset-list-scroll style="min-height:500px;max-height:calc(100vh - 320px);">
+                ${showUserSection ? `
+                  <section>
+                    <div class="mb-2 flex items-center justify-between gap-2">
+                      <div class="text-[12px] font-black text-slate-100">我的玩法预设</div>
+                      ${badge(`共 ${customPresets.length} 个`, 'emerald')}
+                    </div>
+                    <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));">${renderPresetList(customPresets, 'user')}</div>
+                  </section>
+                ` : ''}
+                ${showSystemSection ? `
+                  <section>
+                    <div class="mb-2 flex items-center justify-between gap-2">
+                      <div class="text-[12px] font-black text-slate-100">系统默认玩法预设</div>
+                      <div class="flex items-center gap-2">
+                        ${badge(`共 ${systemPresets.length} 个`, 'slate')}
+                        ${button(systemCollapsed ? '展开' : '收起', 'toggle-system-play-presets', { icon: systemCollapsed ? 'arrow' : 'pause', variant: 'ghost' })}
+                      </div>
+                    </div>
+                    ${systemCollapsed
+                      ? `<div class="rounded-2xl border border-[#2b3f68] bg-[#081120]/40 p-4 text-[12px] leading-[1.6] text-slate-400">系统默认玩法预设已折叠。它们不能删除，但可以直接创建房间或基于它们新建“我的玩法预设”。</div>`
+                      : `<div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));">${renderPresetList(systemPresets, 'system')}</div>`}
+                  </section>
+                ` : ''}
+              </div>
+            </aside>
+          `}
+          <div class="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)]">
+          <main class="${ui.panel} p-4">
+            <div class="mb-4 flex flex-wrap items-start justify-between gap-3 border-b border-[#2b3f68] pb-4">
+              <div class="min-w-0">
+                <div class="text-[11px] font-black uppercase tracking-[0.14em] text-blue-200">Rule Editor</div>
+                <h4 class="mt-2 break-words text-[18px] font-black text-slate-100">${escapeHtml(selected?.name || '未选择玩法')}</h4>
+                <p class="mt-1 text-[12px] leading-[1.5] text-slate-400">${editable ? '我的玩法预设可打开编辑卡片修改。' : '系统默认预设为只读起点，基于它新建后可以编辑。'}</p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                ${selected ? badge(ruleTypeLabel(selected.baseTemplate), ruleTone(selected).badge) : ''}
+                ${selected ? badge(selected.builtIn ? '只读' : '可编辑', selected.builtIn ? 'amber' : 'emerald') : ''}
+              </div>
+            </div>
+            <div class="space-y-4">${renderEditorForm()}</div>
+          </main>
+          ${renderSummary()}
           </div>
         </div>
       </div>
@@ -6122,9 +8477,12 @@
         ` : ''}
         ${tracks.length ? tracks.map((track, index) => {
           const enabled = track?.enabled !== false;
-          const ledCount = displayLedCount > 0 ? clamp(displayLedCount, 1, 9999) : clamp(normalizeNumber(track?.led_count, 35), 1, 9999);
-          const start = clamp(normalizeNumber(track?.led_start, 1), 1, ledCount);
-          const end = clamp(normalizeNumber(track?.led_end, ledCount), start, ledCount);
+          const actualLedCount = clamp(normalizeNumber(track?.led_count, 35), 1, 9999);
+          const actualStart = clamp(normalizeNumber(track?.led_start, 1), 1, actualLedCount);
+          const actualEnd = clamp(normalizeNumber(track?.led_end, actualLedCount), actualStart, actualLedCount);
+          const ledCount = displayLedCount > 0 ? clamp(displayLedCount, 1, actualLedCount) : actualLedCount;
+          const start = displayLedCount > 0 ? 1 : actualStart;
+          const end = displayLedCount > 0 ? ledCount : actualEnd;
           const step = Math.max(1, Math.max(0, normalizeNumber(track?.gap, 0)) + 1);
           const activeIndices = [];
           for (let led = start; led <= end; led += step) activeIndices.push(led);
@@ -6148,7 +8506,7 @@
                   return `<span aria-hidden="true" data-effect-preview-cell data-led-no="${ledNo}" style="flex:0 0 auto;width:${cellSize}px;height:${cellSize}px;border-radius:${borderRadius};background:${visual.color};opacity:${visual.opacity};box-shadow:${visual.shadow};border:1px solid rgba(16,20,28,0.88);transition:background .18s linear,opacity .18s linear,box-shadow .18s linear;"></span>`;
                 }).join('')}
               </div>
-              <div class="mt-1 text-[10.5px] leading-[1.4] text-[#8ea3bf]">范围 ${escapeHtml(start)} - ${escapeHtml(end)} · 间隔 ${escapeHtml(normalizeNumber(track?.gap, 0))} · 亮度 ${escapeHtml(track?.brightness ?? 80)}%</div>
+              <div class="mt-1 text-[10.5px] leading-[1.4] text-[#8ea3bf]">范围 ${escapeHtml(actualStart)} - ${escapeHtml(actualEnd)} · 间隔 ${escapeHtml(normalizeNumber(track?.gap, 0))} · 亮度 ${escapeHtml(track?.brightness ?? 80)}%</div>
             </div>
           `;
         }).join('') : '<div class="notice">这个灯效还没有轨道，先在卡片里创建。</div>'}
@@ -6298,7 +8656,7 @@
                     <div class="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <div class="text-[13px] font-extrabold text-[#eef6ff]">LED${activeTrackIndex + 1}</div>
-                        <div class="mt-0.5 text-[11px] leading-[1.45] text-[#9fb2c8]">选择模板后再调参数，默认模板是“静默”。</div>
+                        <div class="mt-0.5 text-[11px] leading-[1.45] text-[#9fb2c8]">选择模板后再调参数；未启用的灯条默认静默。</div>
                       </div>
                       <div class="text-[11px] text-[#8ea3bf]">三路效果都保存在本地，开始前再下发。</div>
                     </div>
@@ -6418,13 +8776,23 @@
   function renderTemplateCard(template, { mode = 'builtin', compact = false, showActions = true } = {}) {
     const selected = template.id === state.selectedTemplateId;
     const builtIn = template.builtIn === true;
-    const featureName = featurePresetNameById(template.feature_preset_id);
+    const playPreset = playPresetById(template.play_preset_id || template.feature_preset_id || template.id);
+    const featureName = playPreset?.name || featurePresetNameById(template.feature_preset_id);
     const sourceMode = roleModeValue(template.source_group_mode || (Array.isArray(template.default_source_group_ids) && template.default_source_group_ids.length > 1 ? 'multi' : 'single'));
     const targetMode = roleModeValue(template.target_group_mode || (Array.isArray(template.default_target_group_ids) && template.default_target_group_ids.length > 1 ? 'multi' : 'single'));
     const featureSignal = featurePresetById(template.feature_preset_id)?.feature_ui?.signal_ui || {};
     const scoringText = template.scoring && typeof template.scoring === 'object' && template.scoring.mode
       ? scoringLabel(template.scoring.mode)
       : '未设置';
+    const relationText = playPreset
+      ? `${relationModeLabel(playPreset.relation?.mode)} / ${matchModeLabel(playPreset.relation?.match)}`
+      : `${roleModeLabel(sourceMode)} / ${roleModeLabel(targetMode)}`;
+    const triggerScoreText = playPreset
+      ? `${triggerModeLabel(playPreset.trigger?.mode)} / ${scoreSummaryText(playPreset.score)}`
+      : `${senseLabel(template.sense_mode || 'ring')} / ${scoringText}`;
+    const ruleSignalText = playPreset
+      ? signalSummaryText(playPreset)
+      : triggerConditionText(featureSignal.trigger_compare, featureSignal.trigger_rssi_threshold, featureSignal.trigger_hold_ms);
     const selectedStyle = selected
       ? 'border-[rgba(120,184,255,0.86)] bg-[linear-gradient(180deg,rgba(28,44,69,0.98),rgba(18,28,42,0.98))] shadow-[0_0_0_1px_rgba(120,184,255,0.18),0_16px_34px_rgba(0,0,0,0.24)] ring-1 ring-[rgba(120,184,255,0.18)]'
       : 'border-[rgba(88,116,154,0.24)] bg-[rgba(14,20,31,0.92)] hover:border-[rgba(120,184,255,0.38)] hover:bg-[rgba(16,24,36,0.96)]';
@@ -6448,23 +8816,23 @@
       ? `
         <div class="mt-2 space-y-1.5 text-[10.5px] leading-[1.42] text-[#c0d0e4]">
           <div><span class="text-[#8ea3bf]">玩法：</span><span class="font-semibold text-white">${escapeHtml(featureName)}</span></div>
-          <div><span class="text-[#8ea3bf]">源/目标：</span><span class="font-semibold text-white">${escapeHtml(roleModeLabel(sourceMode))} / ${escapeHtml(roleModeLabel(targetMode))}</span></div>
-          <div><span class="text-[#8ea3bf]">感应/计分：</span><span class="font-semibold text-white">${escapeHtml(senseLabel(template.sense_mode || 'ring'))} / ${escapeHtml(scoringText)}</span></div>
+          <div><span class="text-[#8ea3bf]">关系：</span><span class="font-semibold text-white">${escapeHtml(relationText)}</span></div>
+          <div><span class="text-[#8ea3bf]">触发/计分：</span><span class="font-semibold text-white">${escapeHtml(triggerScoreText)}</span></div>
         </div>
       `
       : `
         <div class="mt-3 grid gap-2 md:grid-cols-2">
           <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2">
-            <div class="text-[10px] font-bold text-[#8ea3bf]">玩法功能包</div>
+            <div class="text-[10px] font-bold text-[#8ea3bf]">玩法预设</div>
             <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(featureName)}</div>
           </div>
           <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2">
-            <div class="text-[10px] font-bold text-[#8ea3bf]">源组 / 目标组</div>
-            <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(roleModeLabel(sourceMode))} / ${escapeHtml(roleModeLabel(targetMode))}</div>
+            <div class="text-[10px] font-bold text-[#8ea3bf]">对象关系</div>
+            <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(relationText)}</div>
           </div>
           <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2">
-            <div class="text-[10px] font-bold text-[#8ea3bf]">感应 / 计分</div>
-            <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(senseLabel(template.sense_mode || 'ring'))} / ${escapeHtml(scoringText)}</div>
+            <div class="text-[10px] font-bold text-[#8ea3bf]">触发 / 计分</div>
+            <div class="mt-1 text-[12px] font-semibold text-white">${escapeHtml(triggerScoreText)}</div>
           </div>
           <div class="rounded-[14px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2">
             <div class="text-[10px] font-bold text-[#8ea3bf]">空闲 / 触发</div>
@@ -6518,7 +8886,7 @@
         </div>
         ${metaRow}
         ${summaryGrid}
-        ${compact ? '' : `<div class="mt-2 text-[10.5px] leading-[1.45] text-[#8ea3bf]">触发条件：${escapeHtml(triggerConditionText(featureSignal.trigger_compare, featureSignal.trigger_rssi_threshold, featureSignal.trigger_hold_ms))} 后触发。</div>`}
+        ${compact ? '' : `<div class="mt-2 text-[10.5px] leading-[1.45] text-[#8ea3bf]">规则参数：${escapeHtml(ruleSignalText)}。</div>`}
         ${actionRow ? `<div class="mt-3 flex flex-wrap gap-2">${actionRow}</div>` : ''}
       </div>
     `;
@@ -6620,7 +8988,7 @@
                     <div class="truncate text-[14px] font-extrabold leading-none text-white">${escapeHtml(item.name || '未命名房间')}</div>
                     <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-bold whitespace-nowrap ${statusClass}">${escapeHtml(statusText)}</span>
                   </div>
-                  <div class="mt-1 text-[11px] leading-[1.5] text-[#9fb2c8]">模板：${escapeHtml(item.template_name || '未选择模板')} · 更新时间：${escapeHtml(formatTime(item.updated_at || item.created_at))}</div>
+                  <div class="mt-1 text-[11px] leading-[1.5] text-[#9fb2c8]">玩法：${escapeHtml(item.template_name || '未选择玩法')} · 更新时间：${escapeHtml(formatTime(item.updated_at || item.created_at))}</div>
                 </div>
                 <div class="flex flex-wrap justify-end gap-2">
                   <button class="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] px-3 text-[11px] font-bold whitespace-nowrap text-[#dbe5f4] transition hover:brightness-105 active:translate-y-px" type="button" data-action="select-room" data-room-id="${escapeHtml(item.id)}">${svgIcon('check')}设为当前</button>
@@ -6666,7 +9034,7 @@
             </article>
           `;
         }).join('')
-      : '<div class="rounded-[18px] border border-dashed border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.86)] px-4 py-6 text-[12px] leading-[1.6] text-[#9fb2c8]">当前还没有房间。点击“向导开局”或在模板页使用“创建房间”开始一个新局。</div>';
+      : '<div class="rounded-[18px] border border-dashed border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.86)] px-4 py-6 text-[12px] leading-[1.6] text-[#9fb2c8]">当前还没有房间。点击“向导开局”或在玩法预设页使用“创建房间”开始一个新局。</div>';
     return `
       <div class="grid gap-3 xl:grid-cols-[minmax(0,1.72fr)_minmax(300px,0.48fr)]">
         <section class="order-1 rounded-[20px] border border-[rgba(88,116,154,0.26)] bg-[linear-gradient(180deg,rgba(21,30,43,0.96),rgba(17,24,36,0.94))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
@@ -6729,7 +9097,7 @@
               <div class="text-[11px] font-bold text-[#c7d5eb]">本局统计</div>
               <div class="mt-2 flex flex-wrap gap-2">
                 ${makeChip(`记录 ${state.roomRecords.length}`, true)}
-                ${makeChip(`设备 ${controllerDevices().length}`)}
+                ${makeChip(`设备 ${visibleControllerDevices().length}`)}
                 ${makeChip(`分组 ${activeGroupsCount()}`)}
               </div>
             </div>
@@ -6754,25 +9122,25 @@
               </div>
               <div class="mt-2 space-y-1">
                 ${runtimeSummary.latest ? `
-                  <div>最近：<b class="text-white">${escapeHtml(deviceLabelFromRuntime(runtimeSummary.latest, 'self'))}</b> 发现 <b class="text-white">${escapeHtml(deviceLabelFromRuntime(runtimeSummary.latest, 'peer'))}</b></div>
+                  <div>最近：<b class="text-white">${escapeHtml(runtimeSummary.latest.line || formatRuntimeDiscovery(runtimeSummary.latest, room))}</b></div>
                   <div>分组：<b class="text-white">${escapeHtml(groupLabelFromMask(runtimeSummary.latest.self_group_mask))}</b> → <b class="text-white">${escapeHtml(groupLabelFromMask(runtimeSummary.latest.peer_group_mask))}</b></div>
                   <div>RSSI：<b class="text-white">${escapeHtml(runtimeSummary.latest.rssi)} dBm</b> · 时间：<b class="text-white">${escapeHtml(formatClockTime(runtimeSummary.latest.event_ms))}</b></div>
                 ` : '<div>暂无触发事件，说明还没有收到满足条件的源/目标信号。</div>'}
               </div>
-              ${(runtimeSummary.by_source.length || runtimeSummary.by_source_group.length) ? `
+              ${(runtimeSummary.primary_players.length || runtimeSummary.primary_groups.length) ? `
                 <div class="mt-2 grid gap-2 md:grid-cols-2">
                   <div class="rounded-[12px] border border-[rgba(88,116,154,0.14)] bg-[rgba(18,25,36,0.72)] px-2.5 py-2">
-                    <div class="mb-1 text-[10px] font-bold text-[#c7d5eb]">源组积分</div>
-                    ${runtimeSummary.by_source.map((item) => `<div class="text-[10.5px] leading-[1.4] text-[#dbe5f6]"><b class="text-white">${escapeHtml(item.label)}</b>：${escapeHtml(item.count)} 分</div>`).join('')}
+                    <div class="mb-1 text-[10px] font-bold text-[#c7d5eb]">个人积分</div>
+                    ${runtimeSummary.primary_players.map((item) => `<div class="text-[10.5px] leading-[1.4] text-[#dbe5f6]"><b class="text-white">${escapeHtml(item.label)}</b>：${escapeHtml(item.count)} 分</div>`).join('')}
                   </div>
                   <div class="rounded-[12px] border border-[rgba(88,116,154,0.14)] bg-[rgba(18,25,36,0.72)] px-2.5 py-2">
                     <div class="mb-1 text-[10px] font-bold text-[#c7d5eb]">组排名</div>
-                    ${runtimeSummary.by_source_group.map((item) => `<div class="text-[10.5px] leading-[1.4] text-[#dbe5f6]"><b class="text-white">${escapeHtml(item.label)}</b>：${escapeHtml(item.count)} 次</div>`).join('')}
+                    ${runtimeSummary.primary_groups.map((item) => `<div class="text-[10.5px] leading-[1.4] text-[#dbe5f6]"><b class="text-white">${escapeHtml(item.label)}</b>：${escapeHtml(item.count)} 分</div>`).join('')}
                   </div>
                 </div>
               ` : ''}
               <div class="mt-2 rounded-[12px] border border-[rgba(88,116,154,0.14)] bg-[rgba(18,25,36,0.72)] px-2.5 py-2">
-                <div class="mb-1 text-[10px] font-bold text-[#c7d5eb]">发现记录</div>
+                <div class="mb-1 text-[10px] font-bold text-[#c7d5eb]">事件记录</div>
                 <div class="space-y-1">
                   ${runtimeSummary.discoveries.length ? runtimeSummary.discoveries.slice(0, 5).map((event) => `<div class="text-[10.5px] leading-[1.45] text-[#dbe5f6]">${escapeHtml(event.line || formatRuntimeDiscovery(event))}</div>`).join('') : '<div class="text-[10.5px] leading-[1.45] text-[#8ea3bf]">暂无发现记录。</div>'}
                 </div>
@@ -6793,10 +9161,11 @@
     const roomCountdownRemainingText = roomCountdownRemaining(room?.id);
     const prepareBusy = !!state.busy.publish || !!state.preparingRoomId;
     const runtimeSummary = roomRuntimeSummary(room);
-    const leaderboard = runtimeSummary.by_source.slice().sort((a, b) => b.count - a.count);
-    const groupLeaderboard = runtimeSummary.by_source_group.slice().sort((a, b) => b.count - a.count);
+    const leaderboard = runtimeSummary.primary_players.slice().sort((a, b) => b.count - a.count);
+    const groupLeaderboard = runtimeSummary.primary_groups.slice().sort((a, b) => b.count - a.count);
     const leader = leaderboard[0] || null;
     const latest = runtimeSummary.latest || null;
+    const runtimeVerb = runtimeVerbForRoom(room);
     const sourceText = Array.isArray(room?.source_group_ids) && room.source_group_ids.length
       ? room.source_group_ids.map((gid) => groupNameById(gid)).join(' / ')
       : '未选择';
@@ -6858,7 +9227,7 @@
           <div class="mw-b-rank flex h-16 w-16 items-center justify-center rounded-[20px] ${medalClass} text-[28px] font-black">${index + 1}</div>
           <div class="min-w-0">
             <div class="mw-b-player truncate text-[28px] font-black leading-none text-white">${escapeHtml(item.label)}</div>
-            <div class="mt-2 inline-flex rounded-full border border-[rgba(88,222,164,0.22)] bg-[rgba(30,79,57,0.28)] px-3 py-1 text-[11px] font-black text-[#a8f0ca]">源组得分</div>
+            <div class="mt-2 inline-flex rounded-full border border-[rgba(88,222,164,0.22)] bg-[rgba(30,79,57,0.28)] px-3 py-1 text-[11px] font-black text-[#a8f0ca]">${escapeHtml(scoreTargetLabel(runtimeSummary.score_target || 'source_player'))}</div>
           </div>
           <div class="text-right">
             <div class="mw-b-score text-[52px] font-black leading-none text-[#fff3c1]">${escapeHtml(item.count)}</div>
@@ -6866,7 +9235,7 @@
           </div>
         </div>
       `;
-    }).join('') : '<div class="mw-b-empty-large flex min-h-[260px] flex-col items-center justify-center rounded-[26px] border border-[rgba(164,190,220,0.16)] bg-[linear-gradient(180deg,rgba(15,23,36,0.9),rgba(7,12,20,0.9))] text-center text-[28px] font-black leading-[1.25] text-[#d9e7f8]"><div>等待第一条发现</div><div style="margin-top:10px;font-size:14px;line-height:1.4;color:#8298b3;font-weight:800">源组发现目标组后，这里会立刻进入排行榜</div></div>';
+    }).join('') : `<div class="mw-b-empty-large flex min-h-[260px] flex-col items-center justify-center rounded-[26px] border border-[rgba(164,190,220,0.16)] bg-[linear-gradient(180deg,rgba(15,23,36,0.9),rgba(7,12,20,0.9))] text-center text-[28px] font-black leading-[1.25] text-[#d9e7f8]"><div>等待第一条事件</div><div style="margin-top:10px;font-size:14px;line-height:1.4;color:#8298b3;font-weight:800">${escapeHtml(runtimeVerb)} 发生后，这里会立刻进入排行榜</div></div>`;
     const groupRows = groupLeaderboard.length ? groupLeaderboard.map((item, index) => `
       <div class="flex items-center justify-between gap-3 rounded-[18px] border border-[rgba(182,205,232,0.14)] bg-[rgba(12,18,29,0.76)] px-4 py-3">
         <div class="min-w-0">
@@ -6886,7 +9255,7 @@
           </div>
         </div>
       </div>
-    `).join('') : '<div class="flex min-h-[160px] items-center justify-center rounded-[22px] border border-[rgba(164,190,220,0.14)] bg-[rgba(9,14,23,0.62)] text-[21px] font-black text-[#8298b3]">暂无发现播报</div>';
+    `).join('') : '<div class="flex min-h-[160px] items-center justify-center rounded-[22px] border border-[rgba(164,190,220,0.14)] bg-[rgba(9,14,23,0.62)] text-[21px] font-black text-[#8298b3]">暂无事件播报</div>';
     return `
       <style>
         .mw-b-layout{display:grid;grid-template-columns:minmax(920px,1fr) 300px;gap:16px;align-items:start;overflow-x:auto}
@@ -7033,19 +9402,20 @@
     const roomCountdownRemainingText = roomCountdownRemaining(room?.id);
     const prepareBusy = !!state.busy.publish || !!state.preparingRoomId;
     const runtimeSummary = roomRuntimeSummary(room);
-    const leaderboard = runtimeSummary.by_source.slice().sort((a, b) => b.count - a.count);
-    const groupLeaderboard = runtimeSummary.by_source_group.slice().sort((a, b) => b.count - a.count);
+    const leaderboard = runtimeSummary.primary_players.slice().sort((a, b) => b.count - a.count);
+    const groupLeaderboard = runtimeSummary.primary_groups.slice().sort((a, b) => b.count - a.count);
     const latest = runtimeSummary.latest || null;
+    const runtimeVerb = runtimeVerbForRoom(room);
     const sourceIds = Array.isArray(room?.source_group_ids) ? room.source_group_ids : [];
     const targetIds = Array.isArray(room?.target_group_ids) ? room.target_group_ids : [];
     const sourceMask = groupMaskFromIds(sourceIds);
     const targetMask = groupMaskFromIds(targetIds);
     const sourceText = sourceIds.length ? sourceIds.map((gid) => groupNameById(gid)).join(' / ') : '未选择源组';
     const targetText = targetIds.length ? targetIds.map((gid) => groupNameById(gid)).join(' / ') : '未选择目标组';
-    const sourceDevices = controllerDevices().filter((device) => (normalizeNumber(device?.group_mask, 0) & sourceMask) !== 0);
-    const targetDevices = controllerDevices().filter((device) => (normalizeNumber(device?.group_mask, 0) & targetMask) !== 0);
+    const sourceDevices = visibleControllerDevices().filter((device) => (normalizeNumber(device?.group_mask, 0) & sourceMask) !== 0);
+    const targetDevices = visibleControllerDevices().filter((device) => (normalizeNumber(device?.group_mask, 0) & targetMask) !== 0);
     const participantCount = Math.max(sourceDevices.length, leaderboard.length);
-    const onlineCount = controllerDevices().filter((device) => isDeviceOnline(device)).length;
+    const onlineCount = visibleControllerDevices().filter((device) => isDeviceOnline(device)).length;
     const retainedCount = retainedDeviceCount();
     const statusText = currentRoomStatusLabel();
     const statusClass = room?.status === 'running'
@@ -7105,7 +9475,7 @@
             </div>
             <div class="mw-tv-room-note">${escapeHtml(item.notes || item.template_name || '无备注')}</div>
             <div class="mw-tv-room-meta">
-              <span>${svgIcon('device')}${escapeHtml(participantCount || controllerDevices().length || 0)}</span>
+              <span>${svgIcon('device')}${escapeHtml(participantCount || visibleControllerDevices().length || 0)}</span>
               <span>${svgIcon('record')}${escapeHtml(summary.score_total)} 分</span>
             </div>
           </button>
@@ -7153,18 +9523,18 @@
           <strong>${escapeHtml(item.count)}</strong>
         </div>
       `;
-    }).join('') || '<div class="mw-tv-table-empty">等待源组玩家上榜</div>';
+    }).join('') || '<div class="mw-tv-table-empty">等待玩家上榜</div>';
     const discoveryRows = runtimeSummary.discoveries.length ? runtimeSummary.discoveries.slice(0, 6).map((event) => `
       <div class="mw-tv-event">
         <div class="mw-tv-event-time">${escapeHtml(formatClockTime(event.event_ms))}</div>
         <div class="mw-tv-event-main">
           <b>${escapeHtml(deviceLabelFromRuntime(event, 'self'))}</b>
-          <span>发现</span>
+          <span>${escapeHtml(runtimeVerb)}</span>
           <strong>${escapeHtml(deviceLabelFromRuntime(event, 'peer'))}</strong>
         </div>
         <div class="mw-tv-event-sub">${escapeHtml(groupLabelFromMask(event.self_group_mask))} -> ${escapeHtml(groupLabelFromMask(event.peer_group_mask))} · RSSI ${escapeHtml(event.rssi)} dBm</div>
       </div>
-    `).join('') : '<div class="mw-tv-event-empty">等待第一条发现事件</div>';
+    `).join('') : '<div class="mw-tv-event-empty">等待第一条事件</div>';
     const groupCards = groupSeeds.slice(0, 3).map((item, index) => {
       const tone = index === 0 ? 'gold' : index === 1 ? 'silver' : 'bronze';
       const memberCount = sourceIds.length
@@ -7185,6 +9555,7 @@
     return `
       <style>
         .mw-tv{min-width:1320px;padding:18px;background:radial-gradient(circle at 28% 4%,rgba(103,80,255,.22),transparent 34%),linear-gradient(180deg,#07102a,#08132c 42%,#071025);color:#f7fbff;border-radius:20px;box-shadow:0 28px 80px rgba(0,0,0,.42);font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif}
+        .mw-tv:fullscreen{width:100vw;min-width:0;min-height:100vh;border-radius:0;overflow:auto}
         .mw-tv *{box-sizing:border-box}
         .mw-tv-top{display:grid;grid-template-columns:270px minmax(0,1fr);gap:22px;align-items:center;margin-bottom:16px}
         .mw-tv-brand{height:96px;display:flex;align-items:center;gap:14px}
@@ -7288,8 +9659,10 @@
         .mw-tv-create{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(132,156,216,.2);border-radius:8px;background:rgba(37,55,104,.5);color:#b9c8f5}
         .mw-tv-create svg{width:17px;height:17px}
         .mw-tv-side-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
-        .mw-tv-action{height:40px;border:1px solid rgba(132,156,216,.18);border-radius:9px;background:rgba(17,31,70,.72);color:#d8e4ff;font-weight:900}
+        .mw-tv-action{height:40px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid rgba(132,156,216,.18);border-radius:9px;background:rgba(17,31,70,.72);color:#d8e4ff;font-weight:900}
+        .mw-tv-action svg{width:16px;height:16px}
         .mw-tv-action.primary{background:rgba(26,116,83,.54);color:#bdf7d4}
+        .mw-tv-action.presentation{grid-column:1/-1;background:linear-gradient(180deg,rgba(56,130,214,.86),rgba(37,92,165,.92));border-color:rgba(106,171,255,.34);color:#eef7ff}
         .mw-tv-action.danger{background:rgba(112,44,55,.48);color:#ffd0d8}
         .mw-tv-action:disabled{opacity:.42}
         .mw-tv-footer{height:56px;margin-top:16px;border:1px solid rgba(132,156,216,.14);border-radius:9px;background:rgba(16,29,67,.68);display:flex;align-items:center;justify-content:space-between;padding:0 28px;color:#9ea9c8;font-size:14px;font-weight:800}
@@ -7339,21 +9712,21 @@
                 <div class="mw-tv-card mw-tv-ranking">
                   <div class="mw-tv-podiums">${podiumCards}</div>
                   <div class="mw-tv-table">
-                    <div class="mw-tv-table-head"><span>排名</span><span>玩家</span><span>所属组</span><span>发现次数</span><span>积分</span></div>
+                    <div class="mw-tv-table-head"><span>排名</span><span>玩家</span><span>所属组</span><span>${escapeHtml(runtimeVerb)}次数</span><span>积分</span></div>
                     ${tableRows}
                   </div>
                   <div class="mw-tv-participants">共 ${escapeHtml(participantCount)} 名源组玩家参与 · 目标设备 ${escapeHtml(targetDevices.length)} 个</div>
                 </div>
                 <div class="mw-tv-card mw-tv-events">
-                  <div class="mw-tv-card-title"><b>最新发现</b><span>实时播报</span></div>
+                  <div class="mw-tv-card-title"><b>最新${escapeHtml(runtimeVerb)}</b><span>实时播报</span></div>
                   ${latest ? `
                     <div class="mw-tv-event">
                       <div class="mw-tv-event-time">${escapeHtml(formatClockTime(latest.event_ms))}</div>
-                      <div class="mw-tv-event-main"><b>${escapeHtml(deviceLabelFromRuntime(latest, 'self'))}</b><span>发现</span><strong>${escapeHtml(deviceLabelFromRuntime(latest, 'peer'))}</strong></div>
+                      <div class="mw-tv-event-main"><b>${escapeHtml(latest.line || formatRuntimeDiscovery(latest, room))}</b></div>
                       <div class="mw-tv-event-sub">${escapeHtml(groupLabelFromMask(latest.self_group_mask))} -> ${escapeHtml(groupLabelFromMask(latest.peer_group_mask))} · RSSI ${escapeHtml(latest.rssi)} dBm · +1 分</div>
                     </div>
-                  ` : '<div class="mw-tv-event-empty">等待源组发现目标组</div>'}
-                  <div class="mw-tv-card-title" style="margin-top:18px"><b>发现记录</b><span>${escapeHtml(runtimeSummary.discoveries.length)} 条</span></div>
+                  ` : `<div class="mw-tv-event-empty">等待${escapeHtml(runtimeVerb)}事件</div>`}
+                  <div class="mw-tv-card-title" style="margin-top:18px"><b>事件记录</b><span>${escapeHtml(runtimeSummary.discoveries.length)} 条</span></div>
                   ${discoveryRows}
                 </div>
               </div>
@@ -7372,6 +9745,7 @@
             </div>
             ${roomCards}
             <div class="mw-tv-side-actions">
+              <button class="mw-tv-action presentation" type="button" data-action="toggle-room-presentation">${svgIcon('eye')} ${state.roomPresentationMode ? '退出大屏' : '展示大屏'}</button>
               <button class="mw-tv-action" type="button" data-action="load-controller">读取状态</button>
               <button class="mw-tv-action" type="button" data-action="scan-devices">扫描设备</button>
               <button class="mw-tv-action" type="button" data-action="room-open-wizard" data-room-id="${escapeHtml(room?.id || '')}" ${room ? '' : 'disabled'}>${room?.status === 'draft' ? '编辑房间' : '查看房间'}</button>
@@ -7393,7 +9767,7 @@
             <span>设备在线：${escapeHtml(onlineCount)} / 已扫描 ${escapeHtml(retainedCount)}</span>
             <span>${validation.issues.length ? escapeHtml(validation.issues[0]) : '房间配置可用'}</span>
           </div>
-          <div class="mw-tv-version">Magic Wand 游戏系统 v1.0.0</div>
+          <div class="mw-tv-version">Magic Wand 游戏系统 v1.0.1</div>
         </div>
       </div>
     `;
@@ -7410,7 +9784,7 @@
     return `
       <div class="page-section-head">
         <div>
-          <h3>游戏设置</h3>
+          <h3>玩法预设</h3>
           <p>这里管理的是本局玩法模板。默认模板和用户模板分开显示；模板只决定玩法逻辑，具体的源组和目标组在游戏房间里选择。</p>
         </div>
         <div class="pill-actions">
@@ -7513,26 +9887,31 @@
     const stopBusy = !!state.busy.stopEffect;
     return `
       <div class="fixed inset-0 z-[150] flex items-center justify-center bg-[rgba(3,6,12,0.88)] px-4 py-8 backdrop-blur-[3px]">
-        <div class="w-full overflow-auto rounded-[20px] border border-[rgba(103,130,169,0.42)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.72)]" style="width:min(800px,calc(100vw - 48px));max-height:calc(100vh - 64px);background:#0d1520;">
+        <div class="w-full overflow-auto rounded-[20px] border border-[rgba(103,130,169,0.42)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.72)]" data-room-prepare-scroll-root style="width:min(800px,calc(100vw - 48px));max-height:calc(100vh - 64px);background:#0d1520;">
           <div class="flex items-start justify-between gap-3">
             <div>
               <h3 class="m-0 text-[18px] font-extrabold leading-none text-white">设备预备检查</h3>
-              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">当前房间「${escapeHtml(modal.roomName || '未命名房间')}」参与设备 ${devices.length} 台，在线 ${onlineCount} 台，待刷新 ${stale.length} 台，离线 ${offline.length} 台。</p>
+              <p class="mt-1.5 text-[12px] leading-[1.55] text-[#aabbd1]">当前房间「${escapeHtml(modal.roomName || '未命名房间')}」参与设备 ${devices.length} 台，在线 ${onlineCount} 台，需扫描确认 ${stale.length} 台，离线 ${offline.length} 台。</p>
             </div>
-            <button class="ghost-btn" type="button" data-action="cancel-room-prepare">返回检查</button>
+            <div class="flex shrink-0 flex-wrap justify-end gap-2">
+              <button class="ghost-btn bg-[linear-gradient(180deg,rgba(74,171,255,0.96),rgba(56,132,214,0.98))] text-white ${busy ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="confirm-room-prepare" ${busy ? 'disabled' : ''}>${busy ? '正在下发...' : '下发预备'}</button>
+              <button class="ghost-btn" type="button" data-action="cancel-room-prepare">返回检查</button>
+            </div>
           </div>
           <div class="mt-4 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.55] text-[#99acc5]">
-            设备预备会把本局配置下发到设备。扫描结果会保留，若设备显示“待刷新”，请点“再次扫描”确认现场状态。
+            设备预备会把本局配置下发到设备。扫描结果会保留，若设备显示“需扫描确认”，请点“再次扫描”确认现场状态。
           </div>
           <div class="mt-3 flex flex-wrap gap-2">
             ${makeChip(`参与设备 ${devices.length}`, true)}
             ${makeChip(`在线 ${onlineCount}`)}
-            ${makeChip(`待刷新 ${stale.length}`)}
+            ${makeChip(`需扫描确认 ${stale.length}`)}
             ${makeChip(`离线 ${offline.length}`)}
             ${makeChip(`分组 ${(Array.isArray(audit.groupIds) ? audit.groupIds : []).length}`)}
           </div>
           <div class="mt-3 flex flex-wrap gap-2">
+            <button class="ghost-btn bg-[linear-gradient(180deg,rgba(74,171,255,0.96),rgba(56,132,214,0.98))] text-white ${busy ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="confirm-room-prepare" ${busy ? 'disabled' : ''}>${busy ? '正在下发...' : '下发预备'}</button>
             <button class="ghost-btn ${busy || state.busy.scan ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="scan-devices" ${busy || state.busy.scan ? 'disabled' : ''}>${state.busy.scan ? '扫描中...' : '再次扫描'}</button>
+            <button class="ghost-btn ${state.busy.identify || !devices.length ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="identify-room-devices" data-room-id="${escapeHtml(modal.roomId || '')}" ${state.busy.identify || !devices.length ? 'disabled' : ''}>${svgIcon('device')}点名参与设备</button>
             <button class="ghost-btn bg-[linear-gradient(180deg,rgba(126,91,255,0.96),rgba(82,116,235,0.98))] text-white ${busy ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="test-room-effects" ${busy ? 'disabled' : ''}>${state.busy.testEffect ? '测试中...' : '测试效果'}</button>
             <button class="ghost-btn border-[rgba(255,142,142,0.34)] bg-[rgba(58,24,28,0.96)] text-[#ffd0d0] ${stopBusy ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="stop-room-test-effects" ${stopBusy ? 'disabled' : ''}>${stopBusy ? '停止中...' : '停止测试/熄灭'}</button>
           </div>
@@ -7577,7 +9956,10 @@
                     <div class="text-[12px] font-extrabold text-white">${escapeHtml(item.name || item.mac || '未知设备')}</div>
                     <div class="mt-1 text-[11px] leading-[1.45] text-[#9fb2c8]">${escapeHtml(item.mac || '')}</div>
                   </div>
-                  ${makePill(item.status || (item.online ? '在线' : item.retained ? '待刷新' : '离线'), item.online)}
+                  <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    ${makePill(item.status || (item.online ? '在线' : item.retained ? '需扫描确认' : '离线'), item.online)}
+                    ${normalizeNumber(item.idx, -1) >= 0 ? `<button class="table-btn" type="button" data-action="identify-device" data-idx="${escapeHtml(item.idx)}">${svgIcon('device')}点名</button>` : ''}
+                  </div>
                 </div>
                 <div class="mt-2 text-[11px] leading-[1.5] text-[#b8c7da]">所属分组：${escapeHtml((Array.isArray(item.groups) ? item.groups : []).join(' / ') || '无')}</div>
                 <div class="mt-1 text-[11px] leading-[1.5] text-[#8ea3bf]">RSSI ${escapeHtml(normalizeNumber(item.rssi, 0))} dBm · 上次扫描 ${escapeHtml(formatAgo(item.seen_ms))}</div>
@@ -7731,12 +10113,12 @@
             </div>
           ` : `
             <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <div class="field"><label>玩法功能包</label><select class="fake-select" data-role="template-form-input" data-template-form-field="feature_preset_id">${featureOptions}</select></div>
+              <div class="field"><label>玩法预设</label><select class="fake-select" data-role="template-form-input" data-template-form-field="feature_preset_id">${featureOptions}</select></div>
               <div class="field"><label>感应模式</label><select class="fake-select" data-role="template-form-input" data-template-form-field="sense_mode"><option value="ring" ${String(form.sense_mode || 'ring') === 'ring' ? 'selected' : ''}>轮巡</option><option value="shared" ${String(form.sense_mode || '') === 'shared' ? 'selected' : ''}>组共享</option><option value="response" ${String(form.sense_mode || '') === 'response' ? 'selected' : ''}>纯响应</option></select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">轮巡：每个组里的人都可以依次找到，找到后先停留约 2 秒再触发灯效；触发后本人不能再次触发。组共享：每个组里只要有一个人找到，先停留约 2 秒再触发灯效；触发后本组所有人都不能再次触发。纯响应：任何人都可以找到，先停留约 2 秒再触发灯效；触发后仍然可以重复触发。</div></div>
               <div class="field"><label>源组（单个 / 多个）</label><select class="fake-select" data-role="template-form-input" data-template-form-field="source_group_mode"><option value="single" ${roleModeValue(form.source_group_mode) === 'single' ? 'selected' : ''}>单个</option><option value="multi" ${roleModeValue(form.source_group_mode) === 'multi' ? 'selected' : ''}>多个</option></select></div>
               <div class="field"><label>目标组（单个 / 多个）</label><select class="fake-select" data-role="template-form-input" data-template-form-field="target_group_mode"><option value="single" ${roleModeValue(form.target_group_mode) === 'single' ? 'selected' : ''}>单个</option><option value="multi" ${roleModeValue(form.target_group_mode) === 'multi' ? 'selected' : ''}>多个</option></select></div>
-              <div class="field"><label>空闲灯效</label><select class="fake-select" data-role="template-form-input" data-template-form-field="idle_effect_id">${effectOptions}</select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">这里选模板默认待机时用的灯效，进房间后可以单独覆盖。</div></div>
-              <div class="field"><label>触发灯效</label><select class="fake-select" data-role="template-form-input" data-template-form-field="trigger_effect_id">${triggerEffectOptions}</select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">这里选模板默认触发时用的灯效，进房间后可以单独覆盖。</div></div>
+              <div class="field"><label>空闲灯效</label><select class="fake-select" data-role="template-form-input" data-template-form-field="idle_effect_id">${effectOptions}</select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">这里选玩法默认待机时用的灯效，进房间后可以单独覆盖。</div></div>
+              <div class="field"><label>触发灯效</label><select class="fake-select" data-role="template-form-input" data-template-form-field="trigger_effect_id">${triggerEffectOptions}</select><div class="mt-1 text-[10.5px] leading-[1.45] text-[#8fa3c1]">这里选玩法默认触发时用的灯效，进房间后可以单独覆盖。</div></div>
               <div class="field"><label>计分模式</label><select class="fake-select" data-role="template-form-input" data-template-form-field="scoring_mode">${scoringOptions}</select></div>
               <div class="field"><label>最大计数</label><input class="fake-input" data-role="template-form-input" data-template-form-field="scoring_max_find" value="${escapeHtml(form.scoring_max_find ?? 0)}"></div>
             </div>
@@ -7768,10 +10150,29 @@
     const templateSenseText = template.sense_mode || '未设置';
     const templateIdleEffectText = effectNameById(template.idle_effect_id || 'builtin-silent');
     const templateTriggerEffectText = effectNameById(template.trigger_effect_id || 'builtin-blink');
-    const templateSignalUi = featurePresetById(template.feature_preset_id)?.feature_ui?.signal_ui || {};
+    const playPreset = activePlayPresetForRoom(room);
+    const effectiveRule = roomEffectiveRuleConfig(room, playPreset);
+    const roomSignal = ruleSignalDefaultsForRoom(room, playPreset);
+    const roomSignalCompare = ruleSignalCompareForUi(roomSignal);
+    const roomTrigger = effectiveRule.trigger || {};
+    const roomScore = effectiveRule.score || {};
+    const roomRepeat = effectiveRule.repeat || {};
+    const roomAfter = effectiveRule.afterTrigger || {};
+    const roomMeter = effectiveRule.feedback?.signalMeter || {};
+    const sourceDevicesForBinding = roomBindingCandidates(room, 'source');
+    const targetDevicesForBinding = roomBindingCandidates(room, 'target');
+    const needsPairBinding = roomUsesSpecifiedPair(room);
+    if (needsPairBinding) syncRoomMatchBindings(room);
     const templateScoreText = template.scoring && typeof template.scoring === 'object' && template.scoring.mode
       ? String(template.scoring.mode)
       : '未设置';
+    const playPresetRelationText = `${relationModeLabel(playPreset?.relation?.mode)} / ${matchModeLabel(playPreset?.relation?.match)}`;
+    const ruleScoreText = scoreSummaryText(roomScore);
+    const sourceIdleEffectText = roomEffectFieldSummary(room, 'source_idle_effect_id', room.idle_effect_id || template.idle_effect_id || 'builtin-silent');
+    const sourceTriggerEffectText = roomEffectFieldSummary(room, 'source_trigger_effect_id', room.trigger_effect_id || template.trigger_effect_id || 'builtin-blink');
+    const targetIdleEffectText = roomEffectFieldSummary(room, 'target_idle_effect_id', 'builtin-silent');
+    const targetTriggerEffectText = roomEffectFieldSummary(room, 'target_trigger_effect_id', room.trigger_effect_id || template.trigger_effect_id || 'builtin-blink');
+    const selectedDeviceCount = roomSelectedDevices(room).length;
     const steps = [
       {
         key: 'room',
@@ -7781,8 +10182,8 @@
       },
       {
         key: 'template',
-        label: '选择模板',
-        desc: '从已经准备好的游戏模板里挑一个作为本局起点。',
+        label: '选择玩法',
+        desc: '从玩法预设里挑一个作为本局规则起点；本局参数可以单独覆盖。',
         icon: 'copy',
       },
       {
@@ -7792,11 +10193,23 @@
         icon: 'group',
       },
       {
+        key: 'rules',
+        label: '本局规则',
+        desc: '本局可以覆盖 RSSI、触发模式、计分对象和重复规则，不会改掉玩法预设本身。',
+        icon: 'gear',
+      },
+      {
+        key: 'binding',
+        label: '配对 / 归属',
+        desc: '按玩法需要设置指定配对，或查看竞争归属的固定判定方式。',
+        icon: 'device',
+      },
+      {
         key: 'effects',
         label: '灯效矩阵',
         desc: '为每个源组和目标组的组合设置空闲灯效与触发灯效，并可直接预览。',
         icon: 'effect',
-      },
+          },
       {
         key: 'confirm',
         label: '确认保存',
@@ -7810,6 +10223,9 @@
     };
     const roomNameMissing = !String(room.name || '').trim();
     const selectedTemplateSelected = template.id === state.selectedTemplateId;
+    const wizardSaveDisabled = step >= WIZARD_STEP_MAX && roomNameMissing;
+    const wizardSaveDisabledClass = wizardSaveDisabled ? 'opacity-45 pointer-events-none' : '';
+    const wizardSaveDisabledAttr = wizardSaveDisabled ? 'disabled' : '';
     const footerBtnBase = 'inline-flex h-8 w-max flex-none min-w-[122px] items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-bold leading-none whitespace-nowrap transition hover:brightness-105 active:translate-y-px';
     const footerBtnPrimary = 'inline-flex h-8 w-max flex-none min-w-[128px] items-center justify-center gap-1.5 rounded-full border-0 px-3.5 py-1.5 text-[11px] font-extrabold leading-none whitespace-nowrap text-white transition hover:brightness-105 active:translate-y-px';
     const footerBtnLabel = (icon, text) => `<span class="inline-flex items-center gap-1.5 whitespace-nowrap leading-none">${svgIcon(icon)}<span>${escapeHtml(text)}</span></span>`;
@@ -7917,7 +10333,7 @@
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div class="text-[12px] font-extrabold text-white">目标组：${escapeHtml(groupNameById(targetId))}</div>
-                <div class="mt-1 text-[11px] leading-[1.45] text-[#9fb2c8]">目标组空闲默认静默；每个源组到这个目标组都可以单独覆盖。</div>
+                <div class="mt-1 text-[11px] leading-[1.45] text-[#9fb2c8]">目标组空闲默认静默；每个源组到这个目标组都可以单独覆盖。若本局启用信号强度指示灯，所选 LED 路会优先显示信号条。</div>
               </div>
               ${makePill(`${targetRules.length} 条规则`, true)}
             </div>
@@ -7952,7 +10368,7 @@
                   <span class="text-[19px] leading-none text-[#7ec6ff]">${svgIcon('room')}</span>
                   <div>
                     <h2 class="m-0 text-[19px] font-extrabold leading-[1.08]">向导开局</h2>
-                    <p class="mt-1 max-w-[920px] text-[11.5px] leading-[1.5] text-[#c4d1e3]">一步一步创建房间：先填名字，再选模板，接着选本局参与的设备组和目标组，最后保存为草稿。复杂规则留在游戏设置和模板里，这里只负责开局准备。</p>
+                    <p class="mt-1 max-w-[920px] text-[11.5px] leading-[1.5] text-[#c4d1e3]">一步一步创建房间：先填名字，再选玩法预设，然后选设备组、覆盖本局规则、处理配对或归属，最后保存为草稿。玩法预设定义默认规则，房间只负责这一次开局。</p>
                   </div>
                 </div>
               </div>
@@ -7961,7 +10377,7 @@
                 <button class="${footerBtnBase} border-[rgba(88,116,154,0.3)] bg-[rgba(24,33,47,0.96)] px-3 text-[#dce8f7]" type="button" data-action="wizard-close">${svgIcon('pause')}退出向导</button>
               </div>
             </div>
-            <div class="mt-4 grid gap-2 overflow-x-auto pb-1 sm:grid-cols-2" style="grid-template-columns:repeat(5,minmax(190px,1fr));">
+            <div class="mt-4 grid gap-2 overflow-x-auto pb-1 sm:grid-cols-2" style="grid-template-columns:repeat(7,minmax(190px,1fr));">
               ${steps.map((item, idx) => renderStepBadge(idx, item)).join('')}
             </div>
           </section>
@@ -7974,9 +10390,9 @@
                   <p class="mt-1.5 max-w-[860px] text-[12px] leading-[1.45] text-[#aabbd1]">${escapeHtml(steps[step]?.desc || '')}</p>
                 </div>
                 <div class="flex flex-wrap justify-end gap-2">
-                  ${makePill(`步骤 ${step + 1}/5`, true)}
+                  ${makePill(`步骤 ${step + 1}/7`, true)}
                   ${makePill(`房间 ${escapeHtml(currentRoomStatusLabel())}`)}
-                  ${makePill(`模板 ${escapeHtml(selectedTemplateName())}`)}
+                  ${makePill(`玩法 ${escapeHtml(selectedTemplateName())}`)}
                 </div>
               </div>
 
@@ -7989,32 +10405,6 @@
                   <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
                     <div class="text-[11px] font-bold text-[#c7d5eb]">房间备注</div>
                     <textarea class="mt-2 min-h-[132px] w-full resize-y rounded-[14px] border border-[rgba(88,116,154,0.28)] bg-[rgba(12,18,28,0.92)] px-3 py-2.5 text-[12px] leading-[1.55] text-[#f5f8ff] outline-none transition placeholder:text-[#7184a1] focus:border-[rgba(103,174,254,0.5)]" data-role="wizard-room-notes" placeholder="记录本局说明、临时备注、NPC 提示等。">${escapeHtml(room.notes || '')}</textarea>
-                  </div>
-                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5 xl:col-span-2">
-                    <div class="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <div class="text-[11px] font-bold text-[#c7d5eb]">本局触发条件</div>
-                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">默认继承功能包，可在当前房间覆盖。大于等于表示越近越容易触发；小于等于用于弱信号/远离类玩法。</div>
-                      </div>
-                      ${makePill(triggerConditionText(room.trigger_compare ?? templateSignalUi.trigger_compare, room.trigger_signal_rssi ?? templateSignalUi.trigger_rssi_threshold, room.trigger_hold_ms ?? templateSignalUi.trigger_hold_ms), true)}
-                    </div>
-                    <div class="mt-3 grid gap-2 md:grid-cols-3">
-                      <label class="min-w-0">
-                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">比较方向</span>
-                        <select class="fake-select h-9 w-full px-2 text-[12px]" data-role="wizard-trigger-compare">
-                          <option value="gte" ${triggerCompareValue(room.trigger_compare ?? templateSignalUi.trigger_compare) === 'gte' ? 'selected' : ''}>大于等于</option>
-                          <option value="lte" ${triggerCompareValue(room.trigger_compare ?? templateSignalUi.trigger_compare) === 'lte' ? 'selected' : ''}>小于等于</option>
-                        </select>
-                      </label>
-                      <label class="min-w-0">
-                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">RSSI 阈值（dBm）</span>
-                        <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-trigger-rssi" type="number" step="1" value="${escapeHtml(normalizeNumber(room.trigger_signal_rssi ?? templateSignalUi.trigger_rssi_threshold, DEFAULT_TRIGGER_RSSI))}">
-                      </label>
-                      <label class="min-w-0">
-                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">持续时间（ms）</span>
-                        <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-trigger-hold" type="number" step="50" value="${escapeHtml(normalizeNumber(room.trigger_hold_ms ?? templateSignalUi.trigger_hold_ms, DEFAULT_TRIGGER_HOLD_MS))}">
-                      </label>
-                    </div>
                   </div>
                   <div class="rounded-[18px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3.5 xl:col-span-2">
                     <div class="flex flex-wrap items-center justify-between gap-2">
@@ -8031,8 +10421,8 @@
                   <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
                   <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="min-w-0">
-                      <div class="text-[11px] font-bold text-[#c7d5eb]">当前选中模板</div>
-                      <div class="mt-1 text-[15px] font-extrabold leading-[1.1] text-white">${escapeHtml(template.name || '未选择模板')}</div>
+                      <div class="text-[11px] font-bold text-[#c7d5eb]">当前选中玩法</div>
+                      <div class="mt-1 text-[15px] font-extrabold leading-[1.1] text-white">${escapeHtml(template.name || '未选择玩法')}</div>
                       <div class="mt-1.5 max-w-[860px] text-[12px] leading-[1.5] text-[#aabbd1]">${escapeHtml(template.note || '无备注')}</div>
                     </div>
                     <div class="flex flex-wrap justify-end gap-2">
@@ -8041,10 +10431,10 @@
                     </div>
                   </div>
                     <div class="mt-3 flex flex-wrap gap-2">
-                      ${makeChip(`源组 ${escapeHtml(roleModeLabel(templateSourceMode))}`)}
-                      ${makeChip(`目标组 ${escapeHtml(roleModeLabel(templateTargetMode))}`)}
+                      ${makeChip(`关系 ${playPresetRelationText}`)}
+                      ${makeChip(triggerSummaryText({ trigger: roomTrigger }))}
+                      ${makeChip(ruleScoreText)}
                       ${makeChip(`感应 ${escapeHtml(templateSenseText)}`)}
-                      ${makeChip(`计分 ${escapeHtml(templateScoreText)}`)}
                       ${makeChip(`空闲 ${escapeHtml(templateIdleEffectText)}`)}
                       ${makeChip(`触发 ${escapeHtml(templateTriggerEffectText)}`)}
                     </div>
@@ -8052,16 +10442,16 @@
                   <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
                     <div class="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <div class="text-[11px] font-bold text-[#c7d5eb]">可选模板</div>
-                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">点击模板卡即可切换本局模板，模板只记录玩法逻辑，具体分组在下一步房间里选。</div>
+                        <div class="text-[11px] font-bold text-[#c7d5eb]">可选玩法预设</div>
+                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">点击玩法卡即可切换本局玩法。玩法预设定义规则，设备分组和本局参数在房间里单独设置。</div>
                       </div>
-                      ${makePill(`共 ${state.localState.templates.length || 0} 个模板`, true)}
+                      ${makePill(`共 ${state.localState.templates.length || 0} 个玩法`, true)}
                     </div>
                     <div class="mt-3 grid gap-2 lg:grid-cols-2">
-                      ${renderTemplateCards({ compact: true, showActions: false }) || '<div class="text-[#93a6c2]">暂无模板。</div>'}
+                      ${renderTemplateCards({ compact: true, showActions: false }) || '<div class="text-[#93a6c2]">暂无玩法预设。</div>'}
                     </div>
                     <div class="mt-3 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.5] text-[#99acc5]">
-                      选中后会直接作为这次房间的默认模板，后续还能在“游戏模板”里继续编辑和新增。
+                      选中后只作为这次房间的玩法来源。需要改通用默认参数时，到“玩法预设”页基于系统预设新建，或编辑“我的玩法预设”。
                     </div>
                   </div>
                 </section>
@@ -8096,12 +10486,196 @@
                   </div>
                 </section>
 
-                <section class="${step === 3 ? '' : 'hidden'} grid gap-3">
+                <section class="${step === 3 ? '' : 'hidden'} grid gap-3 xl:grid-cols-2">
+                  <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5 xl:col-span-2">
+                    <div class="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div class="text-[11px] font-bold text-[#c7d5eb]">本局规则覆盖</div>
+                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">默认继承玩法预设，但只对当前房间生效。同一个玩法可以开多个房间，各自用不同的 RSSI、持续时间和计分规则。</div>
+                      </div>
+                      ${makePill(triggerConditionText(roomSignalCompare, roomSignal.rssiMin, roomSignal.holdMs), true)}
+                    </div>
+                    <div class="mt-3 grid gap-2 md:grid-cols-3">
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">RSSI 条件</span>
+                        <select class="fake-select h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="signal" data-rule-field="type">
+                          <option value="enter_range" ${String(roomSignal.type || 'enter_range') === 'enter_range' ? 'selected' : ''}>进入范围</option>
+                          <option value="leave_range" ${String(roomSignal.type || '') === 'leave_range' ? 'selected' : ''}>离开范围</option>
+                          <option value="stay_in_range" ${String(roomSignal.type || '') === 'stay_in_range' ? 'selected' : ''}>保持在范围内</option>
+                          <option value="appeared" ${String(roomSignal.type || '') === 'appeared' ? 'selected' : ''}>从无到有</option>
+                          <option value="lost" ${String(roomSignal.type || '') === 'lost' ? 'selected' : ''}>从有到无</option>
+                          <option value="stronger" ${String(roomSignal.type || '') === 'stronger' ? 'selected' : ''}>信号变强</option>
+                          <option value="weaker" ${String(roomSignal.type || '') === 'weaker' ? 'selected' : ''}>信号变弱</option>
+                        </select>
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">RSSI 下限（dBm）</span>
+                        <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="signal" data-rule-field="rssiMin" type="number" step="1" value="${escapeHtml(normalizeNumber(roomSignal.rssiMin, DEFAULT_TRIGGER_RSSI))}">
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">RSSI 上限（可空）</span>
+                        <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="signal" data-rule-field="rssiMax" type="number" step="1" value="${escapeHtml(roomSignal.rssiMax ?? '')}">
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">持续时间（ms）</span>
+                        <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="signal" data-rule-field="holdMs" type="number" step="50" value="${escapeHtml(normalizeNumber(roomSignal.holdMs, DEFAULT_TRIGGER_HOLD_MS))}">
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">触发模式</span>
+                        <select class="fake-select h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="trigger" data-rule-field="mode">
+                          <option value="instant" ${String(roomTrigger.mode || 'instant') === 'instant' ? 'selected' : ''}>立即触发</option>
+                          <option value="continuous" ${String(roomTrigger.mode || '') === 'continuous' ? 'selected' : ''}>连续达标</option>
+                          <option value="accumulate" ${String(roomTrigger.mode || '') === 'accumulate' ? 'selected' : ''}>累计达标</option>
+                          <option value="count" ${String(roomTrigger.mode || '') === 'count' ? 'selected' : ''}>次数达标</option>
+                          <option value="periodic" ${String(roomTrigger.mode || '') === 'periodic' ? 'selected' : ''}>周期计分</option>
+                        </select>
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">目标时间（ms）</span>
+                        <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="trigger" data-rule-field="targetMs" type="number" step="50" value="${escapeHtml(normalizeNumber(roomTrigger.targetMs, 0))}">
+                      </label>
+                    </div>
+                    <div class="mt-3 grid gap-2 md:grid-cols-3">
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">计分对象</span>
+                        <select class="fake-select h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="score" data-rule-field="target">
+                          <option value="source_player" ${String(roomScore.target || 'source_player') === 'source_player' ? 'selected' : ''}>源玩家</option>
+                          <option value="source_group" ${String(roomScore.target || '') === 'source_group' ? 'selected' : ''}>源小组</option>
+                          <option value="target_player" ${String(roomScore.target || '') === 'target_player' ? 'selected' : ''}>目标玩家</option>
+                          <option value="target_group" ${String(roomScore.target || '') === 'target_group' ? 'selected' : ''}>目标小组</option>
+                          <option value="both_players" ${String(roomScore.target || '') === 'both_players' ? 'selected' : ''}>双方玩家</option>
+                          <option value="both_groups" ${String(roomScore.target || '') === 'both_groups' ? 'selected' : ''}>双方小组</option>
+                          <option value="none" ${String(roomScore.target || '') === 'none' ? 'selected' : ''}>不计分，只触发灯效</option>
+                        </select>
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">分数</span>
+                        <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="score" data-rule-field="points" type="number" step="1" value="${escapeHtml(normalizeNumber(roomScore.points, 1))}">
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">重复规则</span>
+                        <select class="fake-select h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="repeat" data-rule-field="mode">
+                          <option value="allow_repeat" ${String(roomRepeat.mode || '') === 'allow_repeat' ? 'selected' : ''}>允许重复</option>
+                          <option value="once_per_pair" ${String(roomRepeat.mode || 'once_per_pair') === 'once_per_pair' ? 'selected' : ''}>每对设备只算一次</option>
+                          <option value="once_per_target" ${String(roomRepeat.mode || '') === 'once_per_target' ? 'selected' : ''}>每个目标只算一次（实验）</option>
+                          <option value="once_per_source" ${String(roomRepeat.mode || '') === 'once_per_source' ? 'selected' : ''}>每个源设备只算一次</option>
+                          <option value="cooldown" ${String(roomRepeat.mode || '') === 'cooldown' ? 'selected' : ''}>冷却后可重复</option>
+                        </select>
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">冷却（ms）</span>
+                        <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="repeat" data-rule-field="cooldownMs" type="number" step="50" value="${escapeHtml(normalizeNumber(roomRepeat.cooldownMs, 5000))}">
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">触发后处理</span>
+                        <select class="fake-select h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="afterTrigger" data-rule-field="targetState">
+                          <option value="none" ${String(roomAfter.targetState || 'none') === 'none' ? 'selected' : ''}>无处理</option>
+                          <option value="cooldown" ${String(roomAfter.targetState || '') === 'cooldown' ? 'selected' : ''}>冷却</option>
+                          <option value="disabled" ${String(roomAfter.targetState || '') === 'disabled' ? 'selected' : ''}>目标失效（实验）</option>
+                          <option value="locked" ${String(roomAfter.targetState || '') === 'locked' ? 'selected' : ''}>目标锁定</option>
+                        </select>
+                      </label>
+                      <label class="min-w-0">
+                        <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">计时处理</span>
+                        <select class="fake-select h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="afterTrigger" data-rule-field="timerAction">
+                          <option value="none" ${String(roomAfter.timerAction || 'none') === 'none' ? 'selected' : ''}>无处理</option>
+                          <option value="reset" ${String(roomAfter.timerAction || '') === 'reset' ? 'selected' : ''}>计时清零</option>
+                          <option value="pause" ${String(roomAfter.timerAction || '') === 'pause' ? 'selected' : ''}>计时暂停</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="mt-3 rounded-[16px] border border-[rgba(88,116,154,0.22)] bg-[rgba(9,14,22,0.68)] p-3">
+                      <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div class="text-[12px] font-extrabold text-white">信号强度指示灯</div>
+                          <div class="mt-1 text-[11px] leading-[1.5] text-[#9fb2c8]">可选一条 LED 路给寻找者显示最近目标信号强度。寻宝/占点类目标设备不会显示信号条；没有收到目标信号时不亮。</div>
+                        </div>
+                        <label class="inline-flex items-center gap-2 rounded-full border border-[rgba(88,116,154,0.26)] bg-[rgba(18,25,36,0.9)] px-3 py-2 text-[11px] font-bold text-[#dbe7f8]">
+                          <input type="checkbox" class="accent-[#63a6ff]" data-role="wizard-rule-field" data-rule-section="feedback" data-rule-field="meterEnabled" ${roomMeter.enabled === true ? 'checked' : ''}>
+                          启用
+                        </label>
+                      </div>
+                      <div class="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+                        <label class="min-w-0">
+                          <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">LED 路</span>
+                          <select class="fake-select h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="feedback" data-rule-field="meterPort">
+                            <option value="1" ${normalizeNumber(roomMeter.port, 1) === 1 ? 'selected' : ''}>LED1</option>
+                            <option value="2" ${normalizeNumber(roomMeter.port, 1) === 2 ? 'selected' : ''}>LED2</option>
+                            <option value="3" ${normalizeNumber(roomMeter.port, 1) === 3 ? 'selected' : ''}>LED3</option>
+                          </select>
+                        </label>
+                        <label class="min-w-0">
+                          <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">显示灯珠数</span>
+                          <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="feedback" data-rule-field="meterLedCount" type="number" min="1" max="200" step="1" value="${escapeHtml(normalizeNumber(roomMeter.ledCount, 10))}">
+                        </label>
+                        <label class="min-w-0">
+                          <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">弱信号 dBm</span>
+                          <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="feedback" data-rule-field="meterWeakRssi" type="number" step="1" value="${escapeHtml(normalizeNumber(roomMeter.weakRssi, -90))}">
+                        </label>
+                        <label class="min-w-0">
+                          <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">满格信号 dBm</span>
+                          <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="feedback" data-rule-field="meterStrongRssi" type="number" step="1" value="${escapeHtml(normalizeNumber(roomMeter.strongRssi, normalizeNumber(roomSignal.rssiMin, DEFAULT_TRIGGER_RSSI)))}">
+                        </label>
+                        <label class="min-w-0">
+                          <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">压缩比例</span>
+                          <input class="fake-input h-9 w-full px-2 text-[12px]" data-role="wizard-rule-field" data-rule-section="feedback" data-rule-field="meterCompression" type="number" min="20" max="500" step="10" value="${escapeHtml(normalizeNumber(roomMeter.compressionX100, 100))}">
+                          <span class="mt-1 block text-[10px] leading-[1.35] text-[#8fa3c1]">100=线性，160=强信号压缩</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="${step === 4 ? '' : 'hidden'} grid gap-3">
+                  ${needsPairBinding ? `
+                    <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                      <div class="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div class="text-[11px] font-bold text-[#c7d5eb]">指定配对</div>
+                          <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">这个玩法要求明确“谁对谁”。每台源设备都需要指定一个目标设备，控制端和接收端会按这份配对表运行。</div>
+                        </div>
+                        ${makePill(`源设备 ${sourceDevicesForBinding.length} / 目标设备 ${targetDevicesForBinding.length}`, true)}
+                      </div>
+                      <div class="mt-3 grid gap-2">
+                        ${sourceDevicesForBinding.length ? sourceDevicesForBinding.map((source) => {
+                          const binding = (room.match_bindings || []).find((item) => String(item.source_mac || '').trim().toUpperCase() === source.mac) || {};
+                          return `
+                            <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] p-3">
+                              <div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(220px,0.9fr)]">
+                                <div>
+                                  <div class="text-[12px] font-extrabold text-white">${escapeHtml(source.name)}</div>
+                                  <div class="mt-1 text-[11px] leading-[1.5] text-[#9fb2c8]">${escapeHtml(source.group_name)} · ${escapeHtml(source.mac)}</div>
+                                </div>
+                                <label class="min-w-0">
+                                  <span class="mb-1 block text-[10px] font-bold text-[#8ea3bf]">目标设备</span>
+                                  <select class="fake-select h-9 w-full px-2 text-[12px]" data-role="wizard-match-binding" data-source-mac="${escapeHtml(source.mac)}">
+                                    ${targetDevicesForBinding.map((target) => `<option value="${escapeHtml(target.mac)}" ${String(binding.target_mac || '') === String(target.mac) ? 'selected' : ''}>${escapeHtml(target.name)} · ${escapeHtml(target.group_name)}</option>`).join('')}
+                                  </select>
+                                </label>
+                              </div>
+                            </div>
+                          `;
+                        }).join('') : '<div class="rounded-[16px] border border-dashed border-[rgba(88,116,154,0.24)] bg-[rgba(14,20,31,0.82)] px-4 py-5 text-[12px] leading-[1.6] text-[#9fb2c8]">先回上一步把源组和目标组选好，这里才会出现设备配对。</div>'}
+                      </div>
+                    </div>
+                  ` : `
+                    <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
+                      <div class="text-[11px] font-bold text-[#c7d5eb]">玩法归属说明</div>
+                      <div class="mt-2 text-[12px] leading-[1.6] text-[#aabbd1]">
+                        ${String(playPreset?.baseTemplate || '') === 'competition_score'
+                          ? '当前竞争归属玩法固定采用“最强 RSSI 且仅当前最强者累计占领时间”的策略。目标设备负责判定归属，控制端只做汇总。'
+                          : '这个玩法不需要额外配对。开始游戏后，接收端会按已选源组 / 目标组和本局规则自主运行。'}
+                      </div>
+                    </div>
+                  `}
+                </section>
+
+                <section class="${step === 5 ? '' : 'hidden'} grid gap-3">
                   <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
                     <div class="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <div class="text-[11px] font-bold text-[#c7d5eb]">批量应用</div>
-                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">先用这里统一设一遍，再单独微调某几个源组和目标组的组合。</div>
+                        <div class="mt-1 text-[12px] leading-[1.5] text-[#aabbd1]">空闲灯效指游戏 START 后，设备已进入本局、尚未触发成功、且没有处于测试/点名/停止状态时显示的背景灯效；触发成功后播放触发灯效，停止游戏后熄灭。</div>
                       </div>
                       ${makePill(`${Array.isArray(room.effect_rules) ? room.effect_rules.length : 0} 条矩阵规则`, true)}
                     </div>
@@ -8131,20 +10705,24 @@
                   </div>
                 </section>
 
-                <section class="${step === 4 ? '' : 'hidden'} grid gap-3 xl:grid-cols-2">
+                <section class="${step === 6 ? '' : 'hidden'} grid gap-3 xl:grid-cols-2">
                   <div class="rounded-[18px] border border-[rgba(88,116,154,0.22)] bg-[rgba(14,20,31,0.9)] p-3.5">
                     <div class="text-[11px] font-bold text-[#c7d5eb]">本局摘要</div>
                     <div class="mt-2 space-y-2 text-[12px] leading-[1.5] text-[#dbe5f6]">
                       <div>房间：<span class="font-bold text-white">${escapeHtml(room.name || '未命名房间')}</span></div>
-                      <div>模板：<span class="font-bold text-white">${escapeHtml(template.name || '未选择模板')}</span></div>
+                      <div>玩法：<span class="font-bold text-white">${escapeHtml(template.name || '未选择玩法')}</span></div>
                       <div>源组：<span class="font-bold text-white">${escapeHtml(summaryGroups(room.source_group_ids || []))}</span></div>
                       <div>目标组：<span class="font-bold text-white">${escapeHtml(summaryGroups(room.target_group_ids || []))}</span></div>
                       <div>感应：<span class="font-bold text-white">${escapeHtml(room.sense_mode || templateSenseText || '未设置')}</span></div>
-                      <div>触发条件：<span class="font-bold text-white">${escapeHtml(triggerConditionText(room.trigger_compare ?? templateSignalUi.trigger_compare, room.trigger_signal_rssi ?? templateSignalUi.trigger_rssi_threshold, room.trigger_hold_ms ?? templateSignalUi.trigger_hold_ms))}</span></div>
-                      <div>空闲灯效：<span class="font-bold text-white">${escapeHtml(effectNameById(room.idle_effect_id || template.idle_effect_id || ''))}</span></div>
-                      <div>触发灯效：<span class="font-bold text-white">${escapeHtml(effectNameById(room.trigger_effect_id || template.trigger_effect_id || ''))}</span></div>
+                      <div>本局规则：<span class="font-bold text-white">${escapeHtml(signalSummaryText({ signal: roomSignal }))}</span></div>
+                      <div>触发模式：<span class="font-bold text-white">${escapeHtml(triggerModeLabel(roomTrigger.mode))}</span></div>
+                      <div>计分：<span class="font-bold text-white">${escapeHtml(ruleScoreText)}</span></div>
+                      <div>重复规则：<span class="font-bold text-white">${escapeHtml(repeatModeLabel(roomRepeat.mode))}</span></div>
+                      <div>源组空闲：<span class="font-bold text-white">${escapeHtml(sourceIdleEffectText)}</span></div>
+                      <div>源组触发：<span class="font-bold text-white">${escapeHtml(sourceTriggerEffectText)}</span></div>
+                      <div>目标组空闲：<span class="font-bold text-white">${escapeHtml(targetIdleEffectText)}</span></div>
+                      <div>目标组触发：<span class="font-bold text-white">${escapeHtml(targetTriggerEffectText)}</span></div>
                       <div>灯效矩阵：<span class="font-bold text-white">${escapeHtml(Array.isArray(room.effect_rules) ? room.effect_rules.length : 0)} 条</span></div>
-                      <div>计分：<span class="font-bold text-white">${escapeHtml(room.scoring && room.scoring.mode ? String(room.scoring.mode) : templateScoreText)}</span></div>
                       <div>保存状态：<span class="font-bold text-white">${escapeHtml(room.status === 'draft' ? '未保存，仅本地草稿' : '已保存为草稿')}</span></div>
                       <div>备注：<span class="font-bold text-white">${escapeHtml(room.notes || '无')}</span></div>
                     </div>
@@ -8153,8 +10731,8 @@
                     <div class="text-[11px] font-bold text-[#c7d5eb]">保存前检查</div>
                     <div class="mt-2 space-y-2 text-[12px] leading-[1.5] text-[#dbe5f6]">
                       <div>房间名称：${roomNameMissing ? '<span class="font-bold text-[#f5c95f]">未填写</span>' : '<span class="font-bold text-[#68d792]">已填写</span>'}</div>
-                      <div>模板：<span class="font-bold text-white">${escapeHtml(template.name || '未选择')}</span></div>
-                      <div>设备数量：<span class="font-bold text-white">${controllerDevices().length} 台</span></div>
+                      <div>玩法：<span class="font-bold text-white">${escapeHtml(template.name || '未选择')}</span></div>
+                      <div>本局设备：<span class="font-bold text-white">${selectedDeviceCount} 台</span></div>
                       <div>分组数量：<span class="font-bold text-white">${groups.length} 个</span></div>
                     </div>
                     <div class="mt-3 rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(9,14,22,0.68)] px-3 py-2 text-[11px] leading-[1.5] text-[#99acc5]">
@@ -8167,10 +10745,10 @@
               <div class="mt-4 flex flex-nowrap items-center justify-between gap-2 overflow-x-auto border-t border-[rgba(88,116,154,0.16)] pt-3">
                 <div class="flex flex-nowrap gap-2">
                   <button class="${footerBtnBase} border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] text-[#dbe5f4] ${step === 0 ? 'opacity-40 pointer-events-none' : ''}" type="button" data-action="wizard-prev">${footerBtnLabel('refresh', '上一步')}</button>
-                  <button class="${footerBtnBase} border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] text-[#dbe5f4]" type="button" data-action="wizard-save-draft">${footerBtnLabel('save', '保存设置')}</button>
+                  <button class="${footerBtnBase} border-[rgba(88,116,154,0.28)] bg-[rgba(24,33,47,0.92)] text-[#dbe5f4] ${wizardSaveDisabledClass}" type="button" data-action="wizard-save-draft" ${wizardSaveDisabledAttr}>${footerBtnLabel('save', '保存设置')}</button>
                 </div>
                 <div class="flex flex-nowrap gap-2">
-                  ${step < WIZARD_STEP_MAX ? `<button class="${footerBtnPrimary} bg-gradient-to-b from-[#4caeff] to-[#428fe0]" type="button" data-action="wizard-next">${footerBtnLabel('arrow', '下一步')}</button>` : `<button class="${footerBtnPrimary} bg-gradient-to-b from-[#62d89a] to-[#48bb7c] ${roomNameMissing ? 'opacity-45 pointer-events-none' : ''}" type="button" data-action="wizard-save-draft" ${roomNameMissing ? 'disabled' : ''}>${footerBtnLabel('save', '保存设置')}</button>`}
+                  ${step < WIZARD_STEP_MAX ? `<button class="${footerBtnPrimary} bg-gradient-to-b from-[#4caeff] to-[#428fe0]" type="button" data-action="wizard-next">${footerBtnLabel('arrow', '下一步')}</button>` : `<button class="${footerBtnPrimary} bg-gradient-to-b from-[#62d89a] to-[#48bb7c] ${wizardSaveDisabledClass}" type="button" data-action="wizard-save-draft" ${wizardSaveDisabledAttr}>${footerBtnLabel('save', '保存设置')}</button>`}
                 </div>
               </div>
             </div>
@@ -8181,7 +10759,7 @@
                   <h3 class="m-0 text-[17px] font-extrabold leading-none">向导摘要</h3>
                   <p class="mt-1.5 text-[12px] leading-[1.45] text-[#aabbd1]">这里展示当前选择，方便 NPC 快速确认本局配置。</p>
                 </div>
-                ${makePill(`步骤 ${step + 1}/5`, true)}
+                ${makePill(`步骤 ${step + 1}/7`, true)}
               </div>
               <div class="grid gap-2.5">
                 <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
@@ -8189,12 +10767,16 @@
                   <div class="mt-1 text-[13px] font-extrabold text-white">${escapeHtml(room.name || '未命名房间')}</div>
                 </div>
                 <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
-                  <div class="text-[11px] font-bold text-[#c7d5eb]">模板</div>
-                  <div class="mt-1 text-[13px] font-extrabold text-white">${escapeHtml(template.name || '未选择模板')}</div>
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">玩法预设</div>
+                  <div class="mt-1 text-[13px] font-extrabold text-white">${escapeHtml(template.name || '未选择玩法')}</div>
                 </div>
                 <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
-                  <div class="text-[11px] font-bold text-[#c7d5eb]">模板默认</div>
-                  <div class="mt-1 text-[11px] leading-[1.6] text-[#aabbd1]">${escapeHtml(roleModeLabel(templateSourceMode))} / ${escapeHtml(roleModeLabel(templateTargetMode))}</div>
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">玩法默认</div>
+                  <div class="mt-1 text-[11px] leading-[1.6] text-[#aabbd1]">${escapeHtml(playPresetRelationText)}</div>
+                </div>
+                <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
+                  <div class="text-[11px] font-bold text-[#c7d5eb]">本局规则</div>
+                  <div class="mt-1 text-[11px] leading-[1.6] text-[#aabbd1]">${escapeHtml(signalSummaryText({ signal: roomSignal }))}<br>${escapeHtml(triggerSummaryText({ trigger: roomTrigger }))}<br>${escapeHtml(ruleScoreText)}</div>
                 </div>
                 <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
                   <div class="text-[11px] font-bold text-[#c7d5eb]">源组</div>
@@ -8206,7 +10788,7 @@
                 </div>
                 <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
                   <div class="text-[11px] font-bold text-[#c7d5eb]">感应 / 灯效</div>
-                  <div class="mt-1 text-[12px] leading-[1.5] text-white">${escapeHtml(room.sense_mode || templateSenseText || '未设置')} / ${escapeHtml(effectNameById(room.idle_effect_id || template.idle_effect_id || ''))} / ${escapeHtml(effectNameById(room.trigger_effect_id || template.trigger_effect_id || ''))}</div>
+                  <div class="mt-1 text-[12px] leading-[1.5] text-white">${escapeHtml(room.sense_mode || templateSenseText || '未设置')} / 空闲 ${escapeHtml(sourceIdleEffectText)} / 触发 ${escapeHtml(sourceTriggerEffectText)}</div>
                 </div>
                 <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
                   <div class="text-[11px] font-bold text-[#c7d5eb]">状态</div>
@@ -8214,7 +10796,8 @@
                 </div>
                 <div class="rounded-[16px] border border-[rgba(88,116,154,0.18)] bg-[rgba(14,20,31,0.82)] p-3">
                   <div class="text-[11px] font-bold text-[#c7d5eb]">说明</div>
-                  <div class="mt-1 text-[11px] leading-[1.6] text-[#aabbd1]">向导只负责开局，不会把复杂规则重新堆一遍。模板和游戏设置仍然是高级编辑入口。</div>
+                  <div class="mt-1 text-[11px] leading-[1.6] text-[#aabbd1]">${needsPairBinding ? '当前玩法要求指定配对，开始前请确认每个源设备都已经绑定目标。' : '向导只负责开局；复杂默认规则留在玩法预设里，本局覆盖只影响这一局。'}
+                  </div>
                 </div>
               </div>
             </aside>
@@ -8226,10 +10809,27 @@
 
   function renderApp() {
     if (wizardState().open) return renderWizardPage();
+    if (state.roomPresentationMode) {
+      return `
+        <div id="mw-app" class="fixed inset-0 z-[90] overflow-auto bg-[#050914] p-3 text-[12px] leading-[1.4]">
+          <div class="mx-auto w-[min(1920px,100%)]">
+            <div class="sticky top-0 z-[2] mb-3 flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-[rgba(110,151,196,0.24)] bg-[rgba(7,13,22,0.92)] px-3 py-2 shadow-[0_16px_36px_rgba(0,0,0,0.32)] backdrop-blur">
+              <div class="text-[12px] font-black tracking-[0.18em] text-[#8fd0ff]">PRESENTATION MODE</div>
+              <div class="flex flex-wrap items-center gap-2">
+                <button class="mw-tv-mini-btn" type="button" data-action="load-controller">${svgIcon('refresh')}读取状态</button>
+                <button class="mw-tv-mini-btn" type="button" data-action="scan-devices">${svgIcon('wifi')}扫描设备</button>
+                <button class="mw-tv-mini-btn danger" type="button" data-action="exit-room-presentation">退出大屏</button>
+              </div>
+            </div>
+            ${renderBroadcastRoomPanel()}
+          </div>
+        </div>
+      `;
+    }
     const loadHint = state.controllerOnline
       ? `页面当前已联机，可以继续扫描和点名。`
       : `先连接到控制端所在网络，再点“从控制端读取”。如果暂时连不上，也可以继续离线编辑。`;
-    const tagText = `UI v0.8.3`;
+    const tagText = `Local v1.0.1`;
     return `
       <div id="mw-app" class="mx-auto my-3 w-[min(1860px,calc(100vw-40px))] text-[12px] leading-[1.4]">
         <section class="rounded-[18px] border border-[rgba(88,116,154,0.24)] bg-[linear-gradient(180deg,rgba(13,22,35,0.88),rgba(9,16,27,0.84))] px-3.5 py-3 shadow-[0_14px_36px_rgba(0,0,0,0.26)] backdrop-blur-sm">
@@ -8255,10 +10855,31 @@
     `;
   }
 
+  function captureRoomPrepareScroll() {
+    const root = document.querySelector('[data-room-prepare-scroll-root]');
+    if (root && state.roomPrepareModal) {
+      state.roomPrepareModal.scrollTop = root.scrollTop;
+    }
+  }
+
+  function restoreRoomPrepareScroll() {
+    const scrollTop = normalizeNumber(state.roomPrepareModal?.scrollTop, 0);
+    requestAnimationFrame(() => {
+      const root = document.querySelector('[data-room-prepare-scroll-root]');
+      if (root) root.scrollTop = scrollTop;
+      requestAnimationFrame(() => {
+        const root2 = document.querySelector('[data-room-prepare-scroll-root]');
+        if (root2) root2.scrollTop = scrollTop;
+      });
+    });
+  }
+
   function renderDialogs() {
+    captureRoomPrepareScroll();
     const root = document.getElementById('mw-dialog-root');
     if (!root) return;
-    root.innerHTML = `${renderRoomPrepareModal()}${renderRoomCountdownOverlay()}${renderRoomFinalizeModal()}${renderGroupDialogs()}${renderEffectDialogs()}${renderTemplateDialogs()}`;
+    root.innerHTML = `${renderRoomPrepareModal()}${renderRoomCountdownOverlay()}${renderRoomFinalizeModal()}${renderGroupDialogs()}${renderPlayPresetDialogs()}${renderEffectDialogs()}${renderTemplateDialogs()}`;
+    restoreRoomPrepareScroll();
   }
 
   function render() {
@@ -8267,15 +10888,35 @@
     const scrollTop = window.scrollY;
     const wizardScrollRoot = document.querySelector('[data-wizard-scroll-root]');
     const wizardScrollTop = wizardScrollRoot ? wizardScrollRoot.scrollTop : 0;
+    const playPresetListScrollRoot = document.querySelector('[data-play-preset-list-scroll]');
+    const playPresetListScrollTop = playPresetListScrollRoot ? playPresetListScrollRoot.scrollTop : 0;
+    const roomPrepareScrollRoot = document.querySelector('[data-room-prepare-scroll-root]');
+    const roomPrepareScrollTop = roomPrepareScrollRoot
+      ? roomPrepareScrollRoot.scrollTop
+      : normalizeNumber(state.roomPrepareModal?.scrollTop, 0);
     root.innerHTML = renderApp();
     renderDialogs();
     requestAnimationFrame(() => {
       const nextWizardScrollRoot = document.querySelector('[data-wizard-scroll-root]');
       if (nextWizardScrollRoot) nextWizardScrollRoot.scrollTop = wizardScrollTop;
+      const nextPlayPresetListScrollRoot = document.querySelector('[data-play-preset-list-scroll]');
+      if (nextPlayPresetListScrollRoot) nextPlayPresetListScrollRoot.scrollTop = playPresetListScrollTop;
+      const nextRoomPrepareScrollRoot = document.querySelector('[data-room-prepare-scroll-root]');
+      if (nextRoomPrepareScrollRoot) {
+        nextRoomPrepareScrollRoot.scrollTop = roomPrepareScrollTop;
+        if (state.roomPrepareModal) state.roomPrepareModal.scrollTop = roomPrepareScrollTop;
+      }
       window.scrollTo(0, Math.min(scrollTop, Math.max(0, document.documentElement.scrollHeight - window.innerHeight)));
       requestAnimationFrame(() => {
         const nextWizardScrollRoot2 = document.querySelector('[data-wizard-scroll-root]');
         if (nextWizardScrollRoot2) nextWizardScrollRoot2.scrollTop = wizardScrollTop;
+        const nextPlayPresetListScrollRoot2 = document.querySelector('[data-play-preset-list-scroll]');
+        if (nextPlayPresetListScrollRoot2) nextPlayPresetListScrollRoot2.scrollTop = playPresetListScrollTop;
+        const nextRoomPrepareScrollRoot2 = document.querySelector('[data-room-prepare-scroll-root]');
+        if (nextRoomPrepareScrollRoot2) {
+          nextRoomPrepareScrollRoot2.scrollTop = roomPrepareScrollTop;
+          if (state.roomPrepareModal) state.roomPrepareModal.scrollTop = roomPrepareScrollTop;
+        }
         window.scrollTo(0, Math.min(scrollTop, Math.max(0, document.documentElement.scrollHeight - window.innerHeight)));
       });
     });
@@ -8297,7 +10938,7 @@
 
   function isInteractiveEditorOpen() {
     if (wizardState().open) return true;
-    if (state.templateFormModal || state.effectFormModal || state.groupFormModal) return true;
+    if (state.templateFormModal || state.effectFormModal || state.groupFormModal || state.playPresetFormModal || state.playPresetDeleteModal) return true;
     return false;
   }
 
@@ -8310,6 +10951,9 @@
     if (el.closest('[data-role="template-form-input"]')) return true;
     if (el.closest('[data-role="effect-form-input"]')) return true;
     if (el.closest('[data-role="group-form-input"]')) return true;
+    if (el.closest('[data-role="play-preset-form-input"]')) return true;
+    if (el.closest('[data-role="feature-preset-field"]')) return true;
+    if (el.closest('[data-role="play-preset-query"]')) return true;
     return false;
   }
 
@@ -8338,9 +10982,11 @@
         state.serverStatus = { ok: false, error: status.reason?.message || 'status failed' };
       }
 
-      state.localState = normalizeLocalState(local.status === 'fulfilled' ? local.value : loadLocalBackupOrDefault());
+      const rawLocalState = local.status === 'fulfilled' ? local.value : loadLocalBackupOrDefault();
+      const shouldResetGameplayStore = normalizeNumber(rawLocalState?.schema, 1) < LOCAL_SCHEMA_VERSION || normalizeNumber(rawLocalState?.gameplay_reset_version, 0) < LOCAL_SCHEMA_VERSION;
+      state.localState = normalizeLocalState(rawLocalState);
       state.localState.ui.expanded_group_id = -1;
-      state.roomRecords = normalizeRoomRecords(records.status === 'fulfilled' ? records.value?.records : loadRoomBackupOrDefault());
+      state.roomRecords = shouldResetGameplayStore ? [] : normalizeRoomRecords(records.status === 'fulfilled' ? records.value?.records : loadRoomBackupOrDefault());
       state.controllerState = normalizeControllerState(controller.status === 'fulfilled' ? controller.value : null, state.controllerState || buildOfflineControllerState());
       state.controllerState = mergeDraftsIntoController(state.controllerState, state.localState);
       state.controllerOnline = controller.status === 'fulfilled';
@@ -8355,8 +11001,20 @@
       if (!state.controllerOnline && !controller.value) {
         state.controllerState = mergeDraftsIntoController(buildOfflineControllerState(), state.localState);
       }
-      if (!state.roomRecords.length) {
+      if (!state.roomRecords.length && !shouldResetGameplayStore) {
         state.roomRecords = state.localState.room_history || [];
+      }
+      if (shouldResetGameplayStore) {
+        state.localState.rooms = [];
+        state.localState.current_room = null;
+        state.localState.active_room_id = '';
+        state.localState.room_history = [];
+        try {
+          await fetchJson(`${state.apiBase}/api/local/records`, { method: 'DELETE' });
+        } catch (err) {
+          logDebug(`历史记录清理失败 | ${err.message}`);
+        }
+        await persistStateToServer();
       }
       state.debugLines.unshift(`page init | ui=v0.8.3 launcher=${window.location.protocol !== 'file:'} controllerBase=${state.controllerBase}`);
       state.debugLines = state.debugLines.slice(0, MAX_VISIBLE_LOG_LINES);
@@ -8432,6 +11090,301 @@
     }
   }
 
+  function signalTestRuntimePayload(cfg = signalTestConfig()) {
+    const devices = signalTestDevices();
+    const sourceMac = String(cfg.sourceMac || '').trim().toUpperCase();
+    const targetMac = String(cfg.targetMac || '').trim().toUpperCase();
+    const sourceDevice = devices.find((device) => String(device.mac || '').toUpperCase() === sourceMac) || { mac: sourceMac, name: '信号源设备', rssi: 0, seen_ms: 0 };
+    const targetDevice = devices.find((device) => String(device.mac || '').toUpperCase() === targetMac) || { mac: targetMac, name: '信号目标设备', rssi: 0, seen_ms: 0 };
+    const roomHash = normalizeNumber(cfg.roomHash, 65001);
+    const commonGroup = {
+      valid: true,
+      target: 255,
+      mode: 1,
+      trigger_compare: 'gte',
+      rssi: 0,
+      hold: 60000,
+      rule_id: 1,
+      rule_base: 1,
+      rule_judge: 1,
+      rule_signal: 6,
+      rule_rssi_min: 0,
+      rule_rssi_max: -127,
+      rule_missing_ms: 3000,
+      rule_smooth_samples: clamp(normalizeNumber(cfg.smoothSamples, 5), 1, 10),
+      rule_trigger: 1,
+      rule_target_ms: 0,
+      rule_target_count: 1,
+      rule_period_ms: 0,
+      rule_score_target: 0,
+      rule_points: 0,
+      rule_repeat: 1,
+      rule_cooldown_ms: 5000,
+      rule_after: 0,
+      meter_enabled: 1,
+      meter_port: clamp(normalizeNumber(cfg.port, 1), 1, 3),
+      meter_led_count: clamp(normalizeNumber(cfg.ledCount, 10), 1, 200),
+      meter_weak_rssi: normalizeNumber(cfg.weakRssi, -90),
+      meter_strong_rssi: normalizeNumber(cfg.strongRssi, -35),
+      meter_compression_x100: clamp(normalizeNumber(cfg.compressionX100, 160), 20, 500),
+      effect: 'silent',
+      trigger_effect: 'silent',
+      silence: '',
+      room_hash: roomHash
+    };
+    return {
+      schema_version: 3,
+      rssi_defaults_version: RSSI_DEFAULTS_VERSION,
+      runtime_schema: 3,
+      play_preset_id: 'signal_calibration',
+      pair_bindings: [],
+      devices: [
+        {
+          idx: normalizeNumber(sourceDevice.idx, 0),
+          mac: sourceMac,
+          name: String(deviceDraftName(sourceDevice) || sourceDevice.name || '信号源设备').slice(0, 31),
+          group_mask: 1,
+          rssi: normalizeNumber(sourceDevice.rssi, 0),
+          seen_ms: Math.max(0, normalizeNumber(sourceDevice.seen_ms, 0))
+        },
+        {
+          idx: normalizeNumber(targetDevice.idx, 1),
+          mac: targetMac,
+          name: String(deviceDraftName(targetDevice) || targetDevice.name || '信号目标设备').slice(0, 31),
+          group_mask: 2,
+          rssi: normalizeNumber(targetDevice.rssi, 0),
+          seen_ms: Math.max(0, normalizeNumber(targetDevice.seen_ms, 0))
+        }
+      ],
+      groups: [
+        {
+          ...commonGroup,
+          id: 0,
+          name: '信号校准源',
+          note: '临时信号测试：源设备',
+          peer_mask: 2
+        },
+        {
+          ...commonGroup,
+          id: 1,
+          name: '信号校准目标',
+          note: '临时信号测试：目标设备',
+          peer_mask: 1
+        }
+      ],
+      records: []
+    };
+  }
+
+  function shouldUseSignalTestFallback(err) {
+    const message = String(err?.message || err || '');
+    return /HTTP\s+404|not\s*found|未找到|signal\/test/i.test(message);
+  }
+
+  async function startSignalTestViaRuntimeImport(cfg = signalTestConfig()) {
+    const payload = signalTestRuntimePayload(cfg);
+    await requestJson('/api/controller/config/import', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      timeoutMs: 20000
+    });
+    await requestText(`/api/controller/cmd?name=START_GAME&t=${Date.now()}`, {
+      method: 'GET',
+      timeoutMs: 12000
+    });
+    return {
+      ok: true,
+      running: true,
+      room: normalizeNumber(cfg.roomHash, 65001),
+      compat: true
+    };
+  }
+
+  async function startSignalTest() {
+    let devices = signalTestDevices();
+    let cfg = ensureSignalTestSelection(devices);
+    const sourceFresh = devices.some((device) => String(device.mac || '').toUpperCase() === String(cfg.sourceMac || '').toUpperCase() && (device.signal_online || device.signal_retained));
+    const targetFresh = devices.some((device) => String(device.mac || '').toUpperCase() === String(cfg.targetMac || '').toUpperCase() && (device.signal_online || device.signal_retained));
+    if (!state.controllerOnline || devices.length < 2 || !sourceFresh || !targetFresh) {
+      logDebug('信号测试 | 开始前自动扫描设备');
+      await scanDevices();
+      devices = signalTestDevices();
+      cfg = ensureSignalTestSelection(devices);
+    }
+    if (!state.controllerOnline) {
+      alert('控制端未连接。请先连接控制端热点，再开始信号测试。');
+      return false;
+    }
+    if (devices.length < 2) {
+      alert('信号测试至少需要两台真实接收端。请先扫描设备，确认两台设备都能点名。');
+      return false;
+    }
+    if (!cfg.sourceMac || !cfg.targetMac || String(cfg.sourceMac).toUpperCase() === String(cfg.targetMac).toUpperCase()) {
+      alert('请选择两台不同的设备。');
+      return false;
+    }
+    try {
+      setBusy('signalTest', true);
+      const params = new URLSearchParams({
+        source: cfg.sourceMac,
+        target: cfg.targetMac,
+        port: String(cfg.port),
+        count: String(cfg.ledCount),
+        weak: String(cfg.weakRssi),
+        strong: String(cfg.strongRssi),
+        compression: String(cfg.compressionX100),
+        smooth: String(cfg.smoothSamples)
+      });
+      const res = await requestJson(`/api/controller/signal/test?${params.toString()}&t=${Date.now()}`, {
+        method: 'GET',
+        timeoutMs: 12000
+      });
+      state.signalTest.running = true;
+      state.signalTest.roomHash = normalizeNumber(res?.room, cfg.roomHash);
+      state.signalTest.startedAt = Date.now();
+      logDebug(`信号测试开始 | ${cfg.sourceMac} -> ${cfg.targetMac} | weak=${cfg.weakRssi} strong=${cfg.strongRssi} compression=${cfg.compressionX100}`);
+      await loadFromController();
+      await sleep(1200);
+      await loadFromController();
+      render();
+      return true;
+    } catch (err) {
+      if (shouldUseSignalTestFallback(err)) {
+        try {
+          logDebug('信号测试专用接口不可用，改用临时运行配置兼容模式');
+          const res = await startSignalTestViaRuntimeImport(cfg);
+          state.signalTest.running = true;
+          state.signalTest.roomHash = normalizeNumber(res?.room, cfg.roomHash);
+          state.signalTest.startedAt = Date.now();
+          await loadFromController();
+          await sleep(1400);
+          await loadFromController();
+          render();
+          return true;
+        } catch (fallbackErr) {
+          logDebug(`信号测试兼容模式失败 | ${fallbackErr.message}`);
+          alert(`信号测试失败：${fallbackErr.message}`);
+          return false;
+        }
+      }
+      logDebug(`信号测试失败 | ${err.message}`);
+      alert(`信号测试失败：${err.message}`);
+      return false;
+    } finally {
+      setBusy('signalTest', false);
+    }
+  }
+
+  async function stopSignalTest() {
+    const cfg = signalTestConfig();
+    try {
+      setBusy('signalTest', true);
+      const params = new URLSearchParams({
+        action: 'stop',
+        source: cfg.sourceMac,
+        target: cfg.targetMac
+      });
+      await requestJson(`/api/controller/signal/test?${params.toString()}&t=${Date.now()}`, {
+        method: 'GET',
+        timeoutMs: 8000
+      });
+      state.signalTest.running = false;
+      logDebug('信号测试已停止');
+      await loadFromController();
+      render();
+      return true;
+    } catch (err) {
+      if (shouldUseSignalTestFallback(err)) {
+        try {
+          await requestText(`/api/controller/cmd?name=STOP_GAME&t=${Date.now()}`, {
+            method: 'GET',
+            timeoutMs: 10000
+          });
+          state.signalTest.running = false;
+          logDebug('信号测试已停止（兼容模式）');
+          await loadFromController();
+          render();
+          return true;
+        } catch (fallbackErr) {
+          logDebug(`停止信号测试兼容模式失败 | ${fallbackErr.message}`);
+          alert(`停止信号测试失败：${fallbackErr.message}`);
+          return false;
+        }
+      }
+      logDebug(`停止信号测试失败 | ${err.message}`);
+      alert(`停止信号测试失败：${err.message}`);
+      return false;
+    } finally {
+      setBusy('signalTest', false);
+    }
+  }
+
+  async function applySignalCalibrationToCurrentRoom() {
+    const cfg = signalTestConfig();
+    const room = currentRoom();
+    if (!room) {
+      alert('当前没有可应用的房间。请先创建或选择一个游戏房间。');
+      return false;
+    }
+    if (room.status === 'running') {
+      alert('当前房间正在进行中。请先停止游戏，再把信号校准参数应用到房间。');
+      return false;
+    }
+
+    room.rule_overrides = room.rule_overrides && typeof room.rule_overrides === 'object' ? room.rule_overrides : {};
+    room.rule_overrides.signal = room.rule_overrides.signal && typeof room.rule_overrides.signal === 'object' ? room.rule_overrides.signal : {};
+    room.rule_overrides.feedback = room.rule_overrides.feedback && typeof room.rule_overrides.feedback === 'object' ? room.rule_overrides.feedback : {};
+    room.rule_overrides.feedback.signalMeter = room.rule_overrides.feedback.signalMeter && typeof room.rule_overrides.feedback.signalMeter === 'object'
+      ? room.rule_overrides.feedback.signalMeter
+      : {};
+
+    room.rule_overrides.signal.smoothSamples = clamp(normalizeNumber(cfg.smoothSamples, 5), 1, 10);
+    room.rule_overrides.feedback.signalMeter = {
+      ...room.rule_overrides.feedback.signalMeter,
+      enabled: true,
+      port: clamp(normalizeNumber(cfg.port, 1), 1, 3),
+      ledCount: clamp(normalizeNumber(cfg.ledCount, 10), 1, 200),
+      weakRssi: normalizeNumber(cfg.weakRssi, -90),
+      strongRssi: normalizeNumber(cfg.strongRssi, -35),
+      compressionX100: clamp(normalizeNumber(cfg.compressionX100, 160), 20, 500)
+    };
+    room.updated_at = nowIso();
+    if (room.status !== 'draft') {
+      room.status = 'draft';
+    }
+    persistLocalCache();
+    await persistStateToServer();
+    logDebug(`信号校准已应用到房间 | ${room.name || room.id} | LED${cfg.port} ${cfg.ledCount}格 weak=${cfg.weakRssi} strong=${cfg.strongRssi} compression=${cfg.compressionX100}`);
+    render();
+    return true;
+  }
+
+  async function toggleRoomPresentation() {
+    try {
+      if (state.roomPresentationMode) {
+        state.roomPresentationMode = false;
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        }
+        render();
+        return;
+      }
+      state.roomPresentationMode = true;
+      render();
+      if (document.fullscreenEnabled && !document.fullscreenElement) {
+        try {
+          await document.documentElement.requestFullscreen();
+        } catch (fullscreenErr) {
+          logDebug(`浏览器全屏不可用，已进入页面级大屏 | ${fullscreenErr?.message || 'fullscreen denied'}`);
+        }
+      }
+    } catch (err) {
+      state.roomPresentationMode = true;
+      render();
+      logDebug(`进入页面级大屏 | ${err?.message || 'fullscreen fallback'}`);
+    }
+  }
+
   async function handleClick(event) {
     const target = event.target.closest('[data-action]');
     if (!target) return;
@@ -8455,10 +11408,10 @@
         selectTab('groups');
         break;
       case 'open-templates':
-        selectTab('templates');
+        selectTab('game');
         break;
       case 'open-wizard':
-        openWizard(builtinTemplates[0].id, { forceNew: true });
+        openWizard(state.localState?.ui?.selected_play_preset_id || state.selectedTemplateId || builtinTemplates[0].id, { forceNew: true });
         break;
       case 'load-controller':
         loadFromController();
@@ -8469,6 +11422,27 @@
         break;
       case 'scan-devices':
         scanDevices();
+        break;
+      case 'start-signal-test':
+        if (state.busy.signalTest) break;
+        startSignalTest();
+        break;
+      case 'stop-signal-test':
+        if (state.busy.signalTest) break;
+        stopSignalTest();
+        break;
+      case 'apply-signal-calibration':
+        applySignalCalibrationToCurrentRoom();
+        break;
+      case 'toggle-room-presentation':
+        toggleRoomPresentation();
+        break;
+      case 'exit-room-presentation':
+        state.roomPresentationMode = false;
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+        render();
         break;
       case 'identify-all':
         identifyAllDevices();
@@ -8531,6 +11505,12 @@
         break;
       case 'identify-device':
         identifyDevice(idx);
+        break;
+      case 'identify-group':
+        identifyGroupDevices(gid);
+        break;
+      case 'identify-room-devices':
+        identifyRoomDevices(roomId || state.roomPrepareModal?.roomId || activeRoomId());
         break;
       case 'toggle-device-select': {
         const input = event.target;
@@ -8826,7 +11806,59 @@
         confirmDeleteEffectModal();
         break;
       case 'select-feature-preset':
-        state.localState.ui.selected_feature_preset_id = target.dataset.presetId || state.localState.ui.selected_feature_preset_id;
+        state.localState.ui.selected_play_preset_id = target.dataset.presetId || state.localState.ui.selected_play_preset_id;
+        state.localState.ui.selected_feature_preset_id = state.localState.ui.selected_play_preset_id;
+        state.localState.ui.selected_template_id = state.localState.ui.selected_play_preset_id;
+        state.selectedTemplateId = state.localState.ui.selected_template_id;
+        persistStateToServer();
+        render();
+        break;
+      case 'clone-play-preset':
+        openPlayPresetFormModal(target.dataset.presetId || state.localState.ui.selected_play_preset_id, { mode: 'create' });
+        break;
+      case 'create-play-preset':
+        openPlayPresetFormModal(null, { mode: 'create', name: '新玩法预设' });
+        break;
+      case 'create-play-preset-from':
+        openPlayPresetFormModal(target.dataset.presetId || state.localState.ui.selected_play_preset_id, { mode: 'create' });
+        break;
+      case 'edit-play-preset':
+        openPlayPresetFormModal(target.dataset.presetId || state.localState.ui.selected_play_preset_id, { mode: 'edit' });
+        break;
+      case 'delete-play-preset':
+        openPlayPresetDeleteModal(target.dataset.presetId || state.localState.ui.selected_play_preset_id);
+        break;
+      case 'cancel-play-preset-form':
+        closePlayPresetFormModal();
+        break;
+      case 'save-play-preset-form':
+        savePlayPresetFormModal();
+        break;
+      case 'cancel-delete-play-preset':
+        closePlayPresetDeleteModal();
+        break;
+      case 'confirm-delete-play-preset':
+        confirmDeletePlayPresetModal();
+        break;
+      case 'play-preset-filter-all':
+      case 'play-preset-filter-user':
+      case 'play-preset-filter-system':
+        state.localState.ui.play_preset_filter = action === 'play-preset-filter-user' ? 'user' : action === 'play-preset-filter-system' ? 'system' : 'all';
+        persistStateToServer();
+        render();
+        break;
+      case 'toggle-play-preset-advanced':
+        state.localState.ui.play_preset_advanced = !(state.localState?.ui?.play_preset_advanced === true);
+        persistStateToServer();
+        render();
+        break;
+      case 'toggle-play-preset-list':
+        state.localState.ui.play_preset_list_collapsed = !(state.localState?.ui?.play_preset_list_collapsed === true);
+        persistStateToServer();
+        render();
+        break;
+      case 'toggle-system-play-presets':
+        state.localState.ui.system_play_presets_collapsed = !(state.localState?.ui?.system_play_presets_collapsed !== false);
         persistStateToServer();
         render();
         break;
@@ -8881,6 +11913,10 @@
       }
       return;
     }
+    if (target.matches('[data-role="play-preset-form-input"]')) {
+      updatePlayPresetFormModalField(target.dataset.playPresetFormField, target.type === 'checkbox' ? target.checked : target.value, target);
+      return;
+    }
     if (target.matches('[data-role="wizard-room-name"]')) {
       const room = ensureRoomDraft();
       room.name = target.value;
@@ -8895,9 +11931,35 @@
       persistLocalCache();
       return;
     }
+    if (target.matches('[data-role="signal-test-field"]')) {
+      const field = String(target.dataset.field || '');
+      const shouldRender = event.type === 'change' || target.tagName === 'SELECT';
+      if (!state.signalTest || typeof state.signalTest !== 'object') state.signalTest = signalTestConfig();
+      if (field === 'sourceMac' || field === 'targetMac') {
+        state.signalTest[field] = String(target.value || '');
+      } else if (field === 'port') {
+        state.signalTest.port = clamp(normalizeNumber(target.value, 1), 1, 3);
+      } else if (field === 'ledCount') {
+        state.signalTest.ledCount = clamp(normalizeNumber(target.value, 10), 1, 200);
+      } else if (field === 'weakRssi') {
+        state.signalTest.weakRssi = normalizeNumber(target.value, -90);
+      } else if (field === 'strongRssi') {
+        state.signalTest.strongRssi = normalizeNumber(target.value, -35);
+      } else if (field === 'compressionX100') {
+        state.signalTest.compressionX100 = clamp(normalizeNumber(target.value, 160), 20, 500);
+      } else if (field === 'smoothSamples') {
+        state.signalTest.smoothSamples = clamp(normalizeNumber(target.value, 5), 1, 10);
+      }
+      if (shouldRender) render();
+      return;
+    }
     if (target.matches('[data-role="wizard-trigger-compare"]')) {
       const room = ensureRoomDraft();
       room.trigger_compare = triggerCompareValue(target.value);
+      room.rule_signal_type = room.trigger_compare === 'lte' ? 'weaker' : 'enter_range';
+      room.rule_overrides = room.rule_overrides && typeof room.rule_overrides === 'object' ? room.rule_overrides : {};
+      room.rule_overrides.signal = room.rule_overrides.signal && typeof room.rule_overrides.signal === 'object' ? room.rule_overrides.signal : {};
+      room.rule_overrides.signal.type = room.rule_signal_type;
       room.updated_at = nowIso();
       persistLocalCache();
       render();
@@ -8906,6 +11968,10 @@
     if (target.matches('[data-role="wizard-trigger-rssi"]')) {
       const room = ensureRoomDraft();
       room.trigger_signal_rssi = normalizeNumber(target.value, DEFAULT_TRIGGER_RSSI);
+      room.rule_rssi_min = room.trigger_signal_rssi;
+      room.rule_overrides = room.rule_overrides && typeof room.rule_overrides === 'object' ? room.rule_overrides : {};
+      room.rule_overrides.signal = room.rule_overrides.signal && typeof room.rule_overrides.signal === 'object' ? room.rule_overrides.signal : {};
+      room.rule_overrides.signal.rssiMin = room.rule_rssi_min;
       room.updated_at = nowIso();
       persistLocalCache();
       return;
@@ -8913,8 +11979,60 @@
     if (target.matches('[data-role="wizard-trigger-hold"]')) {
       const room = ensureRoomDraft();
       room.trigger_hold_ms = normalizeNumber(target.value, DEFAULT_TRIGGER_HOLD_MS);
+      room.rule_hold_ms = room.trigger_hold_ms;
+      room.rule_overrides = room.rule_overrides && typeof room.rule_overrides === 'object' ? room.rule_overrides : {};
+      room.rule_overrides.signal = room.rule_overrides.signal && typeof room.rule_overrides.signal === 'object' ? room.rule_overrides.signal : {};
+      room.rule_overrides.signal.holdMs = room.rule_hold_ms;
       room.updated_at = nowIso();
       persistLocalCache();
+      return;
+    }
+    if (target.matches('[data-role="wizard-rule-field"]')) {
+      const room = ensureRoomDraft();
+      const section = String(target.dataset.ruleSection || '');
+      const field = String(target.dataset.ruleField || '');
+      room.rule_overrides = room.rule_overrides && typeof room.rule_overrides === 'object' ? room.rule_overrides : {};
+      room.rule_overrides[section] = room.rule_overrides[section] && typeof room.rule_overrides[section] === 'object' ? room.rule_overrides[section] : {};
+      const nextValue = target.type === 'number' ? target.value : target.value;
+      if (section === 'signal') {
+        if (field === 'rssiMax') room.rule_overrides.signal[field] = String(nextValue).trim() === '' ? null : normalizeNumber(nextValue, -20);
+        else if (field === 'rssiMin' || field === 'holdMs' || field === 'missingMs' || field === 'smoothSamples') room.rule_overrides.signal[field] = normalizeNumber(nextValue, field === 'rssiMin' ? DEFAULT_TRIGGER_RSSI : field === 'holdMs' ? DEFAULT_TRIGGER_HOLD_MS : 0);
+        else room.rule_overrides.signal[field] = String(nextValue || '');
+      } else if (section === 'trigger') {
+        room.rule_overrides.trigger[field] = ['targetMs', 'targetCount', 'periodMs'].includes(field) ? normalizeNumber(nextValue, 0) : String(nextValue || '');
+      } else if (section === 'score') {
+        room.rule_overrides.score[field] = field === 'points' ? normalizeNumber(nextValue, 1) : String(nextValue || '');
+      } else if (section === 'repeat') {
+        room.rule_overrides.repeat[field] = field === 'cooldownMs' ? normalizeNumber(nextValue, 5000) : String(nextValue || '');
+      } else if (section === 'afterTrigger') {
+        room.rule_overrides.afterTrigger[field] = String(nextValue || 'none');
+      } else if (section === 'feedback') {
+        room.rule_overrides.feedback.signalMeter = room.rule_overrides.feedback.signalMeter && typeof room.rule_overrides.feedback.signalMeter === 'object'
+          ? room.rule_overrides.feedback.signalMeter
+          : {};
+        if (field === 'meterEnabled') room.rule_overrides.feedback.signalMeter.enabled = !!target.checked;
+        else if (field === 'meterPort') room.rule_overrides.feedback.signalMeter.port = clamp(normalizeNumber(nextValue, 1), 1, 3);
+        else if (field === 'meterLedCount') room.rule_overrides.feedback.signalMeter.ledCount = clamp(normalizeNumber(nextValue, 10), 1, 200);
+        else if (field === 'meterWeakRssi') room.rule_overrides.feedback.signalMeter.weakRssi = normalizeNumber(nextValue, -90);
+        else if (field === 'meterStrongRssi') room.rule_overrides.feedback.signalMeter.strongRssi = normalizeNumber(nextValue, room.rule_rssi_min ?? DEFAULT_TRIGGER_RSSI);
+        else if (field === 'meterCompression') room.rule_overrides.feedback.signalMeter.compressionX100 = clamp(normalizeNumber(nextValue, 100), 20, 500);
+      }
+      const signal = room.rule_overrides.signal || {};
+      room.rule_signal_type = String(signal.type || room.rule_signal_type || 'enter_range');
+      room.rule_rssi_min = normalizeNumber(signal.rssiMin ?? room.rule_rssi_min, DEFAULT_TRIGGER_RSSI);
+      room.rule_rssi_max = signal.rssiMax === null || signal.rssiMax === undefined || signal.rssiMax === '' ? null : normalizeNumber(signal.rssiMax, -20);
+      room.rule_hold_ms = normalizeNumber(signal.holdMs ?? room.rule_hold_ms, DEFAULT_TRIGGER_HOLD_MS);
+      room.trigger_signal_rssi = room.rule_rssi_min;
+      room.trigger_hold_ms = room.rule_hold_ms;
+      room.trigger_compare = room.rule_signal_type === 'leave_range' || room.rule_signal_type === 'weaker' ? 'lte' : (room.rule_rssi_max !== null ? 'range' : 'gte');
+      room.updated_at = nowIso();
+      updateRoomDraftSummary(room);
+      persistLocalCache();
+      render();
+      return;
+    }
+    if (target.matches('[data-role="wizard-match-binding"]')) {
+      updateWizardMatchBinding(target.dataset.sourceMac, target.value);
       return;
     }
     if (target.matches('[data-role="wizard-effect-rule"]')) {
@@ -8925,28 +12043,6 @@
       applyWizardEffectRuleBatch(target.dataset.ruleField, target.value);
       return;
     }
-    if (target.matches('[data-role="wizard-trigger-compare"]')) {
-      const room = ensureRoomDraft();
-      room.trigger_compare = triggerCompareValue(target.value);
-      room.updated_at = nowIso();
-      persistLocalCache();
-      render();
-      return;
-    }
-    if (target.matches('[data-role="wizard-trigger-rssi"]')) {
-      const room = ensureRoomDraft();
-      room.trigger_signal_rssi = normalizeNumber(target.value, DEFAULT_TRIGGER_RSSI);
-      room.updated_at = nowIso();
-      persistLocalCache();
-      return;
-    }
-    if (target.matches('[data-role="wizard-trigger-hold"]')) {
-      const room = ensureRoomDraft();
-      room.trigger_hold_ms = normalizeNumber(target.value, DEFAULT_TRIGGER_HOLD_MS);
-      room.updated_at = nowIso();
-      persistLocalCache();
-      return;
-    }
     if (target.matches('[data-role="template-form-input"]')) {
       if (!state.templateFormModal) return;
       const field = target.dataset.templateFormField;
@@ -8955,12 +12051,23 @@
       }
       return;
     }
+    if (target.matches('[data-role="play-preset-form-input"]')) {
+      updatePlayPresetFormModalField(target.dataset.playPresetFormField, target.type === 'checkbox' ? target.checked : target.value, target);
+      return;
+    }
     if (target.matches('[data-role="template-field"]')) {
       updateSelectedTemplateField(target.dataset.templateField, target.value);
       return;
     }
+    if (target.matches('[data-role="play-preset-query"]')) {
+      state.localState.ui.play_preset_query = target.value;
+      persistLocalCache();
+      render();
+      return;
+    }
     if (target.matches('[data-role="feature-preset-field"]')) {
-      updateSelectedFeaturePresetField(target.dataset.presetField, target.value);
+      const shouldRender = event.type === 'change' || target.tagName === 'SELECT' || target.type === 'checkbox';
+      updateSelectedFeaturePresetField(target.dataset.presetField, target.type === 'checkbox' ? target.checked : target.value, { render: shouldRender });
       return;
     }
     if (target.matches('[data-role="effect-form-input"]')) {
@@ -9048,6 +12155,10 @@
 
   function handleChange(event) {
     const target = event.target;
+    if (target.matches('[data-role="signal-test-field"]')) {
+      handleInput(event);
+      return;
+    }
     if (target.matches('[data-action="device-filter-group"]')) {
       state.deviceFilterMode = 'group';
       state.deviceFilterGroupId = normalizeNumber(target.value, -1);
@@ -9175,6 +12286,12 @@
       root.addEventListener('change', handleChange);
       root.addEventListener('input', handleInput);
     }
+    dialogRoot.addEventListener('scroll', (event) => {
+      const target = event.target;
+      if (target && target.matches && target.matches('[data-room-prepare-scroll-root]') && state.roomPrepareModal) {
+        state.roomPrepareModal.scrollTop = target.scrollTop;
+      }
+    }, true);
   }
 
   function installKeyboardShortcuts() {
@@ -9182,6 +12299,14 @@
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
         saveLocalConfig();
+      }
+      if (event.key === 'Escape' && state.roomPresentationMode) {
+        state.roomPresentationMode = false;
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+        render();
+        return;
       }
       if (event.key === 'Escape' && state.editingMac) {
         cancelEditDevice();
@@ -9211,9 +12336,10 @@
     setInterval(() => {
       if (!state.controllerOnline) return;
       if (state.busy.controller || state.busy.publish || state.preparingRoomId) return;
+      if (state.roomPrepareModal) return;
       if (shouldPauseAutoRefresh()) return;
       const room = currentRoom();
-      const shouldRefresh = state.activeTab === 'room' || !!state.roomPrepareModal || !!state.roomStartCountdown || (room && (room.status === 'running' || room.status === 'published'));
+      const shouldRefresh = state.activeTab === 'room' || state.activeTab === 'signal' || state.signalTest?.running === true || !!state.roomStartCountdown || (room && (room.status === 'running' || room.status === 'published'));
       if (shouldRefresh) {
         loadFromController();
       }

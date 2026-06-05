@@ -35,12 +35,14 @@ static const char *TAG = "MAGIC_CTRL";
 #define MAX_DISCOVERY_RECORDS 64
 #define MAX_RUNTIME_EVENTS 64
 #define MAX_RUNTIME_STATS MAX_DEVICES
+#define MAX_PAIR_BINDINGS 64
 #define CONFIG_IMPORT_MAX_BODY (32 * 1024)
+#define SIGNAL_TEST_ROOM_HASH 65001
 
 #define DEVICE_NAME_LEN 32
 #define GROUP_TEXT_LEN 384
 #define WEB_UI_VERSION "v0.2.6"
-#define CONFIG_SCHEMA_VERSION 2
+#define CONFIG_SCHEMA_VERSION 3
 
 typedef enum {
     GROUP_MODE_SHARED = 0,
@@ -76,7 +78,29 @@ typedef struct {
     int16_t rssi_threshold;    // placeholder for future proximity logic
     uint16_t hold_ms;          // placeholder for future proximity logic
     uint8_t trigger_compare;   // 0 = gte, 1 = lte
-    uint8_t reserved[1];
+    uint8_t rule_id;
+    uint8_t rule_base;         // 1 instant, 2 sustain, 3 competition
+    uint8_t rule_judge;        // 0 none, 1 source, 2 target
+    uint8_t rule_signal;       // v3 signal code
+    int16_t rule_rssi_min;
+    int16_t rule_rssi_max;     // -127 = unused
+    uint16_t rule_missing_ms;
+    uint8_t rule_smooth_samples;
+    uint8_t rule_trigger;      // v3 trigger code
+    uint32_t rule_target_ms;
+    uint16_t rule_target_count;
+    uint32_t rule_period_ms;
+    uint8_t rule_score_target;
+    int16_t rule_points;
+    uint8_t rule_repeat;
+    uint32_t rule_cooldown_ms;
+    uint8_t rule_after;
+    uint8_t meter_enabled;
+    uint8_t meter_port;
+    uint16_t meter_led_count;
+    int16_t meter_weak_rssi;
+    int16_t meter_strong_rssi;
+    uint16_t meter_compression_x100;
 } group_config_t;
 
 typedef struct {
@@ -99,6 +123,9 @@ typedef struct {
     uint32_t self_group_mask;
     uint32_t peer_group_mask;
     int16_t rssi;
+    uint8_t kind;
+    int16_t points;
+    uint32_t seq;
     int64_t event_ms;
 } runtime_event_t;
 
@@ -108,9 +135,21 @@ typedef struct {
     uint8_t self_mac[6];
     uint16_t seen_count;
     uint16_t found_count;
+    int16_t best_rssi;
+    uint8_t best_peer_mac[6];
+    uint32_t active_ms;
     uint32_t seq;
     int64_t last_seen_ms;
 } runtime_stat_t;
+
+typedef struct {
+    uint8_t valid;
+    uint8_t rule_id;
+    uint8_t source_mac[6];
+    uint8_t target_mac[6];
+    uint8_t source_group_id;
+    uint8_t target_group_id;
+} pair_binding_t;
 
 typedef struct {
     char *buf;
@@ -127,10 +166,12 @@ static group_config_t groups[MAX_GROUPS];
 static discovery_record_t records[MAX_DISCOVERY_RECORDS];
 static runtime_event_t runtime_events[MAX_RUNTIME_EVENTS];
 static runtime_stat_t runtime_stats[MAX_RUNTIME_STATS];
+static pair_binding_t pair_bindings[MAX_PAIR_BINDINGS];
 
 static int device_count = 0;
 static int record_count = 0;
 static int runtime_event_count = 0;
+static int pair_binding_count = 0;
 static volatile bool runtime_running = false;
 static int64_t runtime_started_ms = 0;
 static portMUX_TYPE state_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -522,6 +563,98 @@ static bool parse_import_group_object(json_reader_t *jr, group_config_t *dst, in
             int64_t value = 0;
             if (!jr_parse_int64(jr, &value) || value < 0 || value > UINT16_MAX) return false;
             dst->hold_ms = (uint16_t)value;
+        } else if (strcmp(key, "rule_id") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > 255) return false;
+            dst->rule_id = (uint8_t)value;
+        } else if (strcmp(key, "rule_base") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > 255) return false;
+            dst->rule_base = (uint8_t)value;
+        } else if (strcmp(key, "rule_judge") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > 255) return false;
+            dst->rule_judge = (uint8_t)value;
+        } else if (strcmp(key, "rule_signal") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > 255) return false;
+            dst->rule_signal = (uint8_t)value;
+        } else if (strcmp(key, "rule_rssi_min") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < INT16_MIN || value > INT16_MAX) return false;
+            dst->rule_rssi_min = (int16_t)value;
+        } else if (strcmp(key, "rule_rssi_max") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < INT16_MIN || value > INT16_MAX) return false;
+            dst->rule_rssi_max = (int16_t)value;
+        } else if (strcmp(key, "rule_missing_ms") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > UINT16_MAX) return false;
+            dst->rule_missing_ms = (uint16_t)value;
+        } else if (strcmp(key, "rule_smooth_samples") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 1 || value > 10) return false;
+            dst->rule_smooth_samples = (uint8_t)value;
+        } else if (strcmp(key, "rule_trigger") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > 255) return false;
+            dst->rule_trigger = (uint8_t)value;
+        } else if (strcmp(key, "rule_target_ms") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > INT32_MAX) return false;
+            dst->rule_target_ms = (uint32_t)value;
+        } else if (strcmp(key, "rule_target_count") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > UINT16_MAX) return false;
+            dst->rule_target_count = (uint16_t)value;
+        } else if (strcmp(key, "rule_period_ms") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > INT32_MAX) return false;
+            dst->rule_period_ms = (uint32_t)value;
+        } else if (strcmp(key, "rule_score_target") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > 255) return false;
+            dst->rule_score_target = (uint8_t)value;
+        } else if (strcmp(key, "rule_points") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < INT16_MIN || value > INT16_MAX) return false;
+            dst->rule_points = (int16_t)value;
+        } else if (strcmp(key, "rule_repeat") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > 255) return false;
+            dst->rule_repeat = (uint8_t)value;
+        } else if (strcmp(key, "rule_cooldown_ms") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > INT32_MAX) return false;
+            dst->rule_cooldown_ms = (uint32_t)value;
+        } else if (strcmp(key, "rule_after") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > 255) return false;
+            dst->rule_after = (uint8_t)value;
+        } else if (strcmp(key, "meter_enabled") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > 1) return false;
+            dst->meter_enabled = (uint8_t)value;
+        } else if (strcmp(key, "meter_port") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 1 || value > 3) return false;
+            dst->meter_port = (uint8_t)value;
+        } else if (strcmp(key, "meter_led_count") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 1 || value > 200) return false;
+            dst->meter_led_count = (uint16_t)value;
+        } else if (strcmp(key, "meter_weak_rssi") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < INT16_MIN || value > INT16_MAX) return false;
+            dst->meter_weak_rssi = (int16_t)value;
+        } else if (strcmp(key, "meter_strong_rssi") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < INT16_MIN || value > INT16_MAX) return false;
+            dst->meter_strong_rssi = (int16_t)value;
+        } else if (strcmp(key, "meter_compression_x100") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 20 || value > 500) return false;
+            dst->meter_compression_x100 = (uint16_t)value;
         } else {
             if (!jr_skip_value(jr)) return false;
         }
@@ -609,10 +742,64 @@ static bool parse_import_record_object(json_reader_t *jr, discovery_record_t *ds
     return true;
 }
 
+static bool parse_import_pair_binding_object(json_reader_t *jr, pair_binding_t *dst)
+{
+    memset(dst, 0, sizeof(*dst));
+    dst->source_group_id = 0xFF;
+    dst->target_group_id = 0xFF;
+    bool have_source_mac = false;
+    bool have_target_mac = false;
+
+    if (!jr_consume(jr, '{')) return false;
+    while (1) {
+        jr_skip_ws(jr);
+        if (jr_consume(jr, '}')) break;
+
+        char key[32];
+        if (!jr_read_string(jr, key, sizeof(key))) return false;
+        if (!jr_consume(jr, ':')) return false;
+
+        if (strcmp(key, "rule_id") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < 0 || value > 255) return false;
+            dst->rule_id = (uint8_t)value;
+        } else if (strcmp(key, "source_mac") == 0) {
+            char mac_text[32];
+            if (!jr_read_string(jr, mac_text, sizeof(mac_text)) || !parse_mac_string(mac_text, dst->source_mac)) return false;
+            have_source_mac = true;
+        } else if (strcmp(key, "target_mac") == 0) {
+            char mac_text[32];
+            if (!jr_read_string(jr, mac_text, sizeof(mac_text)) || !parse_mac_string(mac_text, dst->target_mac)) return false;
+            have_target_mac = true;
+        } else if (strcmp(key, "source_group_id") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < -1 || value >= MAX_GROUPS) return false;
+            dst->source_group_id = value < 0 ? 0xFF : (uint8_t)value;
+        } else if (strcmp(key, "target_group_id") == 0) {
+            int64_t value = 0;
+            if (!jr_parse_int64(jr, &value) || value < -1 || value >= MAX_GROUPS) return false;
+            dst->target_group_id = value < 0 ? 0xFF : (uint8_t)value;
+        } else {
+            if (!jr_skip_value(jr)) return false;
+        }
+
+        jr_skip_ws(jr);
+        if (jr_consume(jr, ',')) continue;
+        if (jr_consume(jr, '}')) break;
+        return false;
+    }
+
+    dst->valid = (have_source_mac && have_target_mac) ? 1 : 0;
+    if (dst->rule_id == 0) dst->rule_id = 1;
+    return dst->valid == 1;
+}
+
 static bool parse_registry_import_json(const char *json,
                                        receiver_device_t *device_out,
                                        int *device_count_out,
                                        group_config_t *group_out,
+                                       pair_binding_t *pair_binding_out,
+                                       int *pair_binding_count_out,
                                        discovery_record_t *record_out,
                                        int *record_count_out,
                                        int *schema_version_out,
@@ -626,14 +813,17 @@ static bool parse_registry_import_json(const char *json,
     bool have_schema = false;
     bool have_devices = false;
     bool have_groups = false;
+    bool have_pair_bindings = false;
     bool have_records = false;
     bool group_seen[MAX_GROUPS] = {0};
     int device_count = 0;
+    int pair_binding_count = 0;
     int record_count = 0;
     int64_t now_ms = esp_timer_get_time() / 1000;
 
     memset(device_out, 0, sizeof(receiver_device_t) * MAX_DEVICES);
     memset(group_out, 0, sizeof(group_config_t) * MAX_GROUPS);
+    memset(pair_binding_out, 0, sizeof(pair_binding_t) * MAX_PAIR_BINDINGS);
     memset(record_out, 0, sizeof(discovery_record_t) * MAX_DISCOVERY_RECORDS);
 
     if (!jr_consume(&jr, '{')) {
@@ -717,6 +907,31 @@ static bool parse_registry_import_json(const char *json,
                 }
             }
             have_groups = true;
+        } else if (strcmp(key, "pair_bindings") == 0) {
+            if (!jr_consume(&jr, '[')) {
+                snprintf(error_text, error_text_size, "pair_bindings array expected.");
+                return false;
+            }
+            jr_skip_ws(&jr);
+            if (!jr_consume(&jr, ']')) {
+                while (1) {
+                    if (pair_binding_count >= MAX_PAIR_BINDINGS) {
+                        snprintf(error_text, error_text_size, "Too many pair bindings.");
+                        return false;
+                    }
+                    if (!parse_import_pair_binding_object(&jr, &pair_binding_out[pair_binding_count])) {
+                        snprintf(error_text, error_text_size, "Invalid pair binding entry.");
+                        return false;
+                    }
+                    pair_binding_count++;
+                    jr_skip_ws(&jr);
+                    if (jr_consume(&jr, ',')) continue;
+                    if (jr_consume(&jr, ']')) break;
+                    snprintf(error_text, error_text_size, "Invalid pair_bindings array syntax.");
+                    return false;
+                }
+            }
+            have_pair_bindings = true;
         } else if (strcmp(key, "records") == 0) {
             if (!jr_consume(&jr, '[')) {
                 snprintf(error_text, error_text_size, "records array expected.");
@@ -764,7 +979,7 @@ static bool parse_registry_import_json(const char *json,
         }
     }
 
-    if (!have_schema || !have_devices || !have_groups || !have_records) {
+    if (!have_schema || !have_devices || !have_groups || !have_records || !have_pair_bindings) {
         snprintf(error_text, error_text_size, "Missing required top-level fields.");
         return false;
     }
@@ -774,6 +989,7 @@ static bool parse_registry_import_json(const char *json,
     }
 
     *device_count_out = device_count;
+    *pair_binding_count_out = pair_binding_count;
     *record_count_out = record_count;
     *schema_version_out = (int)schema_version;
     return true;
@@ -984,6 +1200,21 @@ static bool mac_equal(const uint8_t *a, const uint8_t *b)
     return memcmp(a, b, 6) == 0;
 }
 
+static void append_mac_csv(char *buf, size_t buf_size, const uint8_t *mac, int *count)
+{
+    if (!buf || buf_size == 0 || !mac || !count) return;
+    char mac_text[18];
+    mac_to_string(mac, mac_text, sizeof(mac_text));
+    size_t len = strlen(buf);
+    if (*count > 0 && len + 1 < buf_size) {
+        buf[len++] = ',';
+        buf[len] = '\0';
+    }
+    if (len + strlen(mac_text) + 1 >= buf_size) return;
+    strncat(buf, mac_text, buf_size - strlen(buf) - 1);
+    (*count)++;
+}
+
 static int find_device_index_by_mac_locked(const uint8_t *mac)
 {
     for (int i = 0; i < device_count; i++) {
@@ -1021,6 +1252,24 @@ static void ensure_group_default_fields_locked(int gid)
         groups[gid].peer_mask = group_bit(groups[gid].target_group);
     }
     if (groups[gid].room_hash == 0) groups[gid].room_hash = 1;
+    if (groups[gid].rule_id == 0) groups[gid].rule_id = 1;
+    if (groups[gid].rule_base == 0) groups[gid].rule_base = 1;
+    // rule_judge=0 is a valid passive target role: beacon only, no local trigger judging.
+    if (groups[gid].rule_signal == 0) groups[gid].rule_signal = 1;
+    if (groups[gid].rule_rssi_min == 0) groups[gid].rule_rssi_min = groups[gid].rssi_threshold ? groups[gid].rssi_threshold : -70;
+    if (groups[gid].rule_rssi_max == 0) groups[gid].rule_rssi_max = -127;
+    if (groups[gid].rule_missing_ms == 0) groups[gid].rule_missing_ms = 3000;
+    if (groups[gid].rule_smooth_samples == 0) groups[gid].rule_smooth_samples = 5;
+    if (groups[gid].rule_trigger == 0) groups[gid].rule_trigger = 1;
+    if (groups[gid].rule_target_count == 0) groups[gid].rule_target_count = 1;
+    // rule_score_target=0 / rule_points=0 is valid for "effect only, no score".
+    if (groups[gid].rule_repeat == 0) groups[gid].rule_repeat = 2;
+    if (groups[gid].rule_cooldown_ms == 0) groups[gid].rule_cooldown_ms = 5000;
+    if (groups[gid].meter_port == 0 || groups[gid].meter_port > 3) groups[gid].meter_port = 1;
+    if (groups[gid].meter_led_count == 0) groups[gid].meter_led_count = 10;
+    if (groups[gid].meter_weak_rssi == 0) groups[gid].meter_weak_rssi = -90;
+    if (groups[gid].meter_strong_rssi == 0) groups[gid].meter_strong_rssi = groups[gid].rule_rssi_min ? groups[gid].rule_rssi_min : -35;
+    if (groups[gid].meter_compression_x100 == 0) groups[gid].meter_compression_x100 = 100;
 }
 
 static void registry_save(void)
@@ -1343,7 +1592,7 @@ static void runtime_reset_locked(void)
 
 static void append_runtime_event_locked(uint16_t room, const uint8_t *self_mac, const uint8_t *peer_mac,
                                         int16_t self_device_index, int16_t peer_device_index,
-                                        uint32_t self_mask, uint32_t peer_mask, int rssi, int64_t event_ms)
+                                        uint32_t self_mask, uint32_t peer_mask, int rssi, int kind, int points, unsigned int seq, int64_t event_ms)
 {
     int idx = runtime_event_count;
     if (idx >= MAX_RUNTIME_EVENTS) {
@@ -1361,8 +1610,40 @@ static void append_runtime_event_locked(uint16_t room, const uint8_t *self_mac, 
     event->self_group_mask = self_mask;
     event->peer_group_mask = peer_mask;
     event->rssi = (int16_t)rssi;
+    event->kind = (uint8_t)kind;
+    event->points = (int16_t)points;
+    event->seq = seq;
     event->event_ms = event_ms;
     runtime_event_count++;
+}
+
+static void play_target_feedback_once(const uint8_t *target_mac, uint32_t target_mask)
+{
+    if (!target_mac || mac_equal(target_mac, broadcast_mac)) return;
+
+    char trigger[GROUP_TEXT_LEN] = {0};
+    int target_gid = -1;
+    portENTER_CRITICAL(&state_mux);
+    target_gid = first_group_for_mask(target_mask);
+    if (target_gid >= 0 && target_gid < MAX_GROUPS && groups[target_gid].valid) {
+        snprintf(trigger, sizeof(trigger), "%s",
+                 groups[target_gid].trigger_effect_note[0] ? groups[target_gid].trigger_effect_note : groups[target_gid].effect_note);
+    }
+    portEXIT_CRITICAL(&state_mux);
+
+    if (trigger[0] == '\0' || strcmp(trigger, "silent") == 0) return;
+
+    char cmd[GROUP_TEXT_LEN + 8];
+    snprintf(cmd, sizeof(cmd), "TRG|%s", trigger);
+    esp_err_t ret = send_espnow_command_to(target_mac, cmd);
+    if (ret == ESP_OK) {
+        ret = send_espnow_command_to(target_mac, "PLAY_ONCE");
+    }
+    if (ret != ESP_OK) {
+        char mac_text[18];
+        mac_to_string(target_mac, mac_text, sizeof(mac_text));
+        ESP_LOGW(TAG, "Target feedback failed: target=%s err=%s", mac_text, esp_err_to_name(ret));
+    }
 }
 
 static void upsert_runtime_stat_locked(uint16_t room, const uint8_t *self_mac, unsigned int seen_count,
@@ -1407,6 +1688,8 @@ static esp_err_t send_runtime_to_devices(bool start_after_config, bool test_afte
         int16_t rssi = -70;
         uint16_t hold = 2000;
         const char *compare = "gte";
+        group_config_t rule_group;
+        memset(&rule_group, 0, sizeof(rule_group));
         char idle[GROUP_TEXT_LEN] = {0};
         char trigger[GROUP_TEXT_LEN] = {0};
 
@@ -1422,6 +1705,7 @@ static esp_err_t send_runtime_to_devices(bool start_after_config, bool test_afte
                 rssi = g->rssi_threshold ? g->rssi_threshold : -70;
                 hold = g->hold_ms ? g->hold_ms : 2000;
                 compare = g->trigger_compare ? "lte" : "gte";
+                rule_group = *g;
                 snprintf(idle, sizeof(idle), "%s", g->effect_note[0] ? g->effect_note : "silent");
                 snprintf(trigger, sizeof(trigger), "%s", g->trigger_effect_note[0] ? g->trigger_effect_note : idle);
             }
@@ -1430,6 +1714,75 @@ static esp_err_t send_runtime_to_devices(bool start_after_config, bool test_afte
 
         if (group_mask == 0 || peer_mask == 0) {
             continue;
+        }
+
+        uint8_t rule_judge = rule_group.rule_judge;
+        uint8_t rule_score_target = rule_group.rule_score_target;
+        int16_t rule_points = rule_group.rule_points;
+
+        char rule[256];
+        snprintf(rule, sizeof(rule),
+                 "RULE|2|%u|%u|%u|%u|%u|%u|%u|%d|%d|%u|%u|%u|%u|%u|%u|%u|%u|%d|%u|%u|%u",
+                 (unsigned int)room_hash,
+                 (unsigned int)(rule_group.rule_id ? rule_group.rule_id : 1),
+                 (unsigned int)(rule_group.rule_base ? rule_group.rule_base : 1),
+                 (unsigned int)rule_judge,
+                 (unsigned int)group_mask,
+                 (unsigned int)peer_mask,
+                 (unsigned int)(rule_group.rule_signal ? rule_group.rule_signal : 1),
+                 (int)(rule_group.rule_rssi_min ? rule_group.rule_rssi_min : rssi),
+                 (int)(rule_group.rule_rssi_max ? rule_group.rule_rssi_max : -127),
+                 (unsigned int)hold,
+                 (unsigned int)(rule_group.rule_missing_ms ? rule_group.rule_missing_ms : 3000),
+                 (unsigned int)(rule_group.rule_smooth_samples ? rule_group.rule_smooth_samples : 5),
+                 (unsigned int)(rule_group.rule_trigger ? rule_group.rule_trigger : 1),
+                 (unsigned int)rule_group.rule_target_ms,
+                 (unsigned int)(rule_group.rule_target_count ? rule_group.rule_target_count : 1),
+                 (unsigned int)rule_group.rule_period_ms,
+                 (unsigned int)rule_score_target,
+                 (int)rule_points,
+                 (unsigned int)(rule_group.rule_repeat ? rule_group.rule_repeat : 2),
+                 (unsigned int)(rule_group.rule_cooldown_ms ? rule_group.rule_cooldown_ms : 5000),
+                 (unsigned int)rule_group.rule_after);
+        esp_err_t ret = send_espnow_command_to(mac, rule);
+        if (ret != ESP_OK) return ret;
+
+        char meter[112];
+        snprintf(meter, sizeof(meter), "METER|%u|%u|%u|%u|%u|%d|%d|%u",
+                 (unsigned int)room_hash,
+                 (unsigned int)(rule_group.rule_id ? rule_group.rule_id : 1),
+                 (unsigned int)(rule_group.meter_enabled ? 1 : 0),
+                 (unsigned int)(rule_group.meter_port ? rule_group.meter_port : 1),
+                 (unsigned int)(rule_group.meter_led_count ? rule_group.meter_led_count : 10),
+                 (int)(rule_group.meter_weak_rssi ? rule_group.meter_weak_rssi : -90),
+                 (int)(rule_group.meter_strong_rssi ? rule_group.meter_strong_rssi : (rule_group.rule_rssi_min ? rule_group.rule_rssi_min : -35)),
+                 (unsigned int)(rule_group.meter_compression_x100 ? rule_group.meter_compression_x100 : 100));
+        ret = send_espnow_command_to(mac, meter);
+        if (ret != ESP_OK) return ret;
+
+        if (pair_binding_count > 0 && rule_judge != 0) {
+            char pair_list[320] = {0};
+            int allowed_count = 0;
+            portENTER_CRITICAL(&state_mux);
+            for (int p = 0; p < pair_binding_count; p++) {
+                const pair_binding_t *binding = &pair_bindings[p];
+                if (!binding->valid) continue;
+                if (binding->rule_id != 0 && binding->rule_id != (rule_group.rule_id ? rule_group.rule_id : 1)) continue;
+                if (rule_judge == 2) {
+                    if (mac_equal(binding->target_mac, mac)) append_mac_csv(pair_list, sizeof(pair_list), binding->source_mac, &allowed_count);
+                } else {
+                    if (mac_equal(binding->source_mac, mac)) append_mac_csv(pair_list, sizeof(pair_list), binding->target_mac, &allowed_count);
+                }
+            }
+            portEXIT_CRITICAL(&state_mux);
+            char pair_msg[384];
+            snprintf(pair_msg, sizeof(pair_msg), "PAIR|%u|%u|%d|%s",
+                     (unsigned int)room_hash,
+                     (unsigned int)(rule_group.rule_id ? rule_group.rule_id : 1),
+                     allowed_count,
+                     pair_list);
+            ret = send_espnow_command_to(mac, pair_msg);
+            if (ret != ESP_OK) return ret;
         }
 
         char cfg[512];
@@ -1441,8 +1794,41 @@ static esp_err_t send_runtime_to_devices(bool start_after_config, bool test_afte
                  (int)rssi,
                  (unsigned int)hold,
                  idle[0] ? idle : "silent");
-        esp_err_t ret = send_espnow_command_to(mac, cfg);
+        ret = send_espnow_command_to(mac, cfg);
         if (ret != ESP_OK) return ret;
+
+        // Re-send v3 rule after the legacy CFG. This prevents stale calibration
+        // rules from surviving if one ESP-NOW packet is missed or reordered.
+        ret = send_espnow_command_to(mac, rule);
+        if (ret != ESP_OK) return ret;
+
+        ret = send_espnow_command_to(mac, meter);
+        if (ret != ESP_OK) return ret;
+
+        if (pair_binding_count > 0 && rule_judge != 0) {
+            char pair_list[320] = {0};
+            int allowed_count = 0;
+            portENTER_CRITICAL(&state_mux);
+            for (int p = 0; p < pair_binding_count; p++) {
+                const pair_binding_t *binding = &pair_bindings[p];
+                if (!binding->valid) continue;
+                if (binding->rule_id != 0 && binding->rule_id != (rule_group.rule_id ? rule_group.rule_id : 1)) continue;
+                if (rule_judge == 2) {
+                    if (mac_equal(binding->target_mac, mac)) append_mac_csv(pair_list, sizeof(pair_list), binding->source_mac, &allowed_count);
+                } else {
+                    if (mac_equal(binding->source_mac, mac)) append_mac_csv(pair_list, sizeof(pair_list), binding->target_mac, &allowed_count);
+                }
+            }
+            portEXIT_CRITICAL(&state_mux);
+            char pair_msg[384];
+            snprintf(pair_msg, sizeof(pair_msg), "PAIR|%u|%u|%d|%s",
+                     (unsigned int)room_hash,
+                     (unsigned int)(rule_group.rule_id ? rule_group.rule_id : 1),
+                     allowed_count,
+                     pair_list);
+            ret = send_espnow_command_to(mac, pair_msg);
+            if (ret != ESP_OK) return ret;
+        }
 
         char trg[512];
         snprintf(trg, sizeof(trg), "TRG|%s", trigger[0] ? trigger : idle);
@@ -1682,7 +2068,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
 {
     if (!recv_info || !recv_info->src_addr || !data || data_len <= 0) return;
 
-    char msg[192];
+    char msg[256];
     int copy_len = data_len < (int)sizeof(msg) - 1 ? data_len : (int)sizeof(msg) - 1;
     memcpy(msg, data, copy_len);
     msg[copy_len] = '\0';
@@ -1694,6 +2080,52 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
         char mac_text[18];
         mac_to_string(recv_info->src_addr, mac_text, sizeof(mac_text));
         ESP_LOGI(TAG, "Receiver present: %s, RSSI=%d", mac_text, rssi);
+    } else if (strncmp(msg, "EVT2|", 5) == 0) {
+        ensure_peer_exists(recv_info->src_addr);
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        unsigned int room = 0;
+        unsigned int rule_id = 0;
+        unsigned int kind = 0;
+        char judge_mac_text[18] = {0};
+        char source_mac_text[18] = {0};
+        char target_mac_text[18] = {0};
+        unsigned int source_mask = 0;
+        unsigned int target_mask = 0;
+        int event_rssi = recv_info->rx_ctrl ? recv_info->rx_ctrl->rssi : 0;
+        int points = 0;
+        unsigned int seq = 0;
+        long long event_ms = 0;
+        uint8_t source_mac[6] = {0};
+        uint8_t target_mac[6] = {0};
+        if (sscanf(msg, "EVT2|%u|%u|%u|%17[^|]|%17[^|]|%17[^|]|%u|%u|%d|%d|%u|%lld",
+                   &room, &rule_id, &kind, judge_mac_text, source_mac_text, target_mac_text,
+                   &source_mask, &target_mask, &event_rssi, &points, &seq, &event_ms) == 12 &&
+            parse_mac_string(source_mac_text, source_mac) &&
+            parse_mac_string(target_mac_text, target_mac)) {
+            portENTER_CRITICAL(&state_mux);
+            int16_t source_idx = (int16_t)find_device_index_by_mac_locked(source_mac);
+            int16_t target_idx = (int16_t)find_device_index_by_mac_locked(target_mac);
+            append_runtime_event_locked((uint16_t)room, source_mac, target_mac, source_idx, target_idx,
+                                        source_mask, target_mask, event_rssi, (int)kind, points, seq,
+                                        event_ms > 0 ? (int64_t)event_ms : now_ms);
+            if (record_count < MAX_DISCOVERY_RECORDS) {
+                discovery_record_t *r = &records[record_count++];
+                memset(r, 0, sizeof(*r));
+                r->source_group = (uint8_t)first_group_for_mask(source_mask);
+                r->target_group = (uint8_t)first_group_for_mask(target_mask);
+                r->source_device_index = source_idx;
+                r->target_device_index = target_idx;
+                memcpy(r->source_mac, source_mac, sizeof(r->source_mac));
+                memcpy(r->target_mac, target_mac, sizeof(r->target_mac));
+                r->first_seen_ms = now_ms;
+                r->last_seen_ms = now_ms;
+                registry_dirty = true;
+            }
+            portEXIT_CRITICAL(&state_mux);
+            play_target_feedback_once(target_mac, target_mask);
+            ESP_LOGI(TAG, "EVT2 received: room=%u rule=%u source=%u target=%u rssi=%d points=%d seq=%u",
+                     room, rule_id, source_mask, target_mask, event_rssi, points, seq);
+        }
     } else if (strncmp(msg, "EVENT|", 6) == 0) {
         ensure_peer_exists(recv_info->src_addr);
         int64_t now_ms = esp_timer_get_time() / 1000;
@@ -1721,7 +2153,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
             self_device_index = (int16_t)find_device_index_by_mac_locked(self_mac);
             peer_device_index = (int16_t)find_device_index_by_mac_locked(peer_mac);
             append_runtime_event_locked((uint16_t)room, self_mac, peer_mac, self_device_index, peer_device_index, self_mask, peer_mask,
-                                        event_rssi, event_ms > 0 ? (int64_t)event_ms : now_ms);
+                                        event_rssi, 1, 1, 0, event_ms > 0 ? (int64_t)event_ms : now_ms);
         }
         if (record_count < MAX_DISCOVERY_RECORDS) {
             discovery_record_t *r = &records[record_count++];
@@ -1738,6 +2170,37 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
         }
         portEXIT_CRITICAL(&state_mux);
         ESP_LOGI(TAG, "Runtime event received: room=%u self=%u peer=%u rssi=%d", room, self_mask, peer_mask, event_rssi);
+    } else if (strncmp(msg, "STAT2|", 6) == 0) {
+        ensure_peer_exists(recv_info->src_addr);
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        unsigned int room = 0;
+        char self_mac_text[18] = {0};
+        unsigned int rule_id = 0;
+        unsigned int seen_count = 0;
+        unsigned int event_count = 0;
+        char best_peer_text[18] = {0};
+        int best_rssi = -127;
+        unsigned int active_ms = 0;
+        unsigned int seq = 0;
+        uint8_t self_mac[6] = {0};
+        uint8_t best_peer[6] = {0};
+        if (sscanf(msg, "STAT2|%u|%17[^|]|%u|%u|%u|%17[^|]|%d|%u|%u",
+                   &room, self_mac_text, &rule_id, &seen_count, &event_count, best_peer_text, &best_rssi, &active_ms, &seq) == 9 &&
+            parse_mac_string(self_mac_text, self_mac)) {
+            parse_mac_string(best_peer_text, best_peer);
+            portENTER_CRITICAL(&state_mux);
+            upsert_runtime_stat_locked((uint16_t)room, self_mac, seen_count, event_count, seq, now_ms);
+            for (int i = 0; i < MAX_RUNTIME_STATS; i++) {
+                if (runtime_stats[i].valid && mac_equal(runtime_stats[i].self_mac, self_mac)) {
+                    memcpy(runtime_stats[i].best_peer_mac, best_peer, sizeof(best_peer));
+                    runtime_stats[i].best_rssi = (int16_t)best_rssi;
+                    runtime_stats[i].active_ms = active_ms;
+                    break;
+                }
+            }
+            portEXIT_CRITICAL(&state_mux);
+            ESP_LOGI(TAG, "STAT2 received: room=%u seen=%u events=%u best=%d seq=%u", room, seen_count, event_count, best_rssi, seq);
+        }
     } else if (strncmp(msg, "STAT|", 5) == 0) {
         ensure_peer_exists(recv_info->src_addr);
         int64_t now_ms = esp_timer_get_time() / 1000;
@@ -1859,6 +2322,150 @@ static esp_err_t scan_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "Scan sent. Please wait and refresh the list.");
 }
 
+static esp_err_t send_signal_test_to_device(const uint8_t *mac,
+                                            uint32_t group_mask,
+                                            uint32_t peer_mask,
+                                            uint32_t port,
+                                            uint32_t led_count,
+                                            int weak_rssi,
+                                            int strong_rssi,
+                                            uint32_t compression_x100,
+                                            uint32_t smooth_samples)
+{
+    if (!mac || group_mask == 0 || peer_mask == 0) return ESP_ERR_INVALID_ARG;
+    ensure_peer_exists(mac);
+
+    char rule[256];
+    snprintf(rule, sizeof(rule),
+             "RULE|2|%u|1|1|1|%u|%u|6|0|-127|60000|3000|%u|1|0|1|0|0|0|1|5000|0",
+             (unsigned int)SIGNAL_TEST_ROOM_HASH,
+             (unsigned int)group_mask,
+             (unsigned int)peer_mask,
+             (unsigned int)(smooth_samples ? smooth_samples : 5));
+    esp_err_t ret = send_espnow_command_to(mac, rule);
+    if (ret != ESP_OK) return ret;
+
+    char meter[128];
+    snprintf(meter, sizeof(meter), "METER|%u|1|1|%u|%u|%d|%d|%u",
+             (unsigned int)SIGNAL_TEST_ROOM_HASH,
+             (unsigned int)(port ? port : 1),
+             (unsigned int)(led_count ? led_count : 10),
+             weak_rssi,
+             strong_rssi,
+             (unsigned int)(compression_x100 ? compression_x100 : 100));
+    ret = send_espnow_command_to(mac, meter);
+    if (ret != ESP_OK) return ret;
+
+    char cfg[128];
+    snprintf(cfg, sizeof(cfg), "CFG|%u|%u|%u|gte|0|60000|silent",
+             (unsigned int)SIGNAL_TEST_ROOM_HASH,
+             (unsigned int)group_mask,
+             (unsigned int)peer_mask);
+    ret = send_espnow_command_to(mac, cfg);
+    if (ret != ESP_OK) return ret;
+
+    ret = send_espnow_command_to(mac, "TRG|silent");
+    if (ret != ESP_OK) return ret;
+
+    return send_espnow_command_to(mac, "START");
+}
+
+static esp_err_t signal_test_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "HTTP GET /signal/test");
+    if (handle_cors_options(req)) return ESP_OK;
+    set_cors_headers(req);
+
+    char query[320] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "{\"error\":\"missing_query\"}");
+    }
+
+    char action[16] = {0};
+    char source_text[24] = {0};
+    char target_text[24] = {0};
+    char token[24] = {0};
+    uint8_t source_mac[6] = {0};
+    uint8_t target_mac[6] = {0};
+    httpd_query_key_value(query, "action", action, sizeof(action));
+    httpd_query_key_value(query, "source", source_text, sizeof(source_text));
+    httpd_query_key_value(query, "target", target_text, sizeof(target_text));
+
+    bool have_source = parse_mac_string(source_text, source_mac);
+    bool have_target = parse_mac_string(target_text, target_mac);
+
+    if (strcmp(action, "stop") == 0) {
+        esp_err_t ret = ESP_OK;
+        if (have_source) ret = send_espnow_command_to(source_mac, "STOP");
+        if (ret == ESP_OK && have_target) ret = send_espnow_command_to(target_mac, "STOP");
+        if (!have_source && !have_target) ret = send_espnow_broadcast("STOP");
+        portENTER_CRITICAL(&state_mux);
+        runtime_running = false;
+        portEXIT_CRITICAL(&state_mux);
+        if (ret != ESP_OK) {
+            httpd_resp_set_status(req, "500 Internal Server Error");
+            return httpd_resp_sendstr(req, "{\"error\":\"stop_failed\"}");
+        }
+        return httpd_resp_sendstr(req, "{\"ok\":true,\"running\":false}");
+    }
+
+    if (!have_source || !have_target || mac_equal(source_mac, target_mac)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "{\"error\":\"invalid_devices\"}");
+    }
+
+    uint32_t port = 1;
+    uint32_t led_count = 10;
+    uint32_t compression_x100 = 100;
+    uint32_t smooth_samples = 5;
+    int weak_rssi = -90;
+    int strong_rssi = -35;
+
+    if (httpd_query_key_value(query, "port", token, sizeof(token)) == ESP_OK) port = (uint32_t)strtoul(token, NULL, 10);
+    if (httpd_query_key_value(query, "count", token, sizeof(token)) == ESP_OK) led_count = (uint32_t)strtoul(token, NULL, 10);
+    if (httpd_query_key_value(query, "weak", token, sizeof(token)) == ESP_OK) weak_rssi = atoi(token);
+    if (httpd_query_key_value(query, "strong", token, sizeof(token)) == ESP_OK) strong_rssi = atoi(token);
+    if (httpd_query_key_value(query, "compression", token, sizeof(token)) == ESP_OK) compression_x100 = (uint32_t)strtoul(token, NULL, 10);
+    if (httpd_query_key_value(query, "smooth", token, sizeof(token)) == ESP_OK) smooth_samples = (uint32_t)strtoul(token, NULL, 10);
+
+    if (port < 1) port = 1;
+    if (port > 3) port = 3;
+    if (led_count < 1) led_count = 1;
+    if (led_count > 200) led_count = 200;
+    if (compression_x100 < 20) compression_x100 = 20;
+    if (compression_x100 > 500) compression_x100 = 500;
+    if (smooth_samples < 1) smooth_samples = 1;
+    if (smooth_samples > 10) smooth_samples = 10;
+
+    portENTER_CRITICAL(&state_mux);
+    runtime_reset_locked();
+    runtime_running = true;
+    runtime_started_ms = esp_timer_get_time() / 1000;
+    portEXIT_CRITICAL(&state_mux);
+
+    esp_err_t ret = send_signal_test_to_device(source_mac, 1, 2, port, led_count, weak_rssi, strong_rssi, compression_x100, smooth_samples);
+    if (ret == ESP_OK) {
+        ret = send_signal_test_to_device(target_mac, 2, 1, port, led_count, weak_rssi, strong_rssi, compression_x100, smooth_samples);
+    }
+    if (ret != ESP_OK) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return httpd_resp_sendstr(req, "{\"error\":\"signal_test_failed\"}");
+    }
+
+    char reply[256];
+    snprintf(reply, sizeof(reply),
+             "{\"ok\":true,\"running\":true,\"room\":%u,\"port\":%u,\"led_count\":%u,\"weak_rssi\":%d,\"strong_rssi\":%d,\"compression_x100\":%u,\"smooth_samples\":%u}",
+             (unsigned int)SIGNAL_TEST_ROOM_HASH,
+             (unsigned int)port,
+             (unsigned int)led_count,
+             weak_rssi,
+             strong_rssi,
+             (unsigned int)compression_x100,
+             (unsigned int)smooth_samples);
+    return httpd_resp_sendstr(req, reply);
+}
+
 static esp_err_t state_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "HTTP GET /state");
@@ -1867,18 +2474,21 @@ static esp_err_t state_handler(httpd_req_t *req)
 
     receiver_device_t *device_snapshot = (receiver_device_t *)calloc(MAX_DEVICES, sizeof(receiver_device_t));
     group_config_t *group_snapshot = (group_config_t *)calloc(MAX_GROUPS, sizeof(group_config_t));
+    pair_binding_t *pair_binding_snapshot = (pair_binding_t *)calloc(MAX_PAIR_BINDINGS, sizeof(pair_binding_t));
     discovery_record_t *record_snapshot = (discovery_record_t *)calloc(MAX_DISCOVERY_RECORDS, sizeof(discovery_record_t));
     runtime_event_t *runtime_event_snapshot = (runtime_event_t *)calloc(MAX_RUNTIME_EVENTS, sizeof(runtime_event_t));
     runtime_stat_t *runtime_stat_snapshot = (runtime_stat_t *)calloc(MAX_RUNTIME_STATS, sizeof(runtime_stat_t));
     int device_snapshot_count = 0;
+    int pair_binding_snapshot_count = 0;
     int record_snapshot_count = 0;
     int runtime_event_snapshot_count = 0;
     bool runtime_running_snapshot = false;
     int64_t runtime_started_snapshot = 0;
 
-    if (!device_snapshot || !group_snapshot || !record_snapshot || !runtime_event_snapshot || !runtime_stat_snapshot) {
+    if (!device_snapshot || !group_snapshot || !pair_binding_snapshot || !record_snapshot || !runtime_event_snapshot || !runtime_stat_snapshot) {
         free(device_snapshot);
         free(group_snapshot);
+        free(pair_binding_snapshot);
         free(record_snapshot);
         free(runtime_event_snapshot);
         free(runtime_stat_snapshot);
@@ -1888,12 +2498,14 @@ static esp_err_t state_handler(httpd_req_t *req)
 
     portENTER_CRITICAL(&state_mux);
     device_snapshot_count = device_count;
+    pair_binding_snapshot_count = pair_binding_count;
     record_snapshot_count = record_count;
     runtime_event_snapshot_count = runtime_event_count;
     runtime_running_snapshot = runtime_running;
     runtime_started_snapshot = runtime_started_ms;
     memcpy(device_snapshot, devices, sizeof(receiver_device_t) * device_snapshot_count);
     memcpy(group_snapshot, groups, sizeof(group_config_t) * MAX_GROUPS);
+    memcpy(pair_binding_snapshot, pair_bindings, sizeof(pair_binding_t) * pair_binding_snapshot_count);
     memcpy(record_snapshot, records, sizeof(discovery_record_t) * record_snapshot_count);
     memcpy(runtime_event_snapshot, runtime_events, sizeof(runtime_event_t) * runtime_event_snapshot_count);
     memcpy(runtime_stat_snapshot, runtime_stats, sizeof(runtime_stat_t) * MAX_RUNTIME_STATS);
@@ -1903,6 +2515,7 @@ static esp_err_t state_handler(httpd_req_t *req)
     if (!sb_init(&sb, 8192)) {
         free(device_snapshot);
         free(group_snapshot);
+        free(pair_binding_snapshot);
         free(record_snapshot);
         free(runtime_event_snapshot);
         free(runtime_stat_snapshot);
@@ -1941,7 +2554,7 @@ static esp_err_t state_handler(httpd_req_t *req)
         json_escape(group_snapshot[g].silence_note, silence, sizeof(silence));
         json_escape(group_snapshot[g].trigger_effect_note, trigger, sizeof(trigger));
         sb_appendf(&sb,
-                   "%s{\"id\":%d,\"valid\":%u,\"name\":\"%s\",\"note\":\"%s\",\"effect\":\"%s\",\"trigger_effect\":\"%s\",\"silence\":\"%s\",\"peer_mask\":%u,\"room_hash\":%u,\"target\":%u,\"mode\":%u,\"trigger_compare\":\"%s\",\"rssi\":%d,\"hold\":%u}",
+                   "%s{\"id\":%d,\"valid\":%u,\"name\":\"%s\",\"note\":\"%s\",\"effect\":\"%s\",\"trigger_effect\":\"%s\",\"silence\":\"%s\",\"peer_mask\":%u,\"room_hash\":%u,\"target\":%u,\"mode\":%u,\"trigger_compare\":\"%s\",\"rssi\":%d,\"hold\":%u,\"rule_id\":%u,\"rule_base\":%u,\"rule_judge\":%u,\"rule_signal\":%u,\"rule_rssi_min\":%d,\"rule_rssi_max\":%d,\"rule_missing_ms\":%u,\"rule_smooth_samples\":%u,\"rule_trigger\":%u,\"rule_target_ms\":%u,\"rule_target_count\":%u,\"rule_period_ms\":%u,\"rule_score_target\":%u,\"rule_points\":%d,\"rule_repeat\":%u,\"rule_cooldown_ms\":%u,\"rule_after\":%u,\"meter_enabled\":%u,\"meter_port\":%u,\"meter_led_count\":%u,\"meter_weak_rssi\":%d,\"meter_strong_rssi\":%d,\"meter_compression_x100\":%u}",
                    g == 0 ? "" : ",",
                    g,
                    (unsigned int)group_snapshot[g].valid,
@@ -1952,7 +2565,45 @@ static esp_err_t state_handler(httpd_req_t *req)
                    (unsigned int)group_snapshot[g].mode,
                    group_snapshot[g].trigger_compare ? "lte" : "gte",
                    (int)group_snapshot[g].rssi_threshold,
-                   (unsigned int)group_snapshot[g].hold_ms);
+                   (unsigned int)group_snapshot[g].hold_ms,
+                   (unsigned int)group_snapshot[g].rule_id,
+                   (unsigned int)group_snapshot[g].rule_base,
+                   (unsigned int)group_snapshot[g].rule_judge,
+                   (unsigned int)group_snapshot[g].rule_signal,
+                   (int)group_snapshot[g].rule_rssi_min,
+                   (int)group_snapshot[g].rule_rssi_max,
+                   (unsigned int)group_snapshot[g].rule_missing_ms,
+                   (unsigned int)group_snapshot[g].rule_smooth_samples,
+                   (unsigned int)group_snapshot[g].rule_trigger,
+                   (unsigned int)group_snapshot[g].rule_target_ms,
+                   (unsigned int)group_snapshot[g].rule_target_count,
+                   (unsigned int)group_snapshot[g].rule_period_ms,
+                   (unsigned int)group_snapshot[g].rule_score_target,
+                   (int)group_snapshot[g].rule_points,
+                   (unsigned int)group_snapshot[g].rule_repeat,
+                   (unsigned int)group_snapshot[g].rule_cooldown_ms,
+                   (unsigned int)group_snapshot[g].rule_after,
+                   (unsigned int)group_snapshot[g].meter_enabled,
+                   (unsigned int)group_snapshot[g].meter_port,
+                   (unsigned int)group_snapshot[g].meter_led_count,
+                   (int)group_snapshot[g].meter_weak_rssi,
+                   (int)group_snapshot[g].meter_strong_rssi,
+                   (unsigned int)(group_snapshot[g].meter_compression_x100 ? group_snapshot[g].meter_compression_x100 : 100));
+    }
+    sb_appendf(&sb, "],\"pair_bindings\":[");
+    for (int i = 0; i < pair_binding_snapshot_count; i++) {
+        char source_mac[18];
+        char target_mac[18];
+        mac_to_string(pair_binding_snapshot[i].source_mac, source_mac, sizeof(source_mac));
+        mac_to_string(pair_binding_snapshot[i].target_mac, target_mac, sizeof(target_mac));
+        sb_appendf(&sb,
+                   "%s{\"rule_id\":%u,\"source_mac\":\"%s\",\"target_mac\":\"%s\",\"source_group_id\":%u,\"target_group_id\":%u}",
+                   i == 0 ? "" : ",",
+                   (unsigned int)pair_binding_snapshot[i].rule_id,
+                   source_mac,
+                   target_mac,
+                   (unsigned int)pair_binding_snapshot[i].source_group_id,
+                   (unsigned int)pair_binding_snapshot[i].target_group_id);
     }
     sb_appendf(&sb, "],\"records\":[");
     for (int i = 0; i < record_snapshot_count; i++) {
@@ -1975,7 +2626,7 @@ static esp_err_t state_handler(httpd_req_t *req)
         mac_to_string(runtime_event_snapshot[i].self_mac, self_mac, sizeof(self_mac));
         mac_to_string(runtime_event_snapshot[i].peer_mac, peer_mac, sizeof(peer_mac));
         sb_appendf(&sb,
-                   "%s{\"room\":%u,\"self_idx\":%d,\"peer_idx\":%d,\"self_mac\":\"%s\",\"peer_mac\":\"%s\",\"self_group_mask\":%u,\"peer_group_mask\":%u,\"rssi\":%d,\"event_ms\":%lld}",
+                   "%s{\"room\":%u,\"self_idx\":%d,\"peer_idx\":%d,\"self_mac\":\"%s\",\"peer_mac\":\"%s\",\"self_group_mask\":%u,\"peer_group_mask\":%u,\"rssi\":%d,\"kind\":%u,\"points\":%d,\"seq\":%u,\"event_ms\":%lld}",
                    i == 0 ? "" : ",",
                    (unsigned int)runtime_event_snapshot[i].room_hash,
                    (int)runtime_event_snapshot[i].self_device_index,
@@ -1985,6 +2636,9 @@ static esp_err_t state_handler(httpd_req_t *req)
                    (unsigned int)runtime_event_snapshot[i].self_group_mask,
                    (unsigned int)runtime_event_snapshot[i].peer_group_mask,
                    (int)runtime_event_snapshot[i].rssi,
+                   (unsigned int)runtime_event_snapshot[i].kind,
+                   (int)runtime_event_snapshot[i].points,
+                   (unsigned int)runtime_event_snapshot[i].seq,
                    (long long)runtime_event_snapshot[i].event_ms);
     }
     sb_appendf(&sb, "],\"receiver_stats\":[");
@@ -1992,14 +2646,19 @@ static esp_err_t state_handler(httpd_req_t *req)
     for (int i = 0; i < MAX_RUNTIME_STATS; i++) {
         if (!runtime_stat_snapshot[i].valid) continue;
         char self_mac[18];
+        char best_peer[18];
         mac_to_string(runtime_stat_snapshot[i].self_mac, self_mac, sizeof(self_mac));
+        mac_to_string(runtime_stat_snapshot[i].best_peer_mac, best_peer, sizeof(best_peer));
         sb_appendf(&sb,
-                   "%s{\"room\":%u,\"self_mac\":\"%s\",\"seen_count\":%u,\"found_count\":%u,\"seq\":%u,\"seen_ms\":%lld}",
+                   "%s{\"room\":%u,\"self_mac\":\"%s\",\"seen_count\":%u,\"found_count\":%u,\"best_peer\":\"%s\",\"best_rssi\":%d,\"active_ms\":%u,\"seq\":%u,\"seen_ms\":%lld}",
                    first_stat ? "" : ",",
                    (unsigned int)runtime_stat_snapshot[i].room_hash,
                    self_mac,
                    (unsigned int)runtime_stat_snapshot[i].seen_count,
                    (unsigned int)runtime_stat_snapshot[i].found_count,
+                   best_peer,
+                   (int)runtime_stat_snapshot[i].best_rssi,
+                   (unsigned int)runtime_stat_snapshot[i].active_ms,
                    (unsigned int)runtime_stat_snapshot[i].seq,
                    (long long)(now_ms - runtime_stat_snapshot[i].last_seen_ms));
         first_stat = false;
@@ -2016,6 +2675,7 @@ static esp_err_t state_handler(httpd_req_t *req)
     sb_free(&sb);
     free(device_snapshot);
     free(group_snapshot);
+    free(pair_binding_snapshot);
     free(record_snapshot);
     free(runtime_event_snapshot);
     free(runtime_stat_snapshot);
@@ -2427,17 +3087,20 @@ static esp_err_t config_import_handler(httpd_req_t *req)
 
     receiver_device_t *imported_devices = (receiver_device_t *)calloc(MAX_DEVICES, sizeof(receiver_device_t));
     group_config_t *imported_groups = (group_config_t *)calloc(MAX_GROUPS, sizeof(group_config_t));
+    pair_binding_t *imported_pair_bindings = (pair_binding_t *)calloc(MAX_PAIR_BINDINGS, sizeof(pair_binding_t));
     discovery_record_t *imported_records = (discovery_record_t *)calloc(MAX_DISCOVERY_RECORDS, sizeof(discovery_record_t));
-    if (!imported_devices || !imported_groups || !imported_records) {
+    if (!imported_devices || !imported_groups || !imported_pair_bindings || !imported_records) {
         free(body);
         free(imported_devices);
         free(imported_groups);
+        free(imported_pair_bindings);
         free(imported_records);
         httpd_resp_set_status(req, "500 Internal Server Error");
         set_cors_headers(req);
         return httpd_resp_sendstr(req, "Out of memory.");
     }
     int imported_device_count = 0;
+    int imported_pair_binding_count = 0;
     int imported_record_count = 0;
     int schema_version = 0;
     char error_text[128];
@@ -2445,6 +3108,7 @@ static esp_err_t config_import_handler(httpd_req_t *req)
     bool ok = parse_registry_import_json(body,
                                          imported_devices, &imported_device_count,
                                          imported_groups,
+                                         imported_pair_bindings, &imported_pair_binding_count,
                                          imported_records, &imported_record_count,
                                          &schema_version,
                                          error_text, sizeof(error_text));
@@ -2454,25 +3118,30 @@ static esp_err_t config_import_handler(httpd_req_t *req)
         ESP_LOGW(TAG, "Import parse failed: %s", error_text[0] ? error_text : "Invalid config JSON.");
         free(imported_devices);
         free(imported_groups);
+        free(imported_pair_bindings);
         free(imported_records);
         httpd_resp_set_status(req, "400 Bad Request");
         set_cors_headers(req);
         return httpd_resp_sendstr(req, error_text[0] ? error_text : "Invalid config JSON.");
     }
-    ESP_LOGI(TAG, "Import parsed ok: schema=%d devices=%d groups=%d records=%d", schema_version, imported_device_count, MAX_GROUPS, imported_record_count);
+    ESP_LOGI(TAG, "Import parsed ok: schema=%d devices=%d groups=%d pair_bindings=%d records=%d", schema_version, imported_device_count, MAX_GROUPS, imported_pair_binding_count, imported_record_count);
 
     portENTER_CRITICAL(&state_mux);
     memset(devices, 0, sizeof(devices));
     memset(groups, 0, sizeof(groups));
+    memset(pair_bindings, 0, sizeof(pair_bindings));
     memset(records, 0, sizeof(records));
     runtime_reset_locked();
     memcpy(devices, imported_devices, sizeof(receiver_device_t) * imported_device_count);
     memcpy(groups, imported_groups, sizeof(groups));
+    memcpy(pair_bindings, imported_pair_bindings, sizeof(pair_binding_t) * imported_pair_binding_count);
     memcpy(records, imported_records, sizeof(discovery_record_t) * imported_record_count);
     device_count = imported_device_count;
+    pair_binding_count = imported_pair_binding_count;
     record_count = imported_record_count;
     free(imported_devices);
     free(imported_groups);
+    free(imported_pair_bindings);
     free(imported_records);
     for (int i = 0; i < device_count; i++) {
         normalize_device_name_for_index(i, devices[i].name, sizeof(devices[i].name));
@@ -2488,8 +3157,8 @@ static esp_err_t config_import_handler(httpd_req_t *req)
 
     char reply[160];
     snprintf(reply, sizeof(reply),
-             "{\"ok\":true,\"schema_version\":%d,\"devices\":%d,\"groups\":%d,\"records\":%d}",
-             schema_version, imported_device_count, MAX_GROUPS, imported_record_count);
+             "{\"ok\":true,\"schema_version\":%d,\"devices\":%d,\"groups\":%d,\"pair_bindings\":%d,\"records\":%d}",
+             schema_version, imported_device_count, MAX_GROUPS, imported_pair_binding_count, imported_record_count);
     httpd_resp_set_type(req, "application/json");
     set_cors_headers(req);
     httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
@@ -2542,6 +3211,7 @@ static void start_web_server(void)
     register_get_uri(server, "/devices", state_handler);
     register_get_uri(server, "/cmd", command_handler);
     register_get_uri(server, "/scan", scan_handler);
+    register_get_uri(server, "/signal/test", signal_test_handler);
     register_get_uri(server, "/identify", identify_handler);
     register_get_uri(server, "/device_save", device_save_handler);
     register_get_uri(server, "/device_delete", device_delete_handler);
