@@ -43,8 +43,8 @@ static const char *TAG = "MAGIC_CTRL";
 #define FW_TEXT_LEN 24
 #define GROUP_TEXT_LEN 384
 #define WEB_UI_VERSION "v0.2.7"
-#define MAGICWAND_RELEASE_VERSION "v1.0.3"
-#define MAGICWAND_CONTROLLER_BUILD "2026.06.06.1215"
+#define MAGICWAND_RELEASE_VERSION "v1.0.4"
+#define MAGICWAND_CONTROLLER_BUILD "2026.06.06.1500"
 #define MAGICWAND_EXPECTED_RECEIVER_BUILD "2026.06.06.1215"
 #define CONFIG_SCHEMA_VERSION 3
 
@@ -2390,6 +2390,8 @@ static esp_err_t scan_handler(httpd_req_t *req)
 static esp_err_t send_signal_test_to_device(const uint8_t *mac,
                                             uint32_t group_mask,
                                             uint32_t peer_mask,
+                                            bool meter_enabled,
+                                            uint32_t judge_mode,
                                             uint32_t port,
                                             uint32_t led_count,
                                             int weak_rssi,
@@ -2402,8 +2404,9 @@ static esp_err_t send_signal_test_to_device(const uint8_t *mac,
 
     char rule[256];
     snprintf(rule, sizeof(rule),
-             "RULE|2|%u|1|1|1|%u|%u|6|0|-127|60000|3000|%u|1|0|1|0|0|0|1|5000|0",
+             "RULE|2|%u|1|1|%u|%u|%u|6|0|-127|60000|3000|%u|1|0|1|0|0|0|1|5000|0",
              (unsigned int)SIGNAL_TEST_ROOM_HASH,
+             (unsigned int)judge_mode,
              (unsigned int)group_mask,
              (unsigned int)peer_mask,
              (unsigned int)(smooth_samples ? smooth_samples : 5));
@@ -2411,8 +2414,9 @@ static esp_err_t send_signal_test_to_device(const uint8_t *mac,
     if (ret != ESP_OK) return ret;
 
     char meter[128];
-    snprintf(meter, sizeof(meter), "METER|%u|1|1|%u|%u|%d|%d|%u",
+    snprintf(meter, sizeof(meter), "METER|%u|1|%u|%u|%u|%d|%d|%u",
              (unsigned int)SIGNAL_TEST_ROOM_HASH,
+             (unsigned int)(meter_enabled ? 1 : 0),
              (unsigned int)(port ? port : 1),
              (unsigned int)(led_count ? led_count : 10),
              weak_rssi,
@@ -2541,9 +2545,9 @@ static esp_err_t signal_test_handler(httpd_req_t *req)
     runtime_started_ms = esp_timer_get_time() / 1000;
     portEXIT_CRITICAL(&state_mux);
 
-    esp_err_t ret = send_signal_test_to_device(source_mac, 1, 2, port, led_count, weak_rssi, strong_rssi, compression_x100, smooth_samples);
+    esp_err_t ret = send_signal_test_to_device(source_mac, 1, 2, true, 1, port, led_count, weak_rssi, strong_rssi, compression_x100, smooth_samples);
     if (ret == ESP_OK) {
-        ret = send_signal_test_to_device(target_mac, 2, 1, port, led_count, weak_rssi, strong_rssi, compression_x100, smooth_samples);
+        ret = send_signal_test_to_device(target_mac, 2, 1, false, 0, port, led_count, weak_rssi, strong_rssi, compression_x100, smooth_samples);
     }
     if (ret != ESP_OK) {
         httpd_resp_set_status(req, "500 Internal Server Error");

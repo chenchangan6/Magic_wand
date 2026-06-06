@@ -1,16 +1,16 @@
 {
   "product": "Magic Wand",
-  "release_version": "v1.0.3",
-  "release_name": "Field validation hotfix",
+  "release_version": "v1.0.4",
+  "release_name": "Signal meter direction hotfix",
   "release_date": "2026-06-06",
-  "git_tag": "v1.0.3",
-  "local_service_version": "1.0.3",
+  "git_tag": "v1.0.4",
+  "local_service_version": "1.0.4",
   "runtime_schema": 3,
   "config_schema": 3,
   "firmware": {
     "controller": {
       "role": "control",
-      "version": "2026.06.06.1215",
+      "version": "2026.06.06.1500",
       "manifest": "firmware/controller/manifest.json",
       "app": "firmware/controller/magic_wand_controller.bin"
     },
@@ -23,6 +23,7 @@
   },
   "notes": [
     "This release keeps the target device silent before discovery and after the short trigger flash.",
+    "Signal calibration now lights only the selected source device; the target device stays silent while broadcasting RSSI beacons.",
     "Receiver devices report release and firmware build in DISCOVER/PRESENT replies when flashed with this version or newer.",
     "If a receiver shows unknown firmware, rescan first, then reflash if it still does not report a matching version."
   ]

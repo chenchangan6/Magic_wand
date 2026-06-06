@@ -32,12 +32,12 @@ OLD_DEFAULT_TRIGGER_RSSI = -10
 MCU_EFFECT_TEXT_LIMIT = 360
 DEFAULT_RELEASE = {
     "product": "Magic Wand",
-    "release_version": "v1.0.3",
-    "local_service_version": "1.0.3",
+    "release_version": "v1.0.4",
+    "local_service_version": "1.0.4",
     "runtime_schema": 3,
     "config_schema": 3,
     "firmware": {
-        "controller": {"version": "2026.06.06.1215"},
+        "controller": {"version": "2026.06.06.1500"},
         "receiver": {"version": "2026.06.06.1215"},
     },
 }

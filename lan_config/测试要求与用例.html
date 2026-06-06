@@ -23,13 +23,13 @@ table{width:100%;border-collapse:collapse;overflow:hidden;border-radius:16px;bor
 </style></head>
 <body><main class="page">
       <section class="hero">
-        <div class="row"><span class="badge">Magic Wand v1.0.3</span><span class="badge">测试要求与用例</span></div>
+        <div class="row"><span class="badge">Magic Wand v1.0.4</span><span class="badge">测试要求与用例</span></div>
         <h1>系统测试要求与用例</h1>
         <p>从玩家、NPC 和开发人员三个角度验收。修复后必须重测对应用例。</p>
       </section>
       <section class="panel">
         <h2>测试用例</h2>
-        <table><thead><tr><th>ID</th><th>场景</th><th>操作</th><th>期望结果</th></tr></thead><tbody><tr><td><b>T01</b></td><td>启动与版本</td><td>打开本地服务并读取 /api/status。</td><td>服务返回 v1.0.3；控制端期望 2026.06.06.1215；接收端期望 2026.06.06.1215。</td></tr><tr><td><b>T02</b></td><td>烧录页版本</td><td>打开 flash.html。</td><td>显示统一发布版本、期望版本、当前 manifest 和匹配状态。</td></tr><tr><td><b>T03</b></td><td>设备扫描版本</td><td>连接控制端热点，扫描设备。</td><td>新版接收端在设备行显示接收端固件版本；旧固件显示未知或需升级。</td></tr><tr><td><b>T04</b></td><td>无灯目标</td><td>加入无灯宝箱设备并扫描。</td><td>能显示设备、RSSI、版本；不依赖 LED 判断是否工作。</td></tr><tr><td><b>T05</b></td><td>设备点名</td><td>在设备、分组、信号校准、设备预备位置点名。</td><td>能点名单台、全组、参与设备；有灯设备三路 LED 闪烁。</td></tr><tr><td><b>T06</b></td><td>信号校准</td><td>选择源设备和目标设备，开始信号灯测试。</td><td>源设备显示信号格，目标保持熄灭；停止后全部熄灭。</td></tr><tr><td><b>T07</b></td><td>多人寻宝</td><td>源设备靠近目标，RSSI &gt;= -35 dBm 持续 2 秒。</td><td>源得分，目标不计分；事件显示“源发现目标”。</td></tr><tr><td><b>T08</b></td><td>目标静默</td><td>第一个玩家找到目标后，第二个玩家继续寻找。</td><td>目标短闪后熄灭，不因常亮暴露位置。</td></tr><tr><td><b>T09</b></td><td>自动刷新</td><td>打开预备页或大屏等待刷新。</td><td>滚动位置不跳回顶部；大屏不退出全屏/展示模式。</td></tr><tr><td><b>T10</b></td><td>停止与历史</td><td>停止游戏并查看历史。</td><td>设备熄灭，场次写入历史，当前分数和历史分数分开。</td></tr></tbody></table>
+        <table><thead><tr><th>ID</th><th>场景</th><th>操作</th><th>期望结果</th></tr></thead><tbody><tr><td><b>T01</b></td><td>启动与版本</td><td>打开本地服务并读取 /api/status。</td><td>服务返回 v1.0.4；控制端期望 2026.06.06.1500；接收端期望 2026.06.06.1215。</td></tr><tr><td><b>T02</b></td><td>烧录页版本</td><td>打开 flash.html。</td><td>显示统一发布版本、期望版本、当前 manifest 和匹配状态。</td></tr><tr><td><b>T03</b></td><td>设备扫描版本</td><td>连接控制端热点，扫描设备。</td><td>新版接收端在设备行显示接收端固件版本；旧固件显示未知或需升级。</td></tr><tr><td><b>T04</b></td><td>无灯目标</td><td>加入无灯宝箱设备并扫描。</td><td>能显示设备、RSSI、版本；不依赖 LED 判断是否工作。</td></tr><tr><td><b>T05</b></td><td>设备点名</td><td>在设备、分组、信号校准、设备预备位置点名。</td><td>能点名单台、全组、参与设备；有灯设备三路 LED 闪烁。</td></tr><tr><td><b>T06</b></td><td>信号校准</td><td>选择源设备和目标设备，开始信号灯测试。</td><td>源设备显示信号格，目标保持熄灭；停止后全部熄灭。</td></tr><tr><td><b>T07</b></td><td>多人寻宝</td><td>源设备靠近目标，RSSI &gt;= -35 dBm 持续 2 秒。</td><td>源得分，目标不计分；事件显示“源发现目标”。</td></tr><tr><td><b>T08</b></td><td>目标静默</td><td>第一个玩家找到目标后，第二个玩家继续寻找。</td><td>目标短闪后熄灭，不因常亮暴露位置。</td></tr><tr><td><b>T09</b></td><td>自动刷新</td><td>打开预备页或大屏等待刷新。</td><td>滚动位置不跳回顶部；大屏不退出全屏/展示模式。</td></tr><tr><td><b>T10</b></td><td>停止与历史</td><td>停止游戏并查看历史。</td><td>设备熄灭，场次写入历史，当前分数和历史分数分开。</td></tr></tbody></table>
       </section>
       <section class="panel">
         <h2>开发回归命令</h2>
