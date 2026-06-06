@@ -1,8 +1,8 @@
 ﻿(() => {
-  const APP_RELEASE_VERSION = 'v1.0.2';
-  const LOCAL_SERVICE_VERSION = '1.0.2';
-  const CONTROLLER_FIRMWARE_VERSION = '2026.06.05.1950';
-  const RECEIVER_FIRMWARE_VERSION = '2026.06.05.1950';
+  const APP_RELEASE_VERSION = 'v1.0.3';
+  const LOCAL_SERVICE_VERSION = '1.0.3';
+  const CONTROLLER_FIRMWARE_VERSION = '2026.06.06.1215';
+  const RECEIVER_FIRMWARE_VERSION = '2026.06.06.1215';
   const MAX_VISIBLE_LOG_LINES = 120;
   const MAX_MCU_GROUPS = 16;
   const DEFAULT_TRIGGER_RSSI = -25;
@@ -3778,7 +3778,7 @@
   }
 
   function v3JudgeCode(preset, asSource) {
-    if (String(preset?.baseTemplate || '') === 'competition_score') return 2; // target device judges ownership.
+    if (String(preset?.baseTemplate || '') === 'competition_score') return asSource ? 0 : 2; // only target devices judge ownership.
     return asSource ? 1 : 0;
   }
 
@@ -10990,10 +10990,12 @@
     if (el.closest('[data-role="play-preset-form-input"]')) return true;
     if (el.closest('[data-role="feature-preset-field"]')) return true;
     if (el.closest('[data-role="play-preset-query"]')) return true;
+    if (el.closest('[data-role="signal-test-field"]')) return true;
     return false;
   }
 
   function shouldPauseAutoRefresh() {
+    if (state.roomPresentationMode || document.fullscreenElement) return true;
     if (isInteractiveEditorOpen()) return true;
     const active = document.activeElement;
     if (isEditingFocusableElement(active)) return true;
@@ -11261,17 +11263,18 @@
     }
     try {
       setBusy('signalTest', true);
-      const params = new URLSearchParams({
-        source: cfg.sourceMac,
-        target: cfg.targetMac,
-        port: String(cfg.port),
-        count: String(cfg.ledCount),
-        weak: String(cfg.weakRssi),
-        strong: String(cfg.strongRssi),
-        compression: String(cfg.compressionX100),
-        smooth: String(cfg.smoothSamples)
-      });
-      const res = await requestJson(`/api/controller/signal/test?${params.toString()}&t=${Date.now()}`, {
+      const params = [
+        `source=${String(cfg.sourceMac || '').toUpperCase()}`,
+        `target=${String(cfg.targetMac || '').toUpperCase()}`,
+        `port=${encodeURIComponent(String(cfg.port))}`,
+        `count=${encodeURIComponent(String(cfg.ledCount))}`,
+        `weak=${encodeURIComponent(String(cfg.weakRssi))}`,
+        `strong=${encodeURIComponent(String(cfg.strongRssi))}`,
+        `compression=${encodeURIComponent(String(cfg.compressionX100))}`,
+        `smooth=${encodeURIComponent(String(cfg.smoothSamples))}`,
+        `t=${Date.now()}`
+      ].join('&');
+      const res = await requestJson(`/api/controller/signal/test?${params}`, {
         method: 'GET',
         timeoutMs: 12000
       });
@@ -11315,12 +11318,13 @@
     const cfg = signalTestConfig();
     try {
       setBusy('signalTest', true);
-      const params = new URLSearchParams({
-        action: 'stop',
-        source: cfg.sourceMac,
-        target: cfg.targetMac
-      });
-      await requestJson(`/api/controller/signal/test?${params.toString()}&t=${Date.now()}`, {
+      const params = [
+        'action=stop',
+        `source=${String(cfg.sourceMac || '').toUpperCase()}`,
+        `target=${String(cfg.targetMac || '').toUpperCase()}`,
+        `t=${Date.now()}`
+      ].join('&');
+      await requestJson(`/api/controller/signal/test?${params}`, {
         method: 'GET',
         timeoutMs: 8000
       });
@@ -12375,7 +12379,7 @@
       if (state.roomPrepareModal) return;
       if (shouldPauseAutoRefresh()) return;
       const room = currentRoom();
-      const shouldRefresh = state.activeTab === 'room' || state.activeTab === 'signal' || state.signalTest?.running === true || !!state.roomStartCountdown || (room && (room.status === 'running' || room.status === 'published'));
+      const shouldRefresh = state.activeTab === 'room' || state.signalTest?.running === true || !!state.roomStartCountdown || (room && (room.status === 'running' || room.status === 'published'));
       if (shouldRefresh) {
         loadFromController();
       }

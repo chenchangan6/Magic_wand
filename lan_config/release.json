@@ -1,22 +1,22 @@
 {
   "product": "Magic Wand",
-  "release_version": "v1.0.2",
-  "release_name": "Field validation release",
-  "release_date": "2026-06-05",
-  "git_tag": "v1.0.2",
-  "local_service_version": "1.0.2",
+  "release_version": "v1.0.3",
+  "release_name": "Field validation hotfix",
+  "release_date": "2026-06-06",
+  "git_tag": "v1.0.3",
+  "local_service_version": "1.0.3",
   "runtime_schema": 3,
   "config_schema": 3,
   "firmware": {
     "controller": {
       "role": "control",
-      "version": "2026.06.05.1950",
+      "version": "2026.06.06.1215",
       "manifest": "firmware/controller/manifest.json",
       "app": "firmware/controller/magic_wand_controller.bin"
     },
     "receiver": {
       "role": "receiver",
-      "version": "2026.06.05.1950",
+      "version": "2026.06.06.1215",
       "manifest": "firmware/receiver/manifest.json",
       "app": "firmware/receiver/magic_wand_receiver.bin"
     }

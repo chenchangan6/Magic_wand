@@ -43,9 +43,9 @@ static const char *TAG = "MAGIC_CTRL";
 #define FW_TEXT_LEN 24
 #define GROUP_TEXT_LEN 384
 #define WEB_UI_VERSION "v0.2.7"
-#define MAGICWAND_RELEASE_VERSION "v1.0.2"
-#define MAGICWAND_CONTROLLER_BUILD "2026.06.05.1950"
-#define MAGICWAND_EXPECTED_RECEIVER_BUILD "2026.06.05.1950"
+#define MAGICWAND_RELEASE_VERSION "v1.0.3"
+#define MAGICWAND_CONTROLLER_BUILD "2026.06.06.1215"
+#define MAGICWAND_EXPECTED_RECEIVER_BUILD "2026.06.06.1215"
 #define CONFIG_SCHEMA_VERSION 3
 
 typedef enum {
@@ -2435,6 +2435,35 @@ static esp_err_t send_signal_test_to_device(const uint8_t *mac,
     return send_espnow_command_to(mac, "START");
 }
 
+static int url_hex_value(char ch)
+{
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return 10 + (ch - 'a');
+    if (ch >= 'A' && ch <= 'F') return 10 + (ch - 'A');
+    return -1;
+}
+
+static void url_decode_in_place(char *text)
+{
+    if (!text) return;
+    char *read = text;
+    char *write = text;
+    while (*read) {
+        if (*read == '%' && isxdigit((unsigned char)read[1]) && isxdigit((unsigned char)read[2])) {
+            int hi = url_hex_value(read[1]);
+            int lo = url_hex_value(read[2]);
+            if (hi >= 0 && lo >= 0) {
+                *write++ = (char)((hi << 4) | lo);
+                read += 3;
+                continue;
+            }
+        }
+        *write++ = (*read == '+') ? ' ' : *read;
+        read++;
+    }
+    *write = '\0';
+}
+
 static esp_err_t signal_test_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "HTTP GET /signal/test");
@@ -2456,6 +2485,9 @@ static esp_err_t signal_test_handler(httpd_req_t *req)
     httpd_query_key_value(query, "action", action, sizeof(action));
     httpd_query_key_value(query, "source", source_text, sizeof(source_text));
     httpd_query_key_value(query, "target", target_text, sizeof(target_text));
+    url_decode_in_place(action);
+    url_decode_in_place(source_text);
+    url_decode_in_place(target_text);
 
     bool have_source = parse_mac_string(source_text, source_mac);
     bool have_target = parse_mac_string(target_text, target_mac);

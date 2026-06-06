@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 RELEASE = json.loads((ROOT / "release.json").read_text(encoding="utf-8-sig"))
-VERSION = str(RELEASE.get("release_version") or "v1.0.2")
+VERSION = str(RELEASE.get("release_version") or "v1.0.3")
 CONTROLLER_FW = str(RELEASE.get("firmware", {}).get("controller", {}).get("version") or "")
 RECEIVER_FW = str(RELEASE.get("firmware", {}).get("receiver", {}).get("version") or "")
 
